@@ -5,8 +5,9 @@ The aim is that the head unit sees the same card and version (cdrom.txt, cdrom.t
 files.cfg, zone.cfg, *.vi, VERSIONS.CFG, dbal DLLs, voices, images unchanged) with
 new map data inside.
 
-Usage (identity build, proves the writers):
-  python -m openlion.build <src navigation/> <dst navigation/> --identity
+Usage:
+  python -m openlion.build <src navigation/> <dst navigation/> --identity      (writer test)
+  python -m openlion.build <src navigation/> <dst navigation/> --tables <dir>  (new map data)
 """
 import hashlib
 import os
@@ -128,12 +129,60 @@ def search_identity(db):
     return out
 
 
+def table_replacements(src, tables_dir):
+    """Map every table file in tables_dir (named as in db_aunz/db/) onto its card path."""
+    out = {}
+    for fn in sorted(os.listdir(tables_dir)):
+        rel = f"db_aunz/db/{fn}"
+        if rel not in REPLACEABLE:
+            raise ValueError(f"{fn} is not a replaceable map table")
+        if not os.path.exists(os.path.join(src, rel)):
+            raise ValueError(f"{fn} has no factory counterpart")
+        out[rel] = open(os.path.join(tables_dir, fn), "rb").read()
+    return out
+
+
+FLAT_MAGIC = bytes([0x7A, 0x69, 0x70, 0x01])  # "zip\x01"
+
+
+def check_headers(src, dst, rels):
+    """The 0x5E-byte common header must keep the factory stamps (database ID, file
+    ID, version) and only change rec_cnt/byte_cnt. Returns a list of problems."""
+    if not __package__:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from openlion import flat
+    bad = []
+    for rel in rels:
+        a = open(os.path.join(src, rel), "rb").read()
+        b = open(os.path.join(dst, rel), "rb").read()
+        if (a[:4] == FLAT_MAGIC) != (b[:4] == FLAT_MAGIC):
+            bad.append(f"{rel}: packing differs from factory")
+            continue
+        if a[:4] == FLAT_MAGIC:
+            a, b = flat.unpack(a), flat.unpack(b)
+        if a[:0x56] != b[:0x56]:
+            bad.append(f"{rel}: header stamps differ from factory")
+    return bad
+
+
 if __name__ == "__main__":
-    src, dst = sys.argv[1], sys.argv[2]
-    if "--identity" not in sys.argv:
-        sys.exit("only --identity builds are implemented so far")
-    reps = identity_replacements(src)
-    rep = build(src, dst, reps)
-    same = [r for r in rep["replaced"] if sha256(os.path.join(src, r)) == sha256(os.path.join(dst, r))]
+    import argparse
+    ap = argparse.ArgumentParser(description="Build a navigation/ folder from a factory copy.")
+    ap.add_argument("src", help="factory navigation/ folder (read only)")
+    ap.add_argument("dst", help="new navigation/ folder (must not exist yet)")
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--identity", action="store_true", help="rebuild the factory tables (writer test)")
+    g.add_argument("--tables", help="folder of new tables named as in db_aunz/db/ (e.g. pipeline out/db)")
+    a = ap.parse_args()
+    if os.path.exists(a.dst) and os.listdir(a.dst):
+        sys.exit(f"{a.dst} already exists and is not empty")
+    reps = identity_replacements(a.src) if a.identity else table_replacements(a.src, a.tables)
+    rep = build(a.src, a.dst, reps)
     print(f"copied {rep['copied']} files unchanged, verify failures: {rep['verify_failed'] or 'none'}")
-    print(f"rebuilt {len(rep['replaced'])} map tables, byte-identical to source: {len(same)}/{len(rep['replaced'])}")
+    same = [r for r in rep["replaced"] if sha256(os.path.join(a.src, r)) == sha256(os.path.join(a.dst, r))]
+    print(f"replaced {len(rep['replaced'])} map tables, byte-identical to factory: {len(same)}/{len(rep['replaced'])}")
+    bad = check_headers(a.src, a.dst, rep["replaced"])
+    print(f"header stamps kept: {len(rep['replaced']) - len(bad)}/{len(rep['replaced'])}")
+    for line in bad:
+        print("  " + line)
+    sys.exit(1 if rep["verify_failed"] or bad else 0)

@@ -23,8 +23,9 @@ Holden stopped issuing map updates in 2016. The iQ reads its maps from a full-si
 | OSM street names + address search: suburbs, LGAs, postcodes, road records, speller trees (tested on inner Melbourne) | Working | [13](docs/13_osm_names_search.md) |
 | OSM background layer (`.fea`): water, parks, landuse, rail, coast/ocean, labels, overview roads (tested on Melbourne) | Working | [14](docs/14_osm_background.md) |
 | Full-Australia build: all 17 tables in one run (`python -m openlion.pipeline`), lookups work in every capital | Done | [15](docs/15_full_australia.md) |
-| Test card assembly, POIs, `.fea` size reduction, NZ | Not started | |
-| In-car tamper test (checksums / signatures?) | Not done | |
+| Test card assembly: complete `navigation/` folder with OSM maps, every other file byte-identical; read-back check passes | Done | [16](docs/16_test_card.md) |
+| POIs, `.fea` size reduction, NZ, Canberra as a city name | Not started | |
+| In-car test (does the unit accept the card?) | Ready, not done; plan in [16](docs/16_test_card.md) | |
 
 Every structural claim in the docs was checked against the full factory dataset (for example, all 11,282 map parcels and 192,282 feature parcels decode and frame exactly).
 
@@ -34,7 +35,7 @@ Every structural claim in the docs was checked against the full factory dataset 
 docs/        format reports, in the order they were worked out
 docs/reference/manifest_sha256.tsv   file list + SHA-256 of the MY12 (CD_7606) card
 openlion/    pure-Python (3.9+, standard library only) readers, writers and renderers
-tests/       round-trip test against your own card copy
+tests/       round-trip, re-tiling, OSM region and card checks against your own card copy
 ```
 
 | Module | Purpose |
@@ -53,7 +54,7 @@ tests/       round-trip test against your own card copy
 | `osm_names.py` | OSM boundaries + names → road records, cities and all search tables |
 | `osm_fea.py` | OSM areas/lines/coastline → background feature file |
 | `pipeline.py` | One command: OSM extract → every replaceable table (cached stages, checks, sample lookups) |
-| `build.py` | Writes a complete `navigation/` folder, replacing only map tables and hash-verifying everything else |
+| `build.py` | Writes a complete `navigation/` folder (`--identity` or `--tables <dir>`), replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
 
@@ -65,6 +66,9 @@ python -m openlion.render navigation/db_aunz/db/auz.mp0 auz.si.raw out.png 144.9
 python tests/roundtrip.py navigation/db_aunz/db
 python -m openlion.build navigation out/navigation --identity
 python tests/retile.py navigation/db_aunz/db
+python -m openlion.pipeline australia-latest.osm.pbf navigation/db_aunz/db osm_out
+python -m openlion.build navigation card/navigation --tables osm_out/db
+python tests/card_check.py card/navigation
 ```
 
 ## Legal and data policy
