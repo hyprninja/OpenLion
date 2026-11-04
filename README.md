@@ -17,7 +17,7 @@ Holden stopped issuing map updates in 2016. The iQ reads its maps from a full-si
 | Background features `.fea` (water, parks, landuse, rail, overview roads) | Decoded | [07](docs/07_features_fea.md) |
 | Routing layers `mg1`–`mg4` | Fully derivable from `mp0` | [08](docs/08_overview_layers.md) |
 | Writers for every replaceable map table; identity card build is byte-identical (2,225/2,225 files) | Done | [09](docs/09_writer.md) |
-| Search tables (cities, city/road trees, postcodes) | Not decoded | |
+| Address search: countries, states, counties, cities, speller trees, city/road lists | Decoded, round-trip byte-identical | [10](docs/10_search_tables.md) |
 | OSM import, tiling, kd-tree build | Not started | |
 | In-car tamper test (checksums / signatures?) | Not done | |
 
@@ -40,6 +40,7 @@ tests/       round-trip test against your own card copy
 | `mapfile.py` | Map tiles (`mp0`, `mg1`–`mg4`) reader: nodes, segments, shapes, attributes, names, speeds, turn bans, signposts, lanes |
 | `mapwrite.py` | Map tile writer: parcel container, list codecs, file assembly |
 | `features.py` / `feawrite.py` | Background feature file (`.fea`) reader / writer |
+| `search.py` | Address-search tables and speller trees: read, write, build, validate |
 | `build.py` | Writes a complete `navigation/` folder, replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
