@@ -56,5 +56,5 @@ No junction in Australia has more than 8 roads, so the split below never trigger
 ## Open
 
 - **`auz.fea` is about 4× the factory size** (~233 MB vs 55.6 MB), and about 1.78 M small features were dropped to stay within the factory parcel limits. The overview levels need real generalisation: merging ways into long lines, merging adjacent small areas, and lower detail at levels 1–2. The card has room (the whole `navigation/` folder is about 580 MB), but load speed on the unit is unknown.
-- Speed limits cover 34% of segments nationally (OSM tagging is thin outside the cities); the factory data has 38%. Defaults are pending your decision.
+- Speed limits cover 34% of segments nationally (OSM tagging is thin outside the cities); the factory data has 38%. No defaults are added (decided 2026-11-05): 34% of 3.2 M segments already means more roads with a limit than the factory's 38% of 2.55 M.
 - New Zealand is not included (AU extract only), so the NZ catalog is empty.
