@@ -1,0 +1,19 @@
+# Never commit factory card data or anything decoded from it
+navigation/
+Navigation/
+SDImage*
+*.img
+*.iso
+decompressed/
+*.raw
+*.bin
+*.tsv
+!docs/reference/manifest_sha256.tsv
+*.png
+*.PNG
+*.svg
+
+# Python
+__pycache__/
+*.pyc
+.venv/
