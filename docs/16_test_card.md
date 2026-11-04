@@ -40,8 +40,8 @@ Before assembly, every untouched table was checked for links into the road netwo
 
 ## Known differences on the new card
 
-- **Canberra**: the factory data has one city, CANBERRA, covering the ACT. OSM has the ACT suburbs (CITY, BRADDON, …), and the old name finds only CANBERRA AIRPORT. Larger place names such as GOLD COAST don't exist as cities in either data set.
-- **POIs** are still the 2010 factory set.
+- **Canberra**: the factory data has one city, CANBERRA, covering the ACT. OSM has the ACT suburbs (CITY, BRADDON, …), and the old name finds only CANBERRA AIRPORT. *Fixed in report 17.* Larger place names such as GOLD COAST don't exist as cities in either data set.
+- **POIs** are still the 2010 factory set. *Rebuilt from OSM in report 17.*
 - **No house numbers**, so address search goes to the street.
 - **No New Zealand**: the NZ catalog is empty.
 - **No signposts, lanes or junction-view images** in the OSM build.
@@ -56,9 +56,12 @@ The assembled card went into the car (VE Series II MY12, iQ) on a spare SD card:
 - **New data is used.** A local street that didn't exist in the 2010 data now shows on the map.
 - **Routing works.** A simulated drive (the unit's demo mode) to a town about 200 km away planned and ran correctly, which uses the long-distance routing layers (`mg1`–`mg4`) as well as `mp0`.
 - **Address search works** with the new OSM suburbs, streets and speller trees.
+- **Card size doesn't matter.** The test used a 2 GB card, where the factory card is 4 GB.
 - **Zoomed-out map seemed fine**, so the 4× larger `.fea` doesn't noticeably slow drawing in first use.
 
-Still to check on real drives: the speed-limit display and spoken turn guidance.
+- **Real drive:** live turn-by-turn guidance and the voice instructions both work.
+
+Still to check: the speed-limit display.
 
 ## In-car test plan
 

@@ -1,21 +1,25 @@
 """Check an assembled card folder before it goes in the car.
 
-  python tests/card_check.py <card navigation/>
+  python tests/card_check.py <card navigation/> [<factory navigation/>]
 
 1. Every file is compared against docs/reference/manifest_sha256.tsv (the MY12
    CD_7606 card): untouched files must match, only replaceable tables may differ.
 2. The new tables are read back through the decoders: every map layer's parcels
    frame cleanly and the kd-tree reaches each parcel once, every name link lands on
    a road record, every .fea parcel parses, and CBD street lookups resolve.
+3. A replaced POI database passes SQLite's integrity check, every row points at a
+   real category and string, and every POI lies in Australia. With the factory
+   folder given, its schema, compiled statements and categories must be unchanged.
 """
-import csv, os, struct, sys, time
+import csv, os, sqlite3, struct, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
-from openlion import flat, mapfile, features, roads
-from openlion.build import REPLACEABLE, sha256
+from openlion import flat, mapfile, features, osm_poi, roads
+from openlion.build import POI_DB, REPLACEABLE, sha256
 from osm_names_region import lookup
 
 CARD = sys.argv[1]
+FACTORY = sys.argv[2] if len(sys.argv) > 2 else None
 DB = os.path.join(CARD, "db_aunz", "db")
 MANIFEST = os.path.join(os.path.dirname(HERE), "docs", "reference", "manifest_sha256.tsv")
 t0 = time.time()
@@ -78,9 +82,36 @@ print(f"fea: {len(ff.levels)} levels, {nf:,} features, parse errors {errs}, larg
 tables = {fn: raw(fn) for fn in ("auz.str", "auz.cty", "auz.cl", "auz.ct", "auz.rl", "auz.rt", "auz.rd")}
 for city, street in (("SYDNEY", "GEORGE STREET"), ("MELBOURNE", "SWANSTON STREET"), ("BRISBANE CITY", "QUEEN STREET"),
                      ("PERTH (WESTERN AUSTRALIA)", "HAY STREET"), ("ADELAIDE", "KING WILLIAM STREET"),
-                     ("HOBART", "ELIZABETH STREET"), ("DARWIN CITY", "MITCHELL STREET"), ("CITY", "NORTHBOURNE AVENUE")):
+                     ("HOBART", "ELIZABETH STREET"), ("DARWIN CITY", "MITCHELL STREET"), ("CANBERRA", "NORTHBOURNE AVENUE"),
+                     ("BRADDON, CANBERRA", "LONSDALE STREET")):
     r = lookup(tables, city, street)
     print("  lookup", r[0] if isinstance(r, tuple) else r)
     problems += not isinstance(r, tuple)
+if POI_DB in changed:
+    con = sqlite3.connect(f"file:{os.path.join(CARD, POI_DB)}?mode=ro", uri=True)
+    q = lambda sql: con.execute(sql).fetchall()
+    integ = q("pragma integrity_check")[0][0]
+    n = q("select count(*) from Poi_BaseAttributes")[0][0]
+    orphans = q("select count(*) from Poi_BaseAttributes where PoiPartition_ID not in "
+                "(select PoiPartition_ID from PoiPartition_BaseAttributes)")[0][0]
+    cols = ("HouseNumber_String_ID", "Street_String_ID", "Village_String_ID", "City_String_ID", "Region_String_ID",
+            "Country_String_ID", "IsoCountry_String_ID", "PhoneNumber_String_ID")
+    dangling = q("select count(*) from Poi_BaseAttributes where Name_String_ID not in (select String_ID from String_BaseAttributes)")[0][0]
+    for c in cols:
+        dangling += q(f"select count(*) from Poi_AddressAttributes where {c} is not null and "
+                      f"{c} not in (select String_ID from String_BaseAttributes)")[0][0]
+    no_alert = q("select count(*) from Poi_BaseAttributes where Poi_ID not in (select Poi_ID from Poi_AlertAttributes)")[0][0]
+    mp0 = mapfile.MapFile(open(os.path.join(DB, "auz.mp0"), "rb").read())
+    outside = 0
+    for (v,) in con.execute("select Coordinate from Poi_BaseAttributes"):
+        x, y = osm_poi.unmorton(v)
+        m = 10000   # 10 km: coastal POIs can lie a little beyond the last road
+        outside += not (mp0.min_long - m <= x <= mp0.max_long + m and mp0.min_lat - m <= y <= mp0.max_lat + m)
+    con.close()
+    kept = osm_poi.compare_schema(os.path.join(FACTORY, POI_DB), os.path.join(CARD, POI_DB)) if FACTORY else None
+    print(f"POIs: {n:,}, integrity {integ}, bad category {orphans}, dangling strings {dangling}, "
+          f"missing alert rows {no_alert}, beyond the road map {outside}, "
+          f"factory structure changed: {kept if kept is not None else 'not checked'}")
+    problems += (integ != "ok") + orphans + dangling + no_alert + outside + len(kept or [])
 print(f"{problems} problems, {time.time() - t0:.0f}s")
 sys.exit(1 if problems else 0)
