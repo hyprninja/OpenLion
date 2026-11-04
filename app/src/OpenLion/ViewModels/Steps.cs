@@ -18,6 +18,12 @@ public sealed class Session
     public FactoryCardRecord? FactoryRecord { get; set; }
     public CopyResult? FactoryCopy { get; set; }
 
+    /// <summary>The OSM extract to build from (set by the Get OSM data step).</summary>
+    public OpenLion.Core.Osm.OsmExtract? Osm { get; set; }
+
+    /// <summary>The finished map build to write (set by the Build maps step).</summary>
+    public BuildRecord? Build { get; set; }
+
     public Session() => FactoryRecord = State.Factory;
 
     public GuardOptions GuardOptions => new() { WrittenByOpenLion = State.WrittenVolumeSerials.ToHashSet() };
@@ -32,6 +38,8 @@ public abstract class StepViewModel(string title) : ObservableObject
     public string Title { get; } = title;
     public bool IsCurrent { get => _isCurrent; set => Set(ref _isCurrent, value); }
     public abstract bool CanGoNext { get; }
+    /// <summary>True while the step runs something that must not be left half-done (Back is disabled).</summary>
+    public virtual bool IsWorking => false;
     public virtual void OnEnter() { }
     public virtual void OnLeave() { }
 }
@@ -74,7 +82,19 @@ public sealed class FactoryCardStep : StepViewModel
     {
         _session = session;
         _poller.Updated += Refresh;
+        UseSavedCopyCommand = new RelayCommand(() => SkipCopyRequested?.Invoke(), () => HasSavedCopy);
     }
+
+    /// <summary>Raised when the user picks the copy made in an earlier run: go straight to the OSM step.</summary>
+    public event Action? SkipCopyRequested;
+    public System.Windows.Input.ICommand UseSavedCopyCommand { get; }
+
+    /// <summary>A verified copy of a factory card from an earlier run is still on this PC.</summary>
+    public bool HasSavedCopy => _session.State.Factory is { CopyVerified: true } &&
+                                _session.State.FactoryCopyPath is { } p && Directory.Exists(Path.Combine(p, "navigation"));
+    public string SavedCopyText => _session.State.Factory is { } f
+        ? $"{f.CardVersion ?? "Factory card"}{(f.Label.Length > 0 ? $" (label {f.Label})" : "")}, {f.TotalBytes / 1e9:N1} GB card, copied and checked."
+        : "";
 
     void Refresh(IReadOnlyList<DriveSnapshot> drives)
     {
@@ -102,13 +122,6 @@ public sealed class FactoryCardStep : StepViewModel
         _session.FactoryDrive = Selected?.Drive;
         _session.FactoryCard = Selected?.Card;
     }
-}
-
-/// <summary>Steps not built yet: copy, OSM download, build.</summary>
-public sealed class PlaceholderStep(string title, string text) : StepViewModel(title)
-{
-    public string Text { get; } = text;
-    public override bool CanGoNext => true;
 }
 
 public sealed record TargetCandidate(GuardResult Guard)

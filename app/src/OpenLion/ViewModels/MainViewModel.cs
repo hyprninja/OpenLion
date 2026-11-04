@@ -21,16 +21,17 @@ public sealed class MainViewModel : ObservableObject
             new WelcomeStep(),
             new FactoryCardStep(s),
             new CopyCardStep(s),
-            new PlaceholderStep("Get OSM data",
-                "Coming next: download the latest OpenStreetMap extract for Australia from Geofabrik."),
-            new PlaceholderStep("Build maps",
-                "Coming next: convert the OpenStreetMap data into the iQ map format."),
+            new GetOsmStep(s),
+            new BuildMapsStep(s),
             new WriteCardStep(s),
         ];
         foreach (var step in Steps)
             step.PropertyChanged += OnStepChanged;
+        var factory = Steps.OfType<FactoryCardStep>().Single();
+        int osmIndex = Steps.ToList().FindIndex(st => st is GetOsmStep);
+        factory.SkipCopyRequested += () => Go(osmIndex - _index);
         NextCommand = new RelayCommand(() => Go(+1), () => _index < Steps.Count - 1 && Current.CanGoNext);
-        BackCommand = new RelayCommand(() => Go(-1), () => _index > 0);
+        BackCommand = new RelayCommand(() => Go(-1), () => _index > 0 && !Current.IsWorking);
         Current.IsCurrent = true;
         Current.OnEnter();
     }

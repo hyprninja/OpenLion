@@ -42,7 +42,16 @@ tests/       round-trip, re-tiling, OSM region and card checks against your own 
 app/         Windows app (.NET 10, WPF): wizard that copies a factory card, builds maps and writes a blank card
 ```
 
-The Windows app is in progress. Done: the wizard, drive detection, `CardGuard` (the checks that refuse to write to a factory card), and copying the factory card with every file hash-verified, followed by the compatibility check (`openlion.compat`). If a card isn't supported, the app saves a report zip (no map data) and points the user to the [card report issue form](.github/ISSUE_TEMPLATE/card_report.yml). Next: OSM download, build and card writing. Build and test with `dotnet test app/OpenLion.slnx`; set `OPENLION_HOME` to keep the app's working files out of `%LOCALAPPDATA%\OpenLion` while developing, and `OPENLION_FACTORY_NAV` to a factory `navigation/` copy to run the full compatibility test.
+The Windows app is in progress. Done: the wizard, drive detection, `CardGuard` (the checks that refuse to write to a factory card), and copying the factory card with every file hash-verified, followed by the compatibility check (`openlion.compat`). If a card isn't supported, the app saves a report zip (no map data) and points the user to the [card report issue form](.github/ISSUE_TEMPLATE/card_report.yml). The app downloads the Australia extract from Geofabrik (resumable, MD5-checked; or the user picks a `.osm.pbf` they already have) and builds the maps with `openlion.make_card`, showing progress per stage. Next: writing the card, then bundling Python and an installer.
+
+Build and test with `dotnet test app/OpenLion.slnx`. Settings for development:
+
+| Variable | Effect |
+|---|---|
+| `OPENLION_HOME` | Keep the app's working files here instead of `%LOCALAPPDATA%\OpenLion` |
+| `OPENLION_PYTHON`, `OPENLION_ENGINE` | Python with `osmium` installed, and the folder holding `openlion/` (until Python is bundled) |
+| `OPENLION_BBOX` | Build only this area, e.g. `148.76 -35.92 149.40 -35.12` (Canberra), for quick test builds; the app marks the result as a test build |
+| `OPENLION_FACTORY_NAV` | A factory `navigation/` copy, to run the full compatibility test |
 
 | Module | Purpose |
 |---|---|
@@ -61,6 +70,7 @@ The Windows app is in progress. Done: the wizard, drive detection, `CardGuard` (
 | `osm_fea.py` | OSM areas/lines/coastline → background feature file |
 | `osm_poi.py` | OSM amenities → POI database (SQLite), keeping the factory schema and statements |
 | `pipeline.py` | One command: OSM extract → every replaceable table (cached stages, checks, sample lookups) |
+| `make_card.py` | What the app runs: pipeline → `build` → `tests/card_check.py` into a finished `navigation/` folder, with JSON progress (`--json`); OSM reads are cached until the extract changes |
 | `build.py` | Writes a complete `navigation/` folder (`--identity` or `--tables <dir>`), replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
@@ -78,6 +88,7 @@ python tests/retile.py navigation/db_aunz/db
 python -m openlion.pipeline australia-latest.osm.pbf navigation/db_aunz/db osm_out
 python -m openlion.build navigation card/navigation --tables osm_out/db --poi osm_out/edb/POI/aunz_sql.db3
 python tests/card_check.py card/navigation navigation
+python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card2/navigation   # all of the above in one
 ```
 
 ## Legal and data policy

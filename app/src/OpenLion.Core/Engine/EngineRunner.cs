@@ -53,11 +53,29 @@ public static class EngineRunner
 {
     public const string StderrPrefix = "[stderr] ";
 
+    static readonly HashSet<Process> Running = [];
+
+    /// <summary>True while any engine process runs.</summary>
+    public static bool IsRunning { get { lock (Running) return Running.Count > 0; } }
+
+    /// <summary>Kills every engine process now (and its children). Called when the app exits,
+    /// so a build never keeps running in the background without a window.</summary>
+    public static void KillAll()
+    {
+        lock (Running)
+        {
+            foreach (var p in Running)
+            {
+                try { p.Kill(entireProcessTree: true); } catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            }
+        }
+    }
+
     /// <param name="onLine">Called for each output line (stderr lines get <see cref="StderrPrefix"/>),
     /// from a background thread, never twice at once.</param>
     /// <returns>The process exit code.</returns>
     public static async Task<int> RunAsync(EnginePaths engine, IEnumerable<string> args, Action<string> onLine,
-        CancellationToken ct = default)
+        CancellationToken ct = default, ProcessPriorityClass? priority = null)
     {
         var psi = new ProcessStartInfo(engine.Python)
         {
@@ -79,19 +97,31 @@ public static class EngineRunner
 
         using var p = new Process { StartInfo = psi };
         p.Start();
-        var outTask = Pump(p.StandardOutput, Deliver, "");
-        var errTask = Pump(p.StandardError, Deliver, StderrPrefix);
+        lock (Running) Running.Add(p);
         try
         {
-            await p.WaitForExitAsync(ct);
+            if (priority is { } prio)
+            {
+                try { p.PriorityClass = prio; } catch (InvalidOperationException) { } // already exited
+            }
+            var outTask = Pump(p.StandardOutput, Deliver, "");
+            var errTask = Pump(p.StandardError, Deliver, StderrPrefix);
+            try
+            {
+                await p.WaitForExitAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                throw;
+            }
+            await Task.WhenAll(outTask, errTask);
+            return p.ExitCode;
         }
-        catch (OperationCanceledException)
+        finally
         {
-            try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            throw;
+            lock (Running) Running.Remove(p);
         }
-        await Task.WhenAll(outTask, errTask);
-        return p.ExitCode;
     }
 
     static async Task Pump(StreamReader r, Action<string> onLine, string prefix)

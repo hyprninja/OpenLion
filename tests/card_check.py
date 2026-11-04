@@ -1,27 +1,37 @@
 """Check an assembled card folder before it goes in the car.
 
   python tests/card_check.py <card navigation/> [<factory navigation/>]
+         [--manifest <manifest.tsv>] [--skip-lookups]
 
 1. Every file is compared against docs/reference/manifest_sha256.tsv (the MY12
-   CD_7606 card): untouched files must match, only replaceable tables may differ.
+   CD_7606 card), or the manifest given with --manifest (the app passes the one it
+   wrote when copying the user's card): untouched files must match, only
+   replaceable tables may differ.
 2. The new tables are read back through the decoders: every map layer's parcels
    frame cleanly and the kd-tree reaches each parcel once, every name link lands on
-   a road record, every .fea parcel parses, and CBD street lookups resolve.
+   a road record, every .fea parcel parses, and CBD street lookups resolve
+   (--skip-lookups for builds of a small area without the capitals).
 3. A replaced POI database passes SQLite's integrity check, every row points at a
    real category and string, and every POI lies in Australia. With the factory
    folder given, its schema, compiled statements and categories must be unchanged.
 """
-import csv, os, sqlite3, struct, sys, time
+import argparse, csv, os, sqlite3, struct, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
 from openlion import flat, mapfile, features, osm_poi, roads
 from openlion.build import POI_DB, REPLACEABLE, sha256
 from osm_names_region import lookup
 
-CARD = sys.argv[1]
-FACTORY = sys.argv[2] if len(sys.argv) > 2 else None
+ap = argparse.ArgumentParser()
+ap.add_argument("card")
+ap.add_argument("factory", nargs="?")
+ap.add_argument("--manifest", default=os.path.join(os.path.dirname(HERE), "docs", "reference", "manifest_sha256.tsv"))
+ap.add_argument("--skip-lookups", action="store_true")
+ARGS = ap.parse_args()
+CARD = ARGS.card
+FACTORY = ARGS.factory
 DB = os.path.join(CARD, "db_aunz", "db")
-MANIFEST = os.path.join(os.path.dirname(HERE), "docs", "reference", "manifest_sha256.tsv")
+MANIFEST = ARGS.manifest
 t0 = time.time()
 
 man = {r["path"][len("navigation/"):]: r["sha256"] for r in csv.DictReader(open(MANIFEST), delimiter="	")}
@@ -86,7 +96,7 @@ for city, street in (("SYDNEY", "GEORGE STREET"), ("MELBOURNE", "SWANSTON STREET
                      ("BRADDON, CANBERRA", "LONSDALE STREET")):
     r = lookup(tables, city, street)
     print("  lookup", r[0] if isinstance(r, tuple) else r)
-    problems += not isinstance(r, tuple)
+    problems += not isinstance(r, tuple) and not ARGS.skip_lookups   # printed, not counted, for small areas
 if POI_DB in changed:
     con = sqlite3.connect(f"file:{os.path.join(CARD, POI_DB)}?mode=ro", uri=True)
     q = lambda sql: con.execute(sql).fetchall()

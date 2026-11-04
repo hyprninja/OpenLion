@@ -21,6 +21,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         AppLog.Write($"exit, code {e.ApplicationExitCode}");
+        OpenLion.Core.Engine.EngineRunner.KillAll();
         base.OnExit(e);
     }
 
@@ -45,6 +46,7 @@ public partial class App : Application
             $"{e.Exception.Message}\n\n{where}\n\nPlease report it at github.com/hyprninja/OpenLion/issues.",
             "OpenLion", MessageBoxButton.OK, MessageBoxImage.Error);
         e.Handled = true;
+        OpenLion.Core.Engine.EngineRunner.KillAll();
         Current.Shutdown(1);
     }
 }

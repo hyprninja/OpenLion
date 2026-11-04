@@ -73,6 +73,7 @@ public sealed class CopyCardStep : StepViewModel
         set { if (Set(ref _confirmUntested, value)) Raise(nameof(CanGoNext)); }
     }
 
+    public override bool IsWorking => IsBusy;
     public override bool CanGoNext => Phase == CopyPhase.Verified || (Phase == CopyPhase.CompatibleUntested && ConfirmUntested);
 
     public override void OnEnter()

@@ -14,6 +14,11 @@ public static class AppPaths
 
     public static string CardsFolder => Path.Combine(Root, "cards");
     public static string StateFile => Path.Combine(Root, "state.json");
+    public static string OsmFolder => Path.Combine(Root, "osm");
+    /// <summary>Engine working folder: cached OSM reads and the new map tables.</summary>
+    public static string BuildWorkFolder => Path.Combine(Root, "build", "work");
+    /// <summary>The finished navigation/ folder that gets written to the new card.</summary>
+    public static string BuildOutput => Path.Combine(Root, "build", "navigation");
 
     /// <summary>Folder for the PC copy of one factory card, named by label and volume serial.</summary>
     public static string CardCopyFolder(DriveSnapshot card)
@@ -24,12 +29,25 @@ public static class AppPaths
     }
 }
 
+/// <summary>A finished build: which factory card and OSM extract it came from.</summary>
+public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial, string OsmFileName, DateOnly? OsmDate,
+    int Files, long Bytes, DateTime BuiltUtc, bool Partial)
+{
+    /// <summary>Still usable: the folder exists and it was built from this card and extract.</summary>
+    public bool Matches(FactoryCardRecord? factory, string? osmFileName) =>
+        factory is not null && factory.VolumeSerial == FactoryVolumeSerial &&
+        string.Equals(osmFileName, OsmFileName, StringComparison.OrdinalIgnoreCase) &&
+        Directory.Exists(NavigationPath);
+}
+
 /// <summary>Remembered between runs: the factory card that was copied and the cards OpenLion wrote.</summary>
 public sealed class AppState
 {
     public FactoryCardRecord? Factory { get; set; }
     public string? FactoryCopyPath { get; set; }
     public List<uint> WrittenVolumeSerials { get; set; } = [];
+    /// <summary>The last finished map build, if any.</summary>
+    public BuildRecord? Build { get; set; }
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
