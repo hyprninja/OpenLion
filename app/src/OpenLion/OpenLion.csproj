@@ -15,7 +15,7 @@
 
   <ItemGroup>
     <Resource Include="Assets\OpenLion.ico" />
-    <Resource Include="Assets\logo-128.png" />
+    <Resource Include="Assets\logo-256.png" />
   </ItemGroup>
 
 </Project>
