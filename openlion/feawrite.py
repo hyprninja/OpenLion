@@ -105,7 +105,15 @@ def encode_fea(template_header: bytes, levels, zip_statistic=None) -> bytes:
         heads += MAPHDR.pack(*lv["bbox"], lv["parcel_w"], lv["parcel_h"], lv["cnt_x"], lv["cnt_y"],
                              lv["norm_x"], lv["norm_y"], lv["feaType"], len(lv["scales"]), *sc, off)
     if zip_statistic is None:
-        zip_statistic = template_header[0x5C:0x64]
+        # header Zip_Statistic = (largest stored parcel, largest raw parcel) over the
+        # file; the unit presumably sizes its buffers from it, so compute it
+        mz = mr = 0
+        for lv in levels:
+            for raw in lv["raw_parcels"]:
+                if raw:
+                    stored, n, nz = store_parcel(raw)
+                    mz, mr = max(mz, nz), max(mr, n)
+        zip_statistic = struct.pack(">II", mz, mr)
     hdr = template_header[:0x58] + struct.pack(">I", len(levels)) + zip_statistic
     return hdr + bytes(heads) + b"".join(subfiles)
 
