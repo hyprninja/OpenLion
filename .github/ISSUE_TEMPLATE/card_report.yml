@@ -1,0 +1,50 @@
+name: Card not supported / app error
+description: OpenLion couldn't use your factory card, or a step in the app failed. Attach the report zip the app saved.
+title: "Card report: "
+labels: ["card-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. The app saved a file called `OpenLion-report-….zip` (usually on your Desktop).
+        It holds no map data: only your card's version files, a list of file names and checksums, and what went wrong.
+        You can open the zip and look at every file before attaching it.
+  - type: input
+    id: car
+    attributes:
+      label: Car
+      description: Model and year, e.g. "VE Commodore Series II SV6, 2012".
+    validations:
+      required: true
+  - type: input
+    id: card
+    attributes:
+      label: Card version
+      description: The "Volume" line the app showed for your card (from cdrom.txt), e.g. "CD_7597 (= CD_7606 + CD_7335)".
+  - type: dropdown
+    id: step
+    attributes:
+      label: Which step failed?
+      options:
+        - Copy card / map format check
+        - Get OSM data
+        - Build maps
+        - Write new card
+        - The unit didn't accept the new card
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened?
+      description: Anything the app or the car showed. Then drag the report zip into this box to attach it.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Before you post
+      options:
+        - label: I understand GitHub issues are public, and I've checked the report contains nothing I don't want to share.
+          required: true

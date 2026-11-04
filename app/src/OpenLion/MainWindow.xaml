@@ -1,0 +1,410 @@
+﻿<Window x:Class="OpenLion.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:OpenLion.ViewModels"
+        Title="OpenLion" Width="900" Height="720" MinWidth="720" MinHeight="500"
+        WindowStartupLocation="CenterScreen" Background="#FAFAF8" FontSize="14"
+        Icon="Assets/OpenLion.ico">
+    <Window.Resources>
+        <SolidColorBrush x:Key="Accent" Color="#B5121B"/>
+        <SolidColorBrush x:Key="Brand" Color="#0D2644"/>
+        <SolidColorBrush x:Key="Muted" Color="#5F5E5A"/>
+        <SolidColorBrush x:Key="Good" Color="#1E7A3C"/>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <Style x:Key="H1" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="22"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="Body" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="LineHeight" Value="20"/>
+        </Style>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#DDDCD6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="14"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="18,6"/>
+            <Setter Property="MinWidth" Value="100"/>
+        </Style>
+
+        <!-- Step 1: welcome + disclaimer -->
+        <DataTemplate DataType="{x:Type vm:WelcomeStep}">
+            <DockPanel>
+            <CheckBox DockPanel.Dock="Bottom" IsChecked="{Binding Accepted}" Margin="0,10,0,0">
+                <TextBlock TextWrapping="Wrap" FontWeight="SemiBold"
+                           Text="I have read the warning above, I understand the risks, and I accept that I use OpenLion at my own risk."/>
+            </CheckBox>
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H1}" Text="New maps for your Holden iQ navigation"/>
+                    <TextBlock Style="{StaticResource Body}">
+                        OpenLion builds an up-to-date map card for the Holden iQ sat-nav (VE Commodore Series II and related models)
+                        from OpenStreetMap. It copies your factory SD card to this PC, replaces the map data with new OpenStreetMap
+                        data, and writes the result to a <Bold>separate, blank SD card</Bold>.
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource Body}">You will need:</TextBlock>
+                    <TextBlock Style="{StaticResource Body}" Margin="16,0,0,10">
+                        • your factory nav SD card<LineBreak/>
+                        • a blank full-size SD card (or microSD in an adapter), 2 to 32 GB<LineBreak/>
+                        • an SD card reader, about 10 GB of free disk space and an internet connection
+                    </TextBlock>
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Accent}" BorderThickness="2">
+                        <StackPanel>
+                            <TextBlock FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,0,0,8"
+                                       Text="Read this before you continue"/>
+                            <TextBlock Style="{StaticResource Body}">
+                                Your factory card is the only way back to the original maps, and it can't be replaced. OpenLion only reads
+                                it and refuses to write to any card that looks like a factory card, but no software can rule out every
+                                mistake or hardware fault. Before you start, slide the factory card's lock switch to "locked", and keep
+                                the card safe once it has been copied.
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource Body}">
+                                OpenLion is unofficial, free software, provided "as is" without warranty of any kind. It is not made,
+                                supported or endorsed by Holden, General Motors, Continental, HERE/Navteq or Whereis. You use it entirely
+                                at your own risk. The authors of OpenLion are not responsible for any damage or loss, including an erased
+                                or damaged factory card, a navigation unit that stops working, or wrong directions. Always follow road
+                                signs and drive safely; OpenStreetMap data can be incomplete or wrong.
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" FontSize="12">
+                        Map data © OpenStreetMap contributors, available under the Open Database License (ODbL).
+                    </TextBlock>
+                </StackPanel>
+            </ScrollViewer>
+            </DockPanel>
+        </DataTemplate>
+
+        <!-- Step 2: factory card -->
+        <DataTemplate DataType="{x:Type vm:FactoryCardStep}">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Style="{StaticResource H1}" Text="Insert your factory card"/>
+                    <TextBlock Style="{StaticResource Body}">
+                        Lock the factory card (slide its switch away from the gold contacts), then put it in the card reader.
+                        OpenLion looks for the iQ navigation folder and shows the card here.
+                    </TextBlock>
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Good}"
+                            Visibility="{Binding HasSavedCopy, Converter={StaticResource BoolToVis}}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Use this copy" Command="{Binding UseSavedCopyCommand}"
+                                    VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Already copied to this PC"/>
+                                <TextBlock Text="{Binding SavedCopyText}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Foreground="{StaticResource Muted}"/>
+                                <TextBlock Text="No need to insert the factory card again." TextWrapping="Wrap" Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="Waiting for a factory card…"
+                               Visibility="{Binding NoneFound, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+                <ListBox ItemsSource="{Binding Candidates}" SelectedItem="{Binding Selected}" BorderThickness="0"
+                         Background="Transparent" HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="{Binding Heading}"/>
+                                    <TextBlock Text="{Binding Version}" Margin="0,4,0,0"/>
+                                    <TextBlock Text="{Binding Databases}" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+                                    <TextBlock Text="{Binding LockHint}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </DataTemplate>
+
+        <!-- Step 3: copy + map format check -->
+        <DataTemplate DataType="{x:Type vm:CopyCardStep}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H1}" Text="Copy your factory card"/>
+                    <TextBlock Style="{StaticResource Body}">
+                        OpenLion copies your card to this PC, checks every file against the card, then checks that it
+                        understands this card's map format. It only reads the card. This takes a few minutes.
+                    </TextBlock>
+
+                    <ProgressBar Height="10" Value="{Binding Percent, Mode=OneWay}" Maximum="100" Margin="0,6,0,10"
+                                 Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"
+                               Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"
+                               Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" HorizontalAlignment="Left"
+                            Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+
+                    <!-- Success -->
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Good}" BorderThickness="2"
+                            Visibility="{Binding IsSuccess, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"
+                                       Foreground="{StaticResource Good}"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                            <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold"
+                                       Text="You can now take the factory card out and put it somewhere safe. OpenLion doesn't need it again."/>
+                            <CheckBox IsChecked="{Binding ConfirmUntested}"
+                                      Visibility="{Binding IsUntested, Converter={StaticResource BoolToVis}}">
+                                <TextBlock TextWrapping="Wrap"
+                                           Text="I understand nobody has tested OpenLion maps with this card version in a car yet, and I want to continue. (If it works, please tell us on GitHub!)"/>
+                            </CheckBox>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Failure -->
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Accent}" BorderThickness="2"
+                            Visibility="{Binding IsFailed, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"
+                                       Foreground="{StaticResource Accent}"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                            <TextBlock Style="{StaticResource Body}">
+                                Your factory card has not been changed. Please report this so OpenLion can support your card:
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource Body}" Margin="16,0,0,10">
+                                1. Click <Bold>Open GitHub issue</Bold> (you'll need a free GitHub account).<LineBreak/>
+                                2. Fill in your car and card version.<LineBreak/>
+                                3. Click <Bold>Show report file</Bold> and drag the zip into the issue.
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" FontSize="12">
+                                The report contains no map data: only your card's version files, a list of file names and
+                                checksums, and what went wrong. GitHub issues are public, so you can open the zip and check it first.
+                            </TextBlock>
+                            <WrapPanel>
+                                <Button Content="Open GitHub issue" Command="{Binding OpenIssueCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Show report file" Command="{Binding ShowReportCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" Margin="0,0,8,6"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Status}"
+                               Visibility="{Binding IsCancelled, Converter={StaticResource BoolToVis}}"/>
+                    <Button Content="Try again" Command="{Binding StartCommand}" HorizontalAlignment="Left"
+                            Visibility="{Binding CanRetry, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 4: OSM data -->
+        <DataTemplate DataType="{x:Type vm:GetOsmStep}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H1}" Text="Get the OpenStreetMap data"/>
+                    <TextBlock Style="{StaticResource Body}">
+                        The new maps are made from OpenStreetMap, the free map built by volunteers. OpenLion downloads the
+                        Australia extract (about 1 GB) from Geofabrik, which updates it every day.
+                    </TextBlock>
+
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock FontWeight="SemiBold" Margin="0,0,0,4" Text="On this PC"/>
+                            <TextBlock Text="{Binding CachedText}" TextWrapping="Wrap" Foreground="{StaticResource Good}"
+                                       Visibility="{Binding HasCached, Converter={StaticResource BoolToVis}}"/>
+                            <TextBlock Text="Nothing downloaded yet." Foreground="{StaticResource Muted}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasCached}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="{Binding RemoteText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" Margin="0,4,0,10">
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"/>
+                        <ProgressBar Height="10" Value="{Binding Percent, Mode=OneWay}" Maximum="100"
+                                     IsIndeterminate="{Binding IsIndeterminate, Mode=OneWay}" Margin="0,0,0,8"/>
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                        <Button Content="Cancel" Command="{Binding CancelCommand}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Error}" Foreground="{StaticResource Accent}"
+                               FontWeight="SemiBold" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"/>
+
+                    <WrapPanel Visibility="{Binding IsIdle, Converter={StaticResource BoolToVis}}">
+                        <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
+                                Visibility="{Binding ShowDownload, Converter={StaticResource BoolToVis}}"/>
+                        <Button Content="Check again" Command="{Binding CheckCommand}" Margin="0,0,8,6"/>
+                        <Button Content="Use a file I already have…" Command="{Binding ImportCommand}" Margin="0,0,8,6"/>
+                    </WrapPanel>
+
+                    <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,10,0,0">
+                        Map data © OpenStreetMap contributors, available under the Open Database License (ODbL).
+                        Extract provided by Geofabrik GmbH.
+                    </TextBlock>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 5: build -->
+        <DataTemplate DataType="{x:Type vm:BuildMapsStep}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H1}" Text="Build the new maps"/>
+
+                    <StackPanel Visibility="{Binding IsReady, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Intro}"/>
+                    </StackPanel>
+
+                    <Border Style="{StaticResource Card}" BorderBrush="#C9A227" BorderThickness="2"
+                            Visibility="{Binding HasWarning, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Warning}" Margin="0"/>
+                    </Border>
+
+                    <!-- Running -->
+                    <StackPanel Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"/>
+                        <ProgressBar Height="10" Value="{Binding Percent, Mode=OneWay}" Maximum="100" Margin="0,0,0,8"/>
+                        <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}">
+                            <Run Text="{Binding Detail, Mode=OneWay}"/><Run Text="  ·  "/><Run Text="{Binding Elapsed, Mode=OneWay}"/>
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}"
+                                   Text="The bar moves by the usual time of each stage, so it may pause or jump."/>
+                        <Button Content="Cancel" Command="{Binding CancelCommand}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+
+                    <!-- Done -->
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Good}" BorderThickness="2"
+                            Visibility="{Binding IsDone, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"
+                                       Foreground="{StaticResource Good}"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}" Margin="0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Failed -->
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Accent}" BorderThickness="2"
+                            Visibility="{Binding IsFailed, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"
+                                       Foreground="{StaticResource Accent}"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                            <TextBlock Style="{StaticResource Body}">
+                                Your factory card has not been changed. If it fails again, please report it: click
+                                <Bold>Open GitHub issue</Bold>, then <Bold>Show report file</Bold> and drag the zip into the issue.
+                                The report contains no map data.
+                            </TextBlock>
+                            <WrapPanel>
+                                <Button Content="Open GitHub issue" Command="{Binding OpenIssueCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Show report file" Command="{Binding ShowReportCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" Margin="0,0,8,6"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Status}"
+                               Visibility="{Binding IsCancelled, Converter={StaticResource BoolToVis}}"/>
+                    <Button Content="{Binding StartLabel}" Command="{Binding StartCommand}" HorizontalAlignment="Left"
+                            Visibility="{Binding IsIdleOrFailed, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 6: write card -->
+        <DataTemplate DataType="{x:Type vm:WriteCardStep}">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Style="{StaticResource H1}" Text="Write the new card"/>
+                    <TextBlock Style="{StaticResource Body}">
+                        Remove the factory card and put it somewhere safe. Then insert a blank SD card.
+                        OpenLion checks every drive and only writes to one that is clearly a spare card.
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="Waiting for a blank card…"
+                               Visibility="{Binding NoneFound, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+                <ItemsControl ItemsSource="{Binding Targets}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="{Binding Heading}"/>
+                                    <TextBlock Text="{Binding Verdict}" Margin="0,4,0,4" FontWeight="SemiBold">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Allowed}" Value="True">
+                                                        <Setter Property="Foreground" Value="{StaticResource Good}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <ItemsControl ItemsSource="{Binding Reasons}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding StringFormat='• {0}'}" TextWrapping="Wrap"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </DockPanel>
+        </DataTemplate>
+    </Window.Resources>
+
+    <DockPanel>
+        <!-- Step list -->
+        <Border DockPanel.Dock="Left" Width="200" Background="#F1EFE8" BorderBrush="#DDDCD6" BorderThickness="0,0,1,0">
+            <StackPanel Margin="16,20">
+                <StackPanel Margin="0,0,0,24">
+                    <Image Source="Assets/logo-256.png" Width="120" Height="120" HorizontalAlignment="Center"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <TextBlock Text="OpenLion" FontSize="20" FontWeight="Bold" Foreground="{StaticResource Brand}"
+                               HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                </StackPanel>
+                <ItemsControl x:Name="StepList" ItemsSource="{Binding Steps}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Title}" Margin="0,6">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                <Setter Property="Foreground" Value="Black"/>
+                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
+        <!-- Buttons -->
+        <Border DockPanel.Dock="Bottom" BorderBrush="#DDDCD6" BorderThickness="0,1,0,0" Padding="24,12">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Back" Command="{Binding BackCommand}" Margin="0,0,10,0"/>
+                <Button Content="Next" Command="{Binding NextCommand}" IsDefault="True"/>
+            </StackPanel>
+        </Border>
+
+        <ContentControl Content="{Binding Current}" Margin="28,24,28,12"/>
+    </DockPanel>
+</Window>

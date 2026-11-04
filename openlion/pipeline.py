@@ -26,29 +26,42 @@ from openlion.common import build_header  # noqa: E402
 AU_BBOX = (9000000, -4810918, 17998594, -726427)   # factory map extent (deg * 1e5)
 
 
+# Stage names passed to run()'s stage callback, in order.
+STAGES = ("roads", "graph", "boundaries", "names", "layers", "fea_read", "fea0", "fea1", "fea2",
+          "fea3", "fea4", "fea_pack", "pois_read", "pois", "write")
+
+
 def log(msg, t0=[time.time()]):
     print(f"[{time.time() - t0[0]:6.0f}s] {msg}", flush=True)
 
 
 def cached(path, fn):
     if os.path.exists(path):
-        return pickle.load(open(path, "rb"))
+        with open(path, "rb") as f:
+            return pickle.load(f)
     v = fn()
-    pickle.dump(v, open(path, "wb"), protocol=5)
+    tmp = path + ".tmp"          # a run killed mid-write must not leave a broken cache
+    with open(tmp, "wb") as f:
+        pickle.dump(v, f, protocol=5)
+    os.replace(tmp, path)
     return v
 
 
-def run(pbf, db, out, bbox=None, lookups=()):
+def run(pbf, db, out, bbox=None, lookups=(), stage=None):
+    """stage: optional callback, called with a name from STAGES as each stage starts."""
     os.makedirs(os.path.join(out, "db"), exist_ok=True)
     region = bbox or AU_BBOX
+    stage = stage or (lambda name: None)
 
     def raw(fn):
         d = open(os.path.join(db, fn), "rb").read()
         return flat.unpack(d) if d[:4] == b"zip\x01" else d
 
     # 1. roads
+    stage("roads")
     c = cached(os.path.join(out, "roads_collected.pickle"), lambda: osm_import.read(pbf, bbox))
     log(f"roads: {len(c.ways):,} ways, {len(c.restrictions):,} restriction relations")
+    stage("graph")
     g, si, st = osm_import.build_graph(c)
     rank = layers.node_ranks(g, si)
     for n in range(g.n_nodes):
@@ -65,6 +78,7 @@ def run(pbf, db, out, bbox=None, lookups=()):
     gc.collect()
 
     # 2. names + search
+    stage("boundaries")
     areas = cached(os.path.join(out, "boundaries.pickle"), lambda: osm_names.read_boundaries(pbf, bbox))
     log(f"boundaries: {len(areas):,} areas")
     factory = {"stt": raw("auz.stt"), "cny": raw("auz.cny"), "cal": raw("au.cal"), "cat": raw("au.cat")}
@@ -72,6 +86,7 @@ def run(pbf, db, out, bbox=None, lookups=()):
                   ("rt_header", "auz.rt"), ("rl_header", "auz.rl"), ("cl_header", "auz.cl"),
                   ("ct_header", "auz.ct")):
         factory[k] = raw(fn)[:0x5E]
+    stage("names")
     tables, nst = osm_names.build(g, g.seg_label, areas, factory)
     log(f"names/search: {dict(nst)}")
 
@@ -80,6 +95,7 @@ def run(pbf, db, out, bbox=None, lookups=()):
     tables["auz.si"] = build_header(tpl, len(si), 0x5E + 4 * len(si)) + struct.pack(f"<{len(si)}I", *si)
 
     # 4. map layers
+    stage("layers")
     out_files = {}
     data = tiler.tile(g, 0, open(os.path.join(db, "auz.mp0"), "rb").read(0x5E))
     out_files["auz.mp0"] = data
@@ -91,21 +107,31 @@ def run(pbf, db, out, bbox=None, lookups=()):
         log(f"mg{k}: {gk.n_segs:,} segments, {len(dk):,} bytes")
 
     # 5. background
+    stage("fea_read")
     fc = cached(os.path.join(out, "fea_collected.pickle"), lambda: osm_fea.read(pbf, region))
     log(f"background: {len(fc.areas):,} areas, {len(fc.lines):,} lines, {len(fc.coast):,} coastline ways")
+
+    def fea_level_done(k):
+        log(f"  fea level {k} done")
+        stage(f"fea{k + 1}" if k < 4 else "fea_pack")
+
+    stage("fea0")
     fea, fst = osm_fea.build(fc, open(os.path.join(db, "auz.fea"), "rb").read(), region, road_lines,
-                             progress=lambda k: log(f"  fea level {k} done"))
+                             progress=fea_level_done)
     out_files["auz.fea"] = fea
     log(f"fea: {len(fea):,} bytes; dropped for size: "
         f"{sum(v for k, v in fst.items() if 'dropped' in k):,}")
 
     # 6. points of interest
+    stage("pois_read")
     pois = cached(os.path.join(out, "pois.pickle"), lambda: osm_poi.read(pbf, bbox))
+    stage("pois")
     poi_path = os.path.join(out, "edb", "POI", "aunz_sql.db3")
     pst = osm_poi.build(pois, os.path.join(db, "..", "edb", "POI", "aunz_sql.db3"), poi_path, areas, region)
     log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM)")
 
     # 7. write: FLAT tables packed, others as-is
+    stage("write")
     for name, blob in tables.items():
         out_files[name] = blob if name.startswith("au.") else flat.pack(blob)
     for name, blob in out_files.items():

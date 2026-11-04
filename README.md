@@ -1,3 +1,5 @@
+<img src="app/src/OpenLion/Assets/logo.png" alt="OpenLion logo" width="120" align="right">
+
 # OpenLion
 
 Open tools and format documentation for the **Holden iQ factory satellite navigation** (VE Commodore Series II, MY11–MY16), with the goal of building **up-to-date map cards from OpenStreetMap**.
@@ -37,7 +39,19 @@ docs/        format reports, in the order they were worked out
 docs/reference/manifest_sha256.tsv   file list + SHA-256 of the MY12 (CD_7606) card
 openlion/    pure-Python (3.9+, standard library only) readers, writers and renderers
 tests/       round-trip, re-tiling, OSM region and card checks against your own card copy
+app/         Windows app (.NET 10, WPF): wizard that copies a factory card, builds maps and writes a blank card
 ```
+
+The Windows app is in progress. Done: the wizard, drive detection, `CardGuard` (the checks that refuse to write to a factory card), and copying the factory card with every file hash-verified, followed by the compatibility check (`openlion.compat`). If a card isn't supported, the app saves a report zip (no map data) and points the user to the [card report issue form](.github/ISSUE_TEMPLATE/card_report.yml). The app downloads the Australia extract from Geofabrik (resumable, MD5-checked; or the user picks a `.osm.pbf` they already have) and builds the maps with `openlion.make_card`, showing progress per stage. Next: writing the card, then bundling Python and an installer.
+
+Build and test with `dotnet test app/OpenLion.slnx`. Settings for development:
+
+| Variable | Effect |
+|---|---|
+| `OPENLION_HOME` | Keep the app's working files here instead of `%LOCALAPPDATA%\OpenLion` |
+| `OPENLION_PYTHON`, `OPENLION_ENGINE` | Python with `osmium` installed, and the folder holding `openlion/` (until Python is bundled) |
+| `OPENLION_BBOX` | Build only this area, e.g. `148.76 -35.92 149.40 -35.12` (Canberra), for quick test builds; the app marks the result as a test build |
+| `OPENLION_FACTORY_NAV` | A factory `navigation/` copy, to run the full compatibility test |
 
 | Module | Purpose |
 |---|---|
@@ -56,9 +70,11 @@ tests/       round-trip, re-tiling, OSM region and card checks against your own 
 | `osm_fea.py` | OSM areas/lines/coastline → background feature file |
 | `osm_poi.py` | OSM amenities → POI database (SQLite), keeping the factory schema and statements |
 | `pipeline.py` | One command: OSM extract → every replaceable table (cached stages, checks, sample lookups) |
+| `make_card.py` | What the app runs: pipeline → `build` → `tests/card_check.py` into a finished `navigation/` folder, with JSON progress (`--json`); OSM reads are cached until the extract changes |
 | `build.py` | Writes a complete `navigation/` folder (`--identity` or `--tables <dir>`), replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
+| `compat.py` | Card compatibility check: re-encodes every replaceable table of a card and requires byte-identical output (`--json` for the app); reports hold no map data |
 
 Typical use, from the repo root, given your own copy of a card's `navigation/` folder:
 
@@ -66,11 +82,13 @@ Typical use, from the repo root, given your own copy of a card's `navigation/` f
 python -m openlion.flat navigation/db_aunz/db/auz.si auz.si.raw
 python -m openlion.render navigation/db_aunz/db/auz.mp0 auz.si.raw out.png 144.95 -37.86 145.06 -37.79
 python tests/roundtrip.py navigation/db_aunz/db
+python -m openlion.compat navigation
 python -m openlion.build navigation out/navigation --identity
 python tests/retile.py navigation/db_aunz/db
 python -m openlion.pipeline australia-latest.osm.pbf navigation/db_aunz/db osm_out
 python -m openlion.build navigation card/navigation --tables osm_out/db --poi osm_out/edb/POI/aunz_sql.db3
 python tests/card_check.py card/navigation navigation
+python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card2/navigation   # all of the above in one
 ```
 
 ## Legal and data policy
