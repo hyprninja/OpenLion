@@ -19,7 +19,8 @@ Holden stopped issuing map updates in 2016. The iQ reads its maps from a full-si
 | Writers for every replaceable map table; identity card build is byte-identical (2,225/2,225 files) | Done | [09](docs/09_writer.md) |
 | Address search: countries, states, counties, cities, speller trees, city/road lists | Decoded, round-trip byte-identical | [10](docs/10_search_tables.md) |
 | Tiling + kd-tree build; mg1–mg4 derived from mp0 (re-tile test: all layers identical) | Done | [11](docs/11_tiling.md) |
-| OSM import | Not started | |
+| OSM import: roads, attributes, speed limits, turn restrictions → mp0 + mg1–mg4 (tested on inner Melbourne) | Working | [12](docs/12_osm_import.md) |
+| OSM street names, address search, POIs, background features | Not started | |
 | In-car tamper test (checksums / signatures?) | Not done | |
 
 Every structural claim in the docs was checked against the full factory dataset (for example, all 11,282 map parcels and 192,282 feature parcels decode and frame exactly).
@@ -45,6 +46,7 @@ tests/       round-trip test against your own card copy
 | `graph.py` | Layout-independent road graph + extractor from any map file |
 | `tiler.py` | Graph → map file: kd-tree, parcels, border copies, all lists |
 | `layers.py` | Derive routing layers mg1–mg4 from the mp0 graph |
+| `osm_import.py` | OpenStreetMap (.pbf, via `osmium`) → road graph + seginfo table |
 | `build.py` | Writes a complete `navigation/` folder, replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
