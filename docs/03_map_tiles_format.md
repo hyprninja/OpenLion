@@ -1,6 +1,6 @@
 # Phase 3b: Schema grammar and map tiles (`mp0`, `mg1`–`mg4`)
 
-Date: 2026-11-04. Parser: `tools/tiles.py`. Render check: `tools/render.py` (renders of factory data are not distributed).
+Date: 2026-11-04. Parser: `openlion/mapfile.py`. Render check: `openlion/render.py` (renders of factory data are not distributed).
 
 ## Result
 

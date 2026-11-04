@@ -1,6 +1,6 @@
 # Phase 3c: Shapes, segment attributes, name links, speed limits
 
-Date: 2026-11-04. Code: `tools/tiles.py` (`Parcel.shapes`, `name_links`, `speed_limits`, `seginfo_*`), `tools/render.py`. Render check: `tools/render.py` (not distributed).
+Date: 2026-11-04. Code: `openlion/mapfile.py` (`Parcel.shapes`, `name_links`, `speed_limits`, `seginfo_*`), `openlion/render.py`. Render check: `openlion/render.py` (not distributed).
 
 ## Summary
 

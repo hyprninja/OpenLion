@@ -1,6 +1,6 @@
 # Phase 3f: Area/line features (`auz.fea`)
 
-Date: 2026-11-04. Code: `tools/features.py`, `tools/render_fea.py`. Render check: `tools/render_fea.py` (renders of factory data are not distributed).
+Date: 2026-11-04. Code: `openlion/features.py`, `openlion/render_fea.py`. Render check: `openlion/render_fea.py` (renders of factory data are not distributed).
 
 ## Summary
 

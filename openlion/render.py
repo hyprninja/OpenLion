@@ -9,8 +9,9 @@ import struct
 import sys
 import zlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import tiles  # noqa: E402
+if not __package__:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from openlion import mapfile as tiles  # noqa: E402
 
 COLOURS = {0: (150, 150, 150), 1: (90, 110, 150), 2: (40, 90, 200), 3: (230, 140, 0), 4: (200, 0, 0)}
 

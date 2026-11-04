@@ -8,8 +8,9 @@ import struct
 import sys
 import zlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import features  # noqa: E402
+if not __package__:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from openlion import features  # noqa: E402
 
 PALETTE = {
     (2, 80): (170, 205, 240), (2, 75): (140, 190, 235), (2, 90): (140, 190, 235),

@@ -1,6 +1,6 @@
 # Phase 3e: Signposts, lanes, junction views
 
-Date: 2026-11-04. Code: `tools/tiles.py` (`signposts()`, `lanes()`, `parcel_lists()`).
+Date: 2026-11-04. Code: `openlion/mapfile.py` (`signposts()`, `lanes()`, `parcel_lists()`).
 
 ## Summary
 

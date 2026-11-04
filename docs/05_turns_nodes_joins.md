@@ -1,6 +1,6 @@
 # Phase 3d: Turn restrictions, long nodes, cross-parcel joins, one-way direction
 
-Date: 2026-11-04. Code: `tools/tiles.py` (`Parcel.nodes`, `seg_ends`, `turn_restrictions`). All figures are for the full `auz.mp0` (6,819 parcels) unless noted.
+Date: 2026-11-04. Code: `openlion/mapfile.py` (`Parcel.nodes`, `seg_ends`, `turn_restrictions`). All figures are for the full `auz.mp0` (6,819 parcels) unless noted.
 
 ## Summary
 
