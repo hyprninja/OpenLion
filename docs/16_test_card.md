@@ -48,6 +48,18 @@ Before assembly, every untouched table was checked for links into the road netwo
 - **Speed limits** come from OSM only: 34% of segments. Roads without an OSM limit show none.
 - **`.fea` is 4× factory size** (233 MB vs 55.6 MB). Every parcel fits the factory buffers, but load speed on the unit is unknown.
 
+## In-car result (2026-11-05)
+
+The assembled card went into the car (VE Series II MY12, iQ) on a spare SD card:
+
+- **Accepted without complaint.** No error or warning, so there is no hidden checksum or signature over the map tables. Fully rebuilt tables with new sizes and contents load fine as long as the metadata files stay unchanged.
+- **New data is used.** A local street that didn't exist in the 2010 data now shows on the map.
+- **Routing works.** A simulated drive (the unit's demo mode) to a town about 200 km away planned and ran correctly, which uses the long-distance routing layers (`mg1`–`mg4`) as well as `mp0`.
+- **Address search works** with the new OSM suburbs, streets and speller trees.
+- **Zoomed-out map seemed fine**, so the 4× larger `.fea` doesn't noticeably slow drawing in first use.
+
+Still to check on real drives: the speed-limit display and spoken turn guidance.
+
 ## In-car test plan
 
 Use a **spare** full-size SD card. The original card stays read-only and is the way back.

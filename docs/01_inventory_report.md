@@ -9,6 +9,7 @@ Date: 2026-11-04. Source: a raw image of a VE Series II MY12 factory nav card an
 - Coordinates are **signed int32, degrees × 10^5** (little-endian in most tables; the `.fea` header is big-endian).
 - Street names are **plain uppercase ASCII** in `auz.str`.
 - No checksum or signature file has turned up yet. Phase 4 (integrity) is still open, and the in-car tamper test is still the deciding experiment.
+  **Settled 2026-11-05:** the unit accepted a card with all map tables rebuilt from OSM, so there is no blocking check (see [16](16_test_card.md)).
 
 ## Phase 0: Safety
 
