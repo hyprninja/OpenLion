@@ -46,7 +46,7 @@ Everything else (`cdrom.txt`, `cdrom.toc`, `files.cfg`, `zone.cfg`, `au.*`, `VER
 1. ~~Search tables~~: done in [report 10](10_search_tables.md). They're now in `REPLACEABLE`, and the identity build covers 19 tables.
 2. **POI database** `edb/POI/aunz_sql.db3` (standard SQLite): rebuild from OSM amenities.
 3. **TMC traffic tables** (`auz.tmc`, `telemat/`) reference factory road IDs; they'll need emptying or remapping.
-4. **Tiling:** split segments into parcels, write tile-edge copies and border points, and build the kd-tree (`pcl_dir`) for each layer.
+4. ~~Tiling~~: done in [report 11](11_tiling.md), including deriving the mg layers.
 5. **Graph build from OSM:** nodes, arms, `hands`, U-turn/one-way masks, turn restrictions, ranks → mg layers (report 08), names → `.rd`/`.str`, speeds, lanes, signposts.
 6. **Open bits** best settled by a car test: `nodeinfo.depth`, `turn_res.direction`, `signLevel`.
 7. **The tamper test**, which decides whether any hidden check exists before investing in 1–5.
