@@ -74,6 +74,13 @@ def check_map(path):
     return st
 
 
+def check_search(db):
+    """Address-search tables re-encoded from their parsed form."""
+    from openlion import build
+    reps = build.search_identity(db)
+    return {k.split("/")[-1]: v == open(os.path.join(db, k.split("/")[-1]), "rb").read() for k, v in reps.items()}
+
+
 def check_fea(path):
     d = open(path, "rb").read()
     out, st = feawrite.roundtrip(d)
@@ -83,10 +90,13 @@ def check_fea(path):
 
 if __name__ == "__main__":
     db = sys.argv[1]
-    want = sys.argv[2:] or ["flat", "mp0", "mg1", "mg2", "mg3", "mg4", "fea"]
+    want = sys.argv[2:] or ["flat", "search", "mp0", "mg1", "mg2", "mg3", "mg4", "fea"]
     for w in want:
         t = time.time()
-        if w == "flat":
+        if w == "search":
+            r = check_search(db)
+            print("search tables:", "all identical" if all(r.values()) else r)
+        elif w == "flat":
             r = check_flat(db)
             print("flat tables:", "all identical" if all(r.values()) else r)
         elif w == "fea":

@@ -19,6 +19,10 @@ REPLACEABLE = {
     "db_aunz/db/auz.rd", "db_aunz/db/auz.str", "db_aunz/db/auz.si",
     "db_aunz/db/auz.mp0", "db_aunz/db/auz.mg1", "db_aunz/db/auz.mg2",
     "db_aunz/db/auz.mg3", "db_aunz/db/auz.mg4", "db_aunz/db/auz.fea",
+    # address search (report 10)
+    "db_aunz/db/auz.ctr", "db_aunz/db/auz.stt", "db_aunz/db/auz.cny", "db_aunz/db/auz.cty",
+    "db_aunz/db/auz.cl", "db_aunz/db/auz.ct", "db_aunz/db/auz.rl", "db_aunz/db/auz.rt",
+    "db_aunz/db/au.cal", "db_aunz/db/au.cat",
 }
 
 
@@ -98,6 +102,29 @@ def identity_replacements(src):
                "max_tmcp_location_size": m.max_tmcp_location_size}
         out[f"db_aunz/db/auz.{layer}"] = mapwrite.encode_mapfile(d[:0x5E], hdr, m.kd, zipped, sizes)
     out["db_aunz/db/auz.fea"] = feawrite.roundtrip(open(os.path.join(db, "auz.fea"), "rb").read())[0]
+    out.update(search_identity(db))
+    return out
+
+
+def search_identity(db):
+    """Rebuild the address-search tables from their parsed form."""
+    from openlion import flat, search
+    out = {}
+
+    def load(fn):
+        d = open(os.path.join(db, fn), "rb").read()
+        return (flat.unpack(d), True) if d[:4] == b"zip\x01" else (d, False)
+
+    for fn, kind in (("auz.ctr", "ctr"), ("auz.stt", "stt"), ("auz.cny", "cny"), ("auz.cl", "cl"),
+                     ("auz.rl", "rl"), ("au.cal", "cal"), ("au.cat", "cat")):
+        raw, zipped = load(fn)
+        new = search.encode_records(raw[:0x5E], search.records(raw, search.RECORD_SIZES[kind]))
+        out[f"db_aunz/db/{fn}"] = flat.pack(new) if zipped else new
+    raw, _ = load("auz.cty")
+    out["db_aunz/db/auz.cty"] = flat.pack(search.encode_cities(raw[:0x5E], search.parse_cities(raw))[0])
+    for fn in ("auz.ct", "auz.rt"):
+        raw, _ = load(fn)
+        out[f"db_aunz/db/{fn}"] = flat.pack(search.encode_trees(raw[:0x5E], list(search.parse_trees(raw).values()))[0])
     return out
 
 

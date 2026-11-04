@@ -43,7 +43,7 @@ Everything else (`cdrom.txt`, `cdrom.toc`, `files.cfg`, `zone.cfg`, `au.*`, `VER
 
 ## What the OSM converter still needs (in order)
 
-1. **Search tables not decoded yet:** `auz.cty` (cities), `cl`/`ct` (city list / tree), `rl`/`rt` (road list / tree), `cny`/`stt`/`ctr` (county / state / country), `pol`/`pot` (postcodes), `ti`, `typ`. Without them, new roads can be driven on and routed but not found by "enter destination". They must be decoded and added to `REPLACEABLE`.
+1. ~~Search tables~~: done in [report 10](10_search_tables.md). They're now in `REPLACEABLE`, and the identity build covers 19 tables.
 2. **POI database** `edb/POI/aunz_sql.db3` (standard SQLite): rebuild from OSM amenities.
 3. **TMC traffic tables** (`auz.tmc`, `telemat/`) reference factory road IDs; they'll need emptying or remapping.
 4. **Tiling:** split segments into parcels, write tile-edge copies and border points, and build the kd-tree (`pcl_dir`) for each layer.
