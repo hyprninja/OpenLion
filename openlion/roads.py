@@ -56,6 +56,50 @@ def string_at(s, off):
     return s[off:end]
 
 
+# ---- writers ---------------------------------------------------------------
+
+def encode_road(r) -> bytes:
+    out = REC.pack(r["countryID"], r["cityID"], r["roadInfo"], r["min_long"], r["min_lat"],
+                   r["delta_long"], r["delta_lat"], r["maxNumber"], r["minNumber"],
+                   len(r["names"]), r["intersectionCount"])
+    return out + b"".join(NAME.pack(o, q) for o, q in r["names"])
+
+
+def encode_roads(template: bytes, records) -> bytes:
+    """Road table: common header (rec_cnt = #roads, byte_cnt = total size) + records.
+    A record's byte offset minus 0x5E is the roadID that map parcels use."""
+    from .common import build_header
+    body = b"".join(encode_road(r) for r in records)
+    return build_header(template, len(records), HDR + len(body)) + body
+
+
+def parse_strings(s: bytes):
+    """String table body: entries {u8 trans, text, NUL}. trans 0x04 = name,
+    0x02 = '[n]' placeholder. Returns [(rel_offset, trans, text_bytes)]."""
+    cnt = struct.unpack_from("<I", s, 0x56)[0]
+    out, off = [], HDR
+    for _ in range(cnt):
+        end = s.index(b"\0", off)
+        out.append((off - HDR, s[off], s[off + 1:end]))
+        off = end + 1
+    if off != len(s):
+        raise ValueError("string table framing")
+    return out
+
+
+def encode_strings(template: bytes, entries):
+    """entries: [(trans, text_bytes)]. Returns (table bytes, [rel_offset per entry])."""
+    from .common import build_header
+    parts, offs, pos = [], [], 0
+    for trans, text in entries:
+        rec = bytes([trans]) + text + b"\0"
+        offs.append(pos)
+        parts.append(rec)
+        pos += len(rec)
+    body = b"".join(parts)
+    return build_header(template, len(entries), HDR + len(body)) + body, offs
+
+
 if __name__ == "__main__":
     rd = open(sys.argv[1], "rb").read()
     st = open(sys.argv[2], "rb").read()

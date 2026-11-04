@@ -16,7 +16,9 @@ Holden stopped issuing map updates in 2016. The iQ reads its maps from a full-si
 | Signposts, exit numbers, lanes, junction views | Decoded | [06](docs/06_signposts_lanes.md) |
 | Background features `.fea` (water, parks, landuse, rail, overview roads) | Decoded | [07](docs/07_features_fea.md) |
 | Routing layers `mg1`–`mg4` | Fully derivable from `mp0` | [08](docs/08_overview_layers.md) |
-| OSM → native writer | Not started | |
+| Writers for every replaceable map table; identity card build is byte-identical (2,225/2,225 files) | Done | [09](docs/09_writer.md) |
+| Search tables (cities, city/road trees, postcodes) | Not decoded | |
+| OSM import, tiling, kd-tree build | Not started | |
 | In-car tamper test (checksums / signatures?) | Not done | |
 
 Every structural claim in the docs was checked against the full factory dataset (for example, all 11,282 map parcels and 192,282 feature parcels decode and frame exactly).
@@ -26,23 +28,29 @@ Every structural claim in the docs was checked against the full factory dataset 
 ```
 docs/        format reports, in the order they were worked out
 docs/reference/manifest_sha256.tsv   file list + SHA-256 of the MY12 (CD_7606) card
-tools/       pure-Python (3.9+, standard library only) readers and renderers
+openlion/    pure-Python (3.9+, standard library only) readers, writers and renderers
+tests/       round-trip test against your own card copy
 ```
 
-| Tool | Purpose |
+| Module | Purpose |
 |---|---|
-| `unzip_flat.py` | Unpack and re-pack `zip\x01` FLAT tables (re-pack is byte-identical) |
-| `roads.py` | Road / address index (`.rd`) and street names (`.str`) |
-| `tiles.py` | Map tiles (`mp0`, `mg1`–`mg4`): nodes, segments, shapes, attributes, names, speeds, turn bans, signposts, lanes |
-| `features.py` | Background feature file (`.fea`), big-endian, 5 zoom levels |
+| `flat.py` | Unpack and re-pack `zip\x01` FLAT tables |
+| `common.py` | Shared 0x5E table header |
+| `roads.py` | Road / address index (`.rd`) and street names (`.str`): read + write |
+| `mapfile.py` | Map tiles (`mp0`, `mg1`–`mg4`) reader: nodes, segments, shapes, attributes, names, speeds, turn bans, signposts, lanes |
+| `mapwrite.py` | Map tile writer: parcel container, list codecs, file assembly |
+| `features.py` / `feawrite.py` | Background feature file (`.fea`) reader / writer |
+| `build.py` | Writes a complete `navigation/` folder, replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
 
-Typical use, given your own copy of a card's `navigation/db_aunz/db`:
+Typical use, from the repo root, given your own copy of a card's `navigation/` folder:
 
 ```bash
-python -I tools/unzip_flat.py navigation/db_aunz/db/auz.rd auz.rd.raw
-python -I tools/render.py navigation/db_aunz/db/auz.mp0 auz.si.raw out.png 144.95 -37.86 145.06 -37.79
+python -m openlion.flat navigation/db_aunz/db/auz.si auz.si.raw
+python -m openlion.render navigation/db_aunz/db/auz.mp0 auz.si.raw out.png 144.95 -37.86 145.06 -37.79
+python tests/roundtrip.py navigation/db_aunz/db
+python -m openlion.build navigation out/navigation --identity
 ```
 
 ## Legal and data policy

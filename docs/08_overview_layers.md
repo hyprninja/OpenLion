@@ -1,6 +1,6 @@
 # Phase 3g: Overview layers (`mg1`–`mg4`) and their relation to `mp0`
 
-Date: 2026-11-04. Render check: `tools/render.py` on `auz.mg2` vs `auz.mp0` (not distributed).
+Date: 2026-11-04. Render check: `openlion/render.py` on `auz.mg2` vs `auz.mp0` (not distributed).
 
 ## Result: a strict routing hierarchy, fully derivable from `mp0`
 

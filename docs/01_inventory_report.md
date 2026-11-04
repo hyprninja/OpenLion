@@ -16,7 +16,7 @@ Date: 2026-11-04. Source: a raw image of a VE Series II MY12 factory nav card an
 |---|---|
 | Raw image | 4 GB card, 3,963,617,280 bytes |
 | File copy | 2,225 files, 382,190,142 bytes. Per-file SHA-256 in [`reference/manifest_sha256.tsv`](reference/manifest_sha256.tsv), useful for checking that another card holds the same CD_7606 release |
-| Copy vs image | All 2,225 files identical (`tools/fat32_list.py` lists and hashes files straight from a raw image) |
+| Copy vs image | All 2,225 files identical (`openlion/fat32_list.py` lists and hashes files straight from a raw image) |
 | Partition | MBR, one partition, type `0x0B` (FAT32 CHS), starts LBA 8192, fills the card. 4 MB gap before it is all zeros. No hidden areas. |
 | Filesystem | **FAT32**, 32 KB clusters, label `NO NAME`. The exFAT claim is wrong. |
 
@@ -61,7 +61,7 @@ Comments in the file say several tables are VW/BMW/Opel only. This is a shared C
 0x40  "5.0.5"              0x54  table-specific header starts
 ```
 
-### FLAT container (cracked, `tools/unzip_flat.py`)
+### FLAT container (cracked, `openlion/flat.py`)
 
 ```
 0x00 "zip\x01" | u32 block_size=0xC00 | u32 uncompressed_size | u32 max_compressed_block
@@ -69,7 +69,7 @@ Comments in the file say several tables are VW/BMW/Opel only. This is a shared C
 each block = one zlib stream (78 DA) of 3072 bytes (last block shorter)
 ```
 
-All 16 FLAT tables decompress and match the size checks. Run `tools/unzip_flat.py` locally to unpack them. For example, `auz.rd` holds 22.6 MB of road records and `auz.str` holds 10.2 MB of strings.
+All 16 FLAT tables decompress and match the size checks. Run `openlion/flat.py` locally to unpack them. For example, `auz.rd` holds 22.6 MB of road records and `auz.str` holds 10.2 MB of strings.
 
 ### MAP / FEATURE files
 

@@ -1,6 +1,6 @@
 # Phase 3a: Road table (`.rd`) and string table (`.str`)
 
-Date: 2026-11-04. Parser: `tools/roads.py`. `roads.py` can dump every road to TSV locally (not distributed).
+Date: 2026-11-04. Parser: `openlion/roads.py`. `roads.py` can dump every road to TSV locally (not distributed).
 
 ## Key discovery: `au.mod` is the schema
 
@@ -67,7 +67,7 @@ Checks:
 
 ## Compression round trip
 
-`tools/unzip_flat.py pack()` rebuilds **all 16 FLAT tables byte-identical** to the originals using standard zlib level 9 with 3,072-byte blocks. Edited tables can therefore be written in exactly the factory style.
+`openlion/flat.py pack()` rebuilds **all 16 FLAT tables byte-identical** to the originals using standard zlib level 9 with 3,072-byte blocks. Edited tables can therefore be written in exactly the factory style.
 
 ## Open items
 
