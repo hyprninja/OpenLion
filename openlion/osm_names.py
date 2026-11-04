@@ -29,6 +29,10 @@ TYPE_WORDS = {
 }
 DIRECTIONS = {"N", "S", "E", "W", "NORTH", "SOUTH", "EAST", "WEST", "NE", "NW", "SE", "SW"}
 MAXLEN = 35
+# Cities the factory models as one municipality: its suburbs are named "SUBURB, CITY",
+# point at it (cityIdMunicipality), and the city's own street list covers all of them
+# (factory: CANBERRA with 123 suburbs). (city name, state name, CBD suburb for the centre)
+MUNICIPALITIES = (("CANBERRA", "AUSTRALIAN CAPITAL TERRITORY", "CITY"),)
 
 
 def normalise(name):
@@ -219,11 +223,22 @@ def build(g, seg_labels, areas, factory, catalog_id=0):
         city_of_seg.append(i)
     stats["suburb lookups"] = len(cache)
     used = sorted({c for c in city_of_seg if c is not None}, key=lambda i: normalise(loc[i].name))
+    # suburbs of a municipality (by the state their centre lies in)
+    muni_states = {st: m for m, st, _ in MUNICIPALITIES}
+    muni_of = {}
+    for i in used:
+        sti = idx[4].find(*loc[i].centroid())
+        m = muni_states.get(normalise(by_level[4][sti].name)) if sti is not None else None
+        if m:
+            muni_of[i] = m
     # disambiguate duplicate names with the state, like the factory "(VICTORIA)"
-    names_count = collections.Counter(normalise(loc[i].name) for i in used)
+    names_count = collections.Counter(normalise(loc[i].name) for i in used if i not in muni_of)
     city_name = {}
     for i in used:
         nm = normalise(loc[i].name)
+        if i in muni_of:
+            city_name[i] = nm
+            continue
         if names_count[nm] > 1:
             cx, cy = loc[i].centroid()
             sti = idx[4].find(cx, cy)
@@ -276,12 +291,31 @@ def build(g, seg_labels, areas, factory, catalog_id=0):
         variants = [name] + [v for v in rotations(name)]
         pci = idx[0].find(cx, cy)
         postcode = a.postcode or (by_level[0][pci].postcode if pci is not None else None)
-        if postcode:
+        m = muni_of.get(i)
+        if m:   # factory style: "ISABELLA PLAINS, CANBERRA", "PLAINS;ISABELLA, CANBERRA", "2905, CANBERRA"
+            variants = [f"{v}, {m}"[:MAXLEN] for v in variants]
+            if postcode:
+                variants.append(f"{postcode}, {m}")
+        elif postcode:
             variants.append(f"{postcode}, {name}"[:MAXLEN])
         city_rec[i] = len(cities)
         cities.append({"cityID": None, "countyID": lga_cid.get(lga, 0), "cover": a.bbox,
                        "cataloglistIdFirst": catalog_id, "centre": (cx, cy), "cityIdMunicipality": 0,
                        "variants": variants})
+    # municipalities: one city over all their suburbs
+    for m, _, cbd in MUNICIPALITIES:
+        kids = [i for i in used if muni_of.get(i) == m]
+        if not kids:
+            continue
+        covers = [loc[i].bbox for i in kids]
+        centre_kid = next((i for i in kids if city_name[i] == cbd), kids[0])
+        city_rec[("muni", m)] = len(cities)
+        cities.append({"cityID": None, "countyID": cities[city_rec[centre_kid]]["countyID"],
+                       "cover": (min(c[0] for c in covers), min(c[1] for c in covers),
+                                 max(c[2] for c in covers), max(c[3] for c in covers)),
+                       "cataloglistIdFirst": catalog_id, "centre": loc[centre_kid].centroid(),
+                       "cityIdMunicipality": 0, "variants": [m]})
+        stats[f"{m.lower()} suburbs"] = len(kids)
     # unplaced segments go to a catch-all city so every road has one
     if stats["segments outside any locality"]:
         city_rec[None] = len(cities)
@@ -308,6 +342,8 @@ def build(g, seg_labels, areas, factory, catalog_id=0):
         c["cityID"] = pos
         c["cityIdMunicipality"] = pos
         pos += search.CITY.size + 4 * len(c["name_offsets"])
+    for i, m in muni_of.items():
+        cities[city_rec[i]]["cityIdMunicipality"] = cities[city_rec[("muni", m)]]["cityID"]
     cty_raw, _ = search.encode_cities(factory["cty_header"], cities)
 
     # road records -> byte offsets (roadID), names -> string offsets
@@ -335,6 +371,8 @@ def build(g, seg_labels, areas, factory, catalog_id=0):
     for k, key in enumerate(road_keys):
         for q, t in enumerate(rec_names[k]):
             roads_of_city[city_rec[key[0]]].append((t, road_id[k], q))
+            if key[0] in muni_of:   # the municipality lists every suburb's streets too
+                roads_of_city[city_rec[("muni", muni_of[key[0]])]].append((t, road_id[k], q))
     rl_recs, trees = [], []
     tree_off_of_city = []
     tree_pos = 0

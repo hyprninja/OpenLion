@@ -24,7 +24,10 @@ REPLACEABLE = {
     "db_aunz/db/auz.ctr", "db_aunz/db/auz.stt", "db_aunz/db/auz.cny", "db_aunz/db/auz.cty",
     "db_aunz/db/auz.cl", "db_aunz/db/auz.ct", "db_aunz/db/auz.rl", "db_aunz/db/auz.rt",
     "db_aunz/db/au.cal", "db_aunz/db/au.cat",
+    # points of interest (report 17)
+    "db_aunz/edb/POI/aunz_sql.db3",
 }
+POI_DB = "db_aunz/edb/POI/aunz_sql.db3"
 
 
 def sha256(path):
@@ -129,9 +132,12 @@ def search_identity(db):
     return out
 
 
-def table_replacements(src, tables_dir):
-    """Map every table file in tables_dir (named as in db_aunz/db/) onto its card path."""
+def table_replacements(src, tables_dir, poi=None):
+    """Map every table file in tables_dir (named as in db_aunz/db/) onto its card path,
+    plus an optional new POI database."""
     out = {}
+    if poi:
+        out[POI_DB] = open(poi, "rb").read()
     for fn in sorted(os.listdir(tables_dir)):
         rel = f"db_aunz/db/{fn}"
         if rel not in REPLACEABLE:
@@ -153,6 +159,8 @@ def check_headers(src, dst, rels):
     from openlion import flat
     bad = []
     for rel in rels:
+        if not rel.startswith("db_aunz/db/"):
+            continue          # the POI database is SQLite, checked by tests/card_check.py
         a = open(os.path.join(src, rel), "rb").read()
         b = open(os.path.join(dst, rel), "rb").read()
         if (a[:4] == FLAT_MAGIC) != (b[:4] == FLAT_MAGIC):
@@ -173,16 +181,18 @@ if __name__ == "__main__":
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--identity", action="store_true", help="rebuild the factory tables (writer test)")
     g.add_argument("--tables", help="folder of new tables named as in db_aunz/db/ (e.g. pipeline out/db)")
+    ap.add_argument("--poi", help="new POI database (e.g. pipeline out/edb/POI/aunz_sql.db3), with --tables")
     a = ap.parse_args()
     if os.path.exists(a.dst) and os.listdir(a.dst):
         sys.exit(f"{a.dst} already exists and is not empty")
-    reps = identity_replacements(a.src) if a.identity else table_replacements(a.src, a.tables)
+    reps = identity_replacements(a.src) if a.identity else table_replacements(a.src, a.tables, a.poi)
     rep = build(a.src, a.dst, reps)
     print(f"copied {rep['copied']} files unchanged, verify failures: {rep['verify_failed'] or 'none'}")
     same = [r for r in rep["replaced"] if sha256(os.path.join(a.src, r)) == sha256(os.path.join(a.dst, r))]
     print(f"replaced {len(rep['replaced'])} map tables, byte-identical to factory: {len(same)}/{len(rep['replaced'])}")
     bad = check_headers(a.src, a.dst, rep["replaced"])
-    print(f"header stamps kept: {len(rep['replaced']) - len(bad)}/{len(rep['replaced'])}")
+    n_tab = sum(r.startswith("db_aunz/db/") for r in rep["replaced"])
+    print(f"header stamps kept: {n_tab - len(bad)}/{n_tab}")
     for line in bad:
         print("  " + line)
     sys.exit(1 if rep["verify_failed"] or bad else 0)

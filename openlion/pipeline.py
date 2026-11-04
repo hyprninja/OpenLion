@@ -5,10 +5,12 @@ Usage:
          [--bbox lon0 lat0 lon1 lat1] [--lookup CITY STREET ...]
 
 Slow OSM reads are cached as pickles in <out dir>. Output tables go to <out dir>/db/
-with the factory file names, packed (FLAT) exactly as on the card.
+with the factory file names, packed (FLAT) exactly as on the card, and the POI
+database to <out dir>/edb/POI/aunz_sql.db3.
 """
 import argparse
 import collections
+import gc
 import os
 import pickle
 import struct
@@ -17,7 +19,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import (flat, graph, layers, mapfile, osm_fea, osm_import, osm_names,  # noqa: E402
+from openlion import (flat, graph, layers, mapfile, osm_fea, osm_import, osm_names, osm_poi,  # noqa: E402
                       roads, search, tiler)
 from openlion.common import build_header  # noqa: E402
 
@@ -52,6 +54,15 @@ def run(pbf, db, out, bbox=None, lookups=()):
     for n in range(g.n_nodes):
         g.node_info[n]["rank"] = rank[n]
     log(f"graph: {dict(st)}")
+    # the background layer only needs the overview roads; drop the raw OSM ways
+    road_lines = []
+    for wid, tags, pts in c.ways:
+        r = osm_import.road_rank(tags)
+        if r >= 2:
+            road_lines.append((r, osm_import.HIGHWAY[tags["highway"]][1], tags.get("ref"),
+                               [(x, y) for _, x, y in pts]))
+    del c
+    gc.collect()
 
     # 2. names + search
     areas = cached(os.path.join(out, "boundaries.pickle"), lambda: osm_names.read_boundaries(pbf, bbox))
@@ -82,26 +93,26 @@ def run(pbf, db, out, bbox=None, lookups=()):
     # 5. background
     fc = cached(os.path.join(out, "fea_collected.pickle"), lambda: osm_fea.read(pbf, region))
     log(f"background: {len(fc.areas):,} areas, {len(fc.lines):,} lines, {len(fc.coast):,} coastline ways")
-    road_lines = []
-    for wid, tags, pts in c.ways:
-        r = osm_import.road_rank(tags)
-        if r >= 2:
-            road_lines.append((r, osm_import.HIGHWAY[tags["highway"]][1], tags.get("ref"),
-                               [(x, y) for _, x, y in pts]))
     fea, fst = osm_fea.build(fc, open(os.path.join(db, "auz.fea"), "rb").read(), region, road_lines,
                              progress=lambda k: log(f"  fea level {k} done"))
     out_files["auz.fea"] = fea
     log(f"fea: {len(fea):,} bytes; dropped for size: "
         f"{sum(v for k, v in fst.items() if 'dropped' in k):,}")
 
-    # 6. write: FLAT tables packed, others as-is
+    # 6. points of interest
+    pois = cached(os.path.join(out, "pois.pickle"), lambda: osm_poi.read(pbf, bbox))
+    poi_path = os.path.join(out, "edb", "POI", "aunz_sql.db3")
+    pst = osm_poi.build(pois, os.path.join(db, "..", "edb", "POI", "aunz_sql.db3"), poi_path, areas, region)
+    log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM)")
+
+    # 7. write: FLAT tables packed, others as-is
     for name, blob in tables.items():
         out_files[name] = blob if name.startswith("au.") else flat.pack(blob)
     for name, blob in out_files.items():
         open(os.path.join(out, "db", name), "wb").write(blob)
     log(f"wrote {len(out_files)} tables to {os.path.join(out, 'db')}: {sorted(out_files)}")
 
-    # 7. checks
+    # 8. checks
     m = mapfile.MapFile(out_files["auz.mp0"])
     bad = 0
     for i in range(m.pcl_cnt):
