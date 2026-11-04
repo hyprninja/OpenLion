@@ -16,10 +16,10 @@ from .mapfile import SEGINFO_FIELDS
 
 FT = 0.3048
 
-# highway=* -> (rank, class). rank drives the mg layers; class follows the factory
-# meaning (0 freeway, 1 highway, 2 arterial, 3 street, 6 ramp, 7 track, 8 busway).
-# Ranks calibrated on inner Melbourne: factory km per rank 4/3/2/1 = 19/49/196/68;
-# OSM motorway/trunk/primary+secondary/tertiary = 35/41/210/145.
+# highway=* -> (base rank, class). road_rank() refines rank by speed (urban vs rural);
+# class follows the factory meaning (0 freeway, 1 highway, 2 arterial, 3 street,
+# 6 ramp, 7 track, 8 busway). Base ranks calibrated on inner Melbourne: factory km per
+# rank 4/3/2/1 = 19/49/196/68; OSM motorway/trunk/primary+secondary/tertiary = 35/41/210/145.
 HIGHWAY = {
     "motorway": (4, 0), "trunk": (3, 1), "primary": (2, 1), "secondary": (2, 2),
     "tertiary": (1, 2), "unclassified": (0, 3), "residential": (0, 3),
@@ -78,11 +78,27 @@ def parse_speed(v):
     return s if 5 <= s <= 130 else None
 
 
+def road_rank(tags):
+    """Rank 0-4 (drives the mg layers). Calibrated twice: inner Melbourne (urban
+    trunk/primary = 3/2) and all of Australia (factory rank 4 = ~40k km, which needs
+    rural trunk roads): motorway 4; trunk 4 if >= 80 km/h or untagged, else 3;
+    primary 3 if >= 80 km/h, else 2; secondary 2; tertiary 1; links one below."""
+    hw = tags["highway"]
+    rank, _ = HIGHWAY[hw]
+    if rank is None:
+        return LINK_RANK[hw]
+    sp = parse_speed(tags.get("maxspeed"))
+    if hw == "trunk":
+        return 4 if (sp is None or sp >= 80) else 3
+    if hw == "primary":
+        return 3 if (sp is not None and sp >= 80) else 2
+    return rank
+
+
 def seginfo_fields(tags):
     hw = tags["highway"]
-    rank, cls = HIGHWAY[hw]
-    if rank is None:
-        rank = LINK_RANK[hw]
+    _, cls = HIGHWAY[hw]
+    rank = road_rank(tags)
     f = {n: 0 for n, _, _ in SEGINFO_FIELDS}
     f["rank"], f["class"] = rank, cls
     if tags.get("surface") in UNSEALED or hw == "track":
@@ -265,8 +281,32 @@ def build_graph(c, max_shape_points=500):
 
     for n in range(g.n_nodes):
         g.node_arms[n].sort(key=lambda s: (first_step(n, s), s))
-        if len(g.node_arms[n]) > 8:
-            stats["nodes with >8 arms (unsupported)"] += 1
+
+    # The format allows at most 8 arms per node. Split bigger junctions: move arms
+    # beyond 7 to a twin node at the same spot, joined by a 1 ft two-way connector.
+    for n in range(g.n_nodes):
+        while len(g.node_arms[n]) > 8:
+            arms = g.node_arms[n]
+            keep, move = arms[:7], arms[7:]
+            twin = g.add_node(g.node_xy[n])
+            # connector runs from the lower id (the format orders equal coordinates by index)
+            rank_seg = max(move + keep, key=lambda s: si_records[g.seg_info[s]] & 7)
+            v = (si_records[g.seg_info[rank_seg]] & ~(3 << 8)) | (3 << 8)   # same class, two-way
+            if v not in si_index:
+                si_index[v] = len(si_records)
+                si_records.append(v)
+            con = g.add_segment(n, twin, 1, si_index[v], None, None, [], None)
+            g.seg_label.append((None, None))
+            for s in move:
+                if g.seg_a[s] == n:
+                    g.seg_a[s] = twin
+                if g.seg_b[s] == n:
+                    g.seg_b[s] = twin
+            g.node_arms[n] = keep + [con]
+            g.node_arms[twin] = move + [con]
+            for m in (n, twin):
+                g.node_arms[m].sort(key=lambda s, m=m: (first_step(m, s) if g.seg_a[s] != g.seg_b[s] else 0, s))
+            stats["junctions split (>8 arms)"] += 1
 
     # U-turn and wrong-way exit masks at each end
     def can_leave(n, s):
@@ -297,6 +337,9 @@ def build_graph(c, max_shape_points=500):
             stats["restrictions skipped (ambiguous)"] += 1
             continue
         arms = g.node_arms[vn]
+        if ts[0] not in arms or fs[0] not in arms:
+            stats["restrictions skipped (split junction)"] += 1
+            continue
         if kind.startswith("no_"):
             banned = [arms.index(ts[0])]
         elif kind.startswith("only_"):
