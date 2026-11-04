@@ -193,6 +193,7 @@ def build_graph(c, max_shape_points=500):
         use[pts[0][0]] += 1
         use[pts[-1][0]] += 1
     g = Graph()
+    g.seg_label = []      # OSM (name, ref) per segment, for osm_names
     nodes = {}
     si_index, si_records = {}, []
     stats = collections.Counter()
@@ -244,6 +245,7 @@ def build_graph(c, max_shape_points=500):
             adas = {"content": 2, "speed_kmh": speed, "lanes": None, "n_limits": 0} if speed else None
             s = g.add_segment(a, b, length_ft(xy), si_index[v], None, shape or None, [], adas)
             g.seg_shape[s] = shape if shape else None
+            g.seg_label.append((tags.get("name"), tags.get("ref")))
             piece_of[wid].append((s, seq[0][0], seq[-1][0]))
             stats["segments"] += 1
             stats["with speed limit"] += bool(speed)
