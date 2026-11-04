@@ -36,7 +36,10 @@ docs/        format reports, in the order they were worked out
 docs/reference/manifest_sha256.tsv   file list + SHA-256 of the MY12 (CD_7606) card
 openlion/    pure-Python (3.9+, standard library only) readers, writers and renderers
 tests/       round-trip, re-tiling, OSM region and card checks against your own card copy
+app/         Windows app (.NET 10, WPF): wizard that copies a factory card, builds maps and writes a blank card
 ```
+
+The Windows app is in progress: the wizard, drive detection and `CardGuard` (the checks that refuse to write to a factory card) are done; copy, OSM download, build and card writing come next. Build and test with `dotnet test app/OpenLion.slnx`.
 
 | Module | Purpose |
 |---|---|
