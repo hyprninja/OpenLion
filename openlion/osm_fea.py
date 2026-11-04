@@ -348,99 +348,161 @@ def fit_budget(feats, stats, level):
     return kept
 
 
+def _poly_area(p):
+    return abs(sum(p[i][0] * p[i - 1][1] - p[i - 1][0] * p[i][1] for i in range(len(p)))) / 2
+
+
+def land_cells(polys, grid, rng, out):
+    """Recursively clip land polygons to a range of cells. out[(ix, iy)] = parts
+    (absolute) for coastal cells, "land" for cells entirely on land; cells not in
+    out are open water."""
+    x0g, y0g, W, H = grid
+    ix0, ix1, iy0, iy1 = rng
+    box = (x0g + ix0 * W, y0g + iy0 * H, x0g + (ix1 + 1) * W, y0g + (iy1 + 1) * H)
+    parts = [q for q in (clip_poly(p, box) for p in polys) if len(q) >= 3]
+    if not parts:
+        return
+    full = (box[2] - box[0]) * (box[3] - box[1])
+    if sum(_poly_area(q) for q in parts) >= full * 0.9999:
+        for ix in range(ix0, ix1 + 1):
+            for iy in range(iy0, iy1 + 1):
+                out[(ix, iy)] = "land"
+        return
+    if ix0 == ix1 and iy0 == iy1:
+        out[(ix0, iy0)] = parts
+        return
+    if ix1 - ix0 >= iy1 - iy0:
+        m = (ix0 + ix1) // 2
+        land_cells(parts, grid, (ix0, m, iy0, iy1), out)
+        land_cells(parts, grid, (m + 1, ix1, iy0, iy1), out)
+    else:
+        m = (iy0 + iy1) // 2
+        land_cells(parts, grid, (ix0, ix1, iy0, m), out)
+        land_cells(parts, grid, (ix0, ix1, m + 1, iy1), out)
+
+
+def _bucket(items, bbox_of, grid, rng):
+    """{(ix, iy): [item index]} over the cell range each item's bbox covers."""
+    x0g, y0g, W, H = grid
+    ix0, ix1, iy0, iy1 = rng
+    out = collections.defaultdict(list)
+    for n, it in enumerate(items):
+        b = bbox_of(it)
+        a0, a1 = max(ix0, int((b[0] - x0g) // W)), min(ix1, int((b[2] - x0g) // W))
+        b0, b1 = max(iy0, int((b[1] - y0g) // H)), min(iy1, int((b[3] - y0g) // H))
+        for ix in range(a0, a1 + 1):
+            for iy in range(b0, b1 + 1):
+                out[(ix, iy)].append(n)
+    return out
+
+
+def _bb(pts):
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def build(c, factory_fea: bytes, bbox, road_lines=(), progress=None):
     """-> new auz.fea bytes (factory grid, OSM content inside bbox) and stats.
     road_lines: [(rank, class, ref, [points])] for the overview roads (levels 1-4)."""
     f = FeatureFile(factory_fea)
     stats = collections.Counter()
     land = coast_rings(c.coast)
-    region_land = [clip_poly(r, bbox) for r in land]
-    region_land = [r for r in region_land if len(r) >= 3]
     stats["coast rings"] = len(land)
     levels = []
     for k, lv in enumerate(f.levels):
         sx, sy = lv["parcel_w"] / lv["norm_x"], lv["parcel_h"] / lv["norm_y"]
         x0g, y0g = lv["bbox"][0], lv["bbox"][1]
         W, H = lv["parcel_w"], lv["parcel_h"]
+        grid = (x0g, y0g, W, H)
         cells = [b""] * (lv["cnt_x"] * lv["cnt_y"])
-        ix0 = max(0, (bbox[0] - x0g) // W)
-        ix1 = min(lv["cnt_x"] - 1, (bbox[2] - x0g) // W)
-        iy0 = max(0, (bbox[1] - y0g) // H)
-        iy1 = min(lv["cnt_y"] - 1, (bbox[3] - y0g) // H)
+        rng = (max(0, (bbox[0] - x0g) // W), min(lv["cnt_x"] - 1, (bbox[2] - x0g) // W),
+               max(0, (bbox[1] - y0g) // H), min(lv["cnt_y"] - 1, (bbox[3] - y0g) // H))
         tol, mins = TOL[k], MIN_SIZE[k]
-        # per-level geometry, simplified once
+        # per-level geometry, simplified once, bucketed by cell
         areas = []
         for key, name, rings in c.areas:
             if k not in STYLE.get(key, {}):
                 continue
             for r in rings:
-                xs = [p[0] for p in r]
-                ys = [p[1] for p in r]
-                if max(xs) - min(xs) < mins and max(ys) - min(ys) < mins:
+                b = _bb(r)
+                if b[2] - b[0] < mins and b[3] - b[1] < mins:
                     continue
-                areas.append((key, name, simplify(r, tol), (min(xs), min(ys), max(xs), max(ys))))
-        lines = []
-        for key, name, pts in c.lines:
-            if k in STYLE.get(key, {}):
-                lines.append((key, name, simplify(pts, tol)))
-        land_k = [simplify(r, tol) for r in region_land]
+                areas.append((key, name, simplify(r, tol), b))
+        lines = [(key, name, simplify(pts, tol)) for key, name, pts in c.lines if k in STYLE.get(key, {})]
         roads_k = []
         if k >= 1:
             min_rank = {1: 2, 2: 3, 3: 4, 4: 4}[k]
-            for rank, cls, ref, pts in road_lines:
-                if rank >= min_rank:
-                    roads_k.append((rank, cls, ref, simplify(pts, tol)))
-        for iy in range(iy0, iy1 + 1):
-            for ix in range(ix0, ix1 + 1):
-                box = (x0g + ix * W, y0g + iy * H, x0g + (ix + 1) * W, y0g + (iy + 1) * H)
-                centre = (box[0] + W // 2, box[1] + H // 2)
-                feats = collections.defaultdict(list)
-                # ocean + land masses
-                land_parts = [clip_poly(r, box) for r in land_k]
-                land_parts = [p for p in land_parts if len(p) >= 3]
-                cx, cy = centre
-                all_land = not land_parts and any(point_in(r, cx, cy) for r in land_k)
-                if c.coast and not all_land and (land_parts or k in (0, 1, 2, 3, 4)):
-                    sq = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
-                    feats[(2, 125)].append(feature((2, 125), k, to_parcel([sq], centre, sx, sy, True)))
-                    if land_parts:
-                        pp = to_parcel(land_parts, centre, sx, sy, True)
-                        if pp:
-                            feats[(2, 110)].append(feature((2, 110), k, pp))
-                for key, name, r, ab in areas:
-                    if ab[2] < box[0] or ab[0] > box[2] or ab[3] < box[1] or ab[1] > box[3]:
-                        continue
-                    pp = to_parcel([clip_poly(r, box)], centre, sx, sy, True)
+            roads_k = [(rank, cls, ref, simplify(pts, tol)) for rank, cls, ref, pts in road_lines
+                       if rank >= min_rank]
+        a_cells = _bucket(areas, lambda a: a[3], grid, rng)
+        l_cells = _bucket(lines, lambda ln: _bb(ln[2]), grid, rng)
+        r_cells = _bucket(roads_k, lambda r: _bb(r[3]), grid, rng)
+        p_cells = collections.defaultdict(list)
+        for n, (name, x, y, pl) in enumerate(c.places):
+            if k >= 2 and pl not in ("city", "town"):
+                continue
+            if k >= 3 and pl != "city":
+                continue
+            p_cells[(int((x - x0g) // W), int((y - y0g) // H))].append(n)
+        coast = {}
+        if land:
+            land_cells([simplify(r, tol) for r in land], grid, rng, coast)
+        has_sea = bool(land)
+        todo = set(a_cells) | set(l_cells) | set(r_cells) | set(p_cells)
+        if has_sea:
+            for ix in range(rng[0], rng[1] + 1):
+                for iy in range(rng[2], rng[3] + 1):
+                    if coast.get((ix, iy)) != "land":
+                        todo.add((ix, iy))
+        for (ix, iy) in sorted(todo):
+            if not (rng[0] <= ix <= rng[1] and rng[2] <= iy <= rng[3]):
+                continue
+            box = (x0g + ix * W, y0g + iy * H, x0g + (ix + 1) * W, y0g + (iy + 1) * H)
+            centre = (box[0] + W // 2, box[1] + H // 2)
+            cx, cy = centre
+            feats = collections.defaultdict(list)
+            cs = coast.get((ix, iy))
+            if has_sea and cs != "land":
+                sq = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
+                feats[(2, 125)].append(feature((2, 125), k, to_parcel([sq], centre, sx, sy, True)))
+                if cs:
+                    pp = to_parcel(cs, centre, sx, sy, True)
                     if pp:
-                        feats[key].append(feature(key, k, pp, name))
-                for key, name, pts in lines:
-                    pp = to_parcel(clip_line(pts, box), centre, sx, sy, False)
-                    if pp:
-                        feats[key].append(feature(key, k, pp, name))
-                for rank, cls, ref, pts in roads_k:
-                    pp = to_parcel(clip_line(pts, box), centre, sx, sy, False)
-                    if pp and (8, 190) in STYLE and k in STYLE[(8, 190)]:
-                        feats[(8, 190)].append(feature((8, 190), k, pp, None, bytes([rank, cls, 0])))
-                        if ref and (16, 195) in STYLE and k in STYLE[(16, 195)]:
-                            p0 = pp[0][len(pp[0]) // 2]
-                            lab = [[p0, (p0[0] - 2, p0[1] + 1)]]
-                            feats[(16, 195)].append(feature((16, 195), k, lab, ref, b"\x96\x01\x00\x00"))
-                if (2, 35) in STYLE and k in STYLE[(2, 35)]:
-                    for name, x, y, pl in c.places:
-                        if k >= 2 and pl not in ("city", "town"):
-                            continue
-                        if box[0] <= x < box[2] and box[1] <= y < box[3]:
-                            p = (round((x - cx) / sx), round((y - cy) / sy))
-                            feats[(2, 35)].append(feature((2, 35), k, [[p, (p[0] - 2, p[1] + 1)]], name,
-                                                          b"\x90\x00" + NONE + struct.pack(">hh", *p)))
-                out = []
-                for key in ORDER:
-                    out += feats.get(key, [])
-                out = fit_budget(out, stats, k)
-                for ft in out:
-                    stats[f"L{k} {ft['category']}:{ft['type']}"] += 1
-                if out:
-                    cells[iy * lv["cnt_x"] + ix] = feawrite.encode_parcel(out)
+                        feats[(2, 110)].append(feature((2, 110), k, pp))
+            for n in a_cells.get((ix, iy), []):
+                key, name, r, ab = areas[n]
+                pp = to_parcel([clip_poly(r, box)], centre, sx, sy, True)
+                if pp:
+                    feats[key].append(feature(key, k, pp, name))
+            for n in l_cells.get((ix, iy), []):
+                key, name, pts = lines[n]
+                pp = to_parcel(clip_line(pts, box), centre, sx, sy, False)
+                if pp:
+                    feats[key].append(feature(key, k, pp, name))
+            for n in r_cells.get((ix, iy), []):
+                rank, cls, ref, pts = roads_k[n]
+                pp = to_parcel(clip_line(pts, box), centre, sx, sy, False)
+                if pp and k in STYLE[(8, 190)]:
+                    feats[(8, 190)].append(feature((8, 190), k, pp, None, bytes([rank, cls, 0])))
+                    if ref and k in STYLE[(16, 195)]:
+                        p0 = pp[0][len(pp[0]) // 2]
+                        feats[(16, 195)].append(feature((16, 195), k, [[p0, (p0[0] - 2, p0[1] + 1)]], ref,
+                                                        b"\x96\x01\x00\x00"))
+            if k in STYLE[(2, 35)]:
+                for n in p_cells.get((ix, iy), []):
+                    name, x, y, pl = c.places[n]
+                    p = (round((x - cx) / sx), round((y - cy) / sy))
+                    feats[(2, 35)].append(feature((2, 35), k, [[p, (p[0] - 2, p[1] + 1)]], name,
+                                                  b"\x90\x00" + NONE + struct.pack(">hh", *p)))
+            out = []
+            for key in ORDER:
+                out += feats.get(key, [])
+            out = fit_budget(out, stats, k)
+            for ft in out:
+                stats[f"L{k} {ft['category']}:{ft['type']}"] += 1
+            if out:
+                cells[iy * lv["cnt_x"] + ix] = feawrite.encode_parcel(out)
         levels.append({"bbox": lv["bbox"], "parcel_w": lv["parcel_w"], "parcel_h": lv["parcel_h"],
                        "cnt_x": lv["cnt_x"], "cnt_y": lv["cnt_y"], "norm_x": lv["norm_x"],
                        "norm_y": lv["norm_y"], "feaType": lv["feaType"], "scales": lv["scales"],

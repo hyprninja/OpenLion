@@ -207,12 +207,17 @@ def build(g, seg_labels, areas, factory, catalog_id=0):
     # cities = localities; assign every segment to one
     city_of_seg = []
     loc = by_level[CITY]
+    cache = {}            # ~50 m grid: nearby segments share one point-in-polygon test
     for s in range(g.n_segs):
         x, y = segment_point(g, s)
-        i = idx[CITY].find(x, y)
+        key = (x // 50, y // 50)
+        i = cache.get(key, -1)
+        if i == -1:
+            i = cache[key] = idx[CITY].find(x, y)
         if i is None:
             stats["segments outside any locality"] += 1
         city_of_seg.append(i)
+    stats["suburb lookups"] = len(cache)
     used = sorted({c for c in city_of_seg if c is not None}, key=lambda i: normalise(loc[i].name))
     # disambiguate duplicate names with the state, like the factory "(VICTORIA)"
     names_count = collections.Counter(normalise(loc[i].name) for i in used)

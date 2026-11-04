@@ -22,7 +22,8 @@ Holden stopped issuing map updates in 2016. The iQ reads its maps from a full-si
 | OSM import: roads, attributes, speed limits, turn restrictions → mp0 + mg1–mg4 (tested on inner Melbourne) | Working | [12](docs/12_osm_import.md) |
 | OSM street names + address search: suburbs, LGAs, postcodes, road records, speller trees (tested on inner Melbourne) | Working | [13](docs/13_osm_names_search.md) |
 | OSM background layer (`.fea`): water, parks, landuse, rail, coast/ocean, labels, overview roads (tested on Melbourne) | Working | [14](docs/14_osm_background.md) |
-| OSM POIs, card assembly, full-Australia run | Not started | |
+| Full-Australia build: all 17 tables in one run (`python -m openlion.pipeline`), lookups work in every capital | Done | [15](docs/15_full_australia.md) |
+| Test card assembly, POIs, `.fea` size reduction, NZ | Not started | |
 | In-car tamper test (checksums / signatures?) | Not done | |
 
 Every structural claim in the docs was checked against the full factory dataset (for example, all 11,282 map parcels and 192,282 feature parcels decode and frame exactly).
@@ -51,6 +52,7 @@ tests/       round-trip test against your own card copy
 | `osm_import.py` | OpenStreetMap (.pbf, via `osmium`) → road graph + seginfo table |
 | `osm_names.py` | OSM boundaries + names → road records, cities and all search tables |
 | `osm_fea.py` | OSM areas/lines/coastline → background feature file |
+| `pipeline.py` | One command: OSM extract → every replaceable table (cached stages, checks, sample lookups) |
 | `build.py` | Writes a complete `navigation/` folder, replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
