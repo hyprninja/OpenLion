@@ -18,7 +18,8 @@ Holden stopped issuing map updates in 2016. The iQ reads its maps from a full-si
 | Routing layers `mg1`–`mg4` | Fully derivable from `mp0` | [08](docs/08_overview_layers.md) |
 | Writers for every replaceable map table; identity card build is byte-identical (2,225/2,225 files) | Done | [09](docs/09_writer.md) |
 | Address search: countries, states, counties, cities, speller trees, city/road lists | Decoded, round-trip byte-identical | [10](docs/10_search_tables.md) |
-| OSM import, tiling, kd-tree build | Not started | |
+| Tiling + kd-tree build; mg1–mg4 derived from mp0 (re-tile test: all layers identical) | Done | [11](docs/11_tiling.md) |
+| OSM import | Not started | |
 | In-car tamper test (checksums / signatures?) | Not done | |
 
 Every structural claim in the docs was checked against the full factory dataset (for example, all 11,282 map parcels and 192,282 feature parcels decode and frame exactly).
@@ -41,6 +42,9 @@ tests/       round-trip test against your own card copy
 | `mapwrite.py` | Map tile writer: parcel container, list codecs, file assembly |
 | `features.py` / `feawrite.py` | Background feature file (`.fea`) reader / writer |
 | `search.py` | Address-search tables and speller trees: read, write, build, validate |
+| `graph.py` | Layout-independent road graph + extractor from any map file |
+| `tiler.py` | Graph → map file: kd-tree, parcels, border copies, all lists |
+| `layers.py` | Derive routing layers mg1–mg4 from the mp0 graph |
 | `build.py` | Writes a complete `navigation/` folder, replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
@@ -52,6 +56,7 @@ python -m openlion.flat navigation/db_aunz/db/auz.si auz.si.raw
 python -m openlion.render navigation/db_aunz/db/auz.mp0 auz.si.raw out.png 144.95 -37.86 145.06 -37.79
 python tests/roundtrip.py navigation/db_aunz/db
 python -m openlion.build navigation out/navigation --identity
+python tests/retile.py navigation/db_aunz/db
 ```
 
 ## Legal and data policy
