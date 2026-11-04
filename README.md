@@ -25,7 +25,7 @@ Holden stopped issuing map updates in 2016. The iQ reads its maps from a full-si
 | Full-Australia build: all 17 tables in one run (`python -m openlion.pipeline`), lookups work in every capital | Done | [15](docs/15_full_australia.md) |
 | Test card assembly: complete `navigation/` folder with OSM maps, every other file byte-identical; read-back check passes | Done | [16](docs/16_test_card.md) |
 | POIs, `.fea` size reduction, NZ, Canberra as a city name | Not started | |
-| In-car test: unit accepts the OSM card, shows post-2010 streets, routes 200 km in demo mode | Passed (2026-11-05) | [16](docs/16_test_card.md) |
+| In-car test: unit accepts the OSM card, shows post-2010 streets, address search works, routes 200 km in demo mode | Passed (2026-11-05) | [16](docs/16_test_card.md) |
 
 Every structural claim in the docs was checked against the full factory dataset (for example, all 11,282 map parcels and 192,282 feature parcels decode and frame exactly).
 

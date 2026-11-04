@@ -55,8 +55,10 @@ The assembled card went into the car (VE Series II MY12, iQ) on a spare SD card:
 - **Accepted without complaint.** No error or warning, so there is no hidden checksum or signature over the map tables. Fully rebuilt tables with new sizes and contents load fine as long as the metadata files stay unchanged.
 - **New data is used.** A local street that didn't exist in the 2010 data now shows on the map.
 - **Routing works.** A simulated drive (the unit's demo mode) to a town about 200 km away planned and ran correctly, which uses the long-distance routing layers (`mg1`–`mg4`) as well as `mp0`.
+- **Address search works** with the new OSM suburbs, streets and speller trees.
+- **Zoomed-out map seemed fine**, so the 4× larger `.fea` doesn't noticeably slow drawing in first use.
 
-Still to check on real drives: drawing and panning speed when zoomed out (the `.fea` is 4× factory size), the speed-limit display, address search, and spoken turn guidance.
+Still to check on real drives: the speed-limit display and spoken turn guidance.
 
 ## In-car test plan
 
