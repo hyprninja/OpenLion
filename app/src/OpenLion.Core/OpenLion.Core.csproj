@@ -7,4 +7,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Known card file lists: a copied card that matches one exactly is "verified". -->
+    <None Include="..\..\..\docs\reference\manifest_sha256.tsv" Link="KnownCards\CD_7606.tsv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

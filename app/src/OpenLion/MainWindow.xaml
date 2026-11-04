@@ -3,9 +3,11 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:OpenLion.ViewModels"
         Title="OpenLion" Width="900" Height="620" MinWidth="720" MinHeight="500"
-        WindowStartupLocation="CenterScreen" Background="#FAFAF8" FontSize="14">
+        WindowStartupLocation="CenterScreen" Background="#FAFAF8" FontSize="14"
+        Icon="Assets/OpenLion.ico">
     <Window.Resources>
         <SolidColorBrush x:Key="Accent" Color="#B5121B"/>
+        <SolidColorBrush x:Key="Brand" Color="#0D2644"/>
         <SolidColorBrush x:Key="Muted" Color="#5F5E5A"/>
         <SolidColorBrush x:Key="Good" Color="#1E7A3C"/>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
@@ -112,6 +114,77 @@
             </DockPanel>
         </DataTemplate>
 
+        <!-- Step 3: copy + map format check -->
+        <DataTemplate DataType="{x:Type vm:CopyCardStep}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H1}" Text="Copy your factory card"/>
+                    <TextBlock Style="{StaticResource Body}">
+                        OpenLion copies your card to this PC, checks every file against the card, then checks that it
+                        understands this card's map format. It only reads the card. This takes a few minutes.
+                    </TextBlock>
+
+                    <ProgressBar Height="10" Value="{Binding Percent, Mode=OneWay}" Maximum="100" Margin="0,6,0,10"
+                                 Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"
+                               Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"
+                               Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" HorizontalAlignment="Left"
+                            Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+
+                    <!-- Success -->
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Good}" BorderThickness="2"
+                            Visibility="{Binding IsSuccess, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"
+                                       Foreground="{StaticResource Good}"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                            <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold"
+                                       Text="You can now take the factory card out and put it somewhere safe. OpenLion doesn't need it again."/>
+                            <CheckBox IsChecked="{Binding ConfirmUntested}"
+                                      Visibility="{Binding IsUntested, Converter={StaticResource BoolToVis}}">
+                                <TextBlock TextWrapping="Wrap"
+                                           Text="I understand nobody has tested OpenLion maps with this card version in a car yet, and I want to continue. (If it works, please tell us on GitHub!)"/>
+                            </CheckBox>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Failure -->
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Accent}" BorderThickness="2"
+                            Visibility="{Binding IsFailed, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"
+                                       Foreground="{StaticResource Accent}"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                            <TextBlock Style="{StaticResource Body}">
+                                Your factory card has not been changed. Please report this so OpenLion can support your card:
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource Body}" Margin="16,0,0,10">
+                                1. Click <Bold>Open GitHub issue</Bold> (you'll need a free GitHub account).<LineBreak/>
+                                2. Fill in your car and card version.<LineBreak/>
+                                3. Click <Bold>Show report file</Bold> and drag the zip into the issue.
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" FontSize="12">
+                                The report contains no map data: only your card's version files, a list of file names and
+                                checksums, and what went wrong. GitHub issues are public, so you can open the zip and check it first.
+                            </TextBlock>
+                            <WrapPanel>
+                                <Button Content="Open GitHub issue" Command="{Binding OpenIssueCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Show report file" Command="{Binding ShowReportCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" Margin="0,0,8,6"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Status}"
+                               Visibility="{Binding IsCancelled, Converter={StaticResource BoolToVis}}"/>
+                    <Button Content="Try again" Command="{Binding StartCommand}" HorizontalAlignment="Left"
+                            Visibility="{Binding CanRetry, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
         <!-- Steps not built yet -->
         <DataTemplate DataType="{x:Type vm:PlaceholderStep}">
             <StackPanel>
@@ -170,7 +243,11 @@
         <!-- Step list -->
         <Border DockPanel.Dock="Left" Width="200" Background="#F1EFE8" BorderBrush="#DDDCD6" BorderThickness="0,0,1,0">
             <StackPanel Margin="16,20">
-                <TextBlock Text="OpenLion" FontSize="20" FontWeight="Bold" Foreground="{StaticResource Accent}" Margin="0,0,0,20"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                    <Image Source="Assets/logo-128.png" Width="44" Height="44" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <TextBlock Text="OpenLion" FontSize="20" FontWeight="Bold" Foreground="{StaticResource Brand}"
+                               VerticalAlignment="Center" Margin="10,0,0,0"/>
+                </StackPanel>
                 <ItemsControl x:Name="StepList" ItemsSource="{Binding Steps}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>

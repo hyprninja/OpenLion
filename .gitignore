@@ -12,6 +12,8 @@ decompressed/
 *.png
 *.PNG
 *.svg
+# the app's own logo is original artwork, not card data
+!app/src/OpenLion/Assets/*.png
 
 # Python
 __pycache__/

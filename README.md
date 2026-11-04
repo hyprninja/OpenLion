@@ -1,3 +1,5 @@
+<img src="app/src/OpenLion/Assets/logo.png" alt="OpenLion logo" width="120" align="right">
+
 # OpenLion
 
 Open tools and format documentation for the **Holden iQ factory satellite navigation** (VE Commodore Series II, MY11–MY16), with the goal of building **up-to-date map cards from OpenStreetMap**.
@@ -39,7 +41,7 @@ tests/       round-trip, re-tiling, OSM region and card checks against your own 
 app/         Windows app (.NET 10, WPF): wizard that copies a factory card, builds maps and writes a blank card
 ```
 
-The Windows app is in progress: the wizard, drive detection and `CardGuard` (the checks that refuse to write to a factory card) are done; copy, OSM download, build and card writing come next. Build and test with `dotnet test app/OpenLion.slnx`.
+The Windows app is in progress. Done: the wizard, drive detection, `CardGuard` (the checks that refuse to write to a factory card), and copying the factory card with every file hash-verified, followed by the compatibility check (`openlion.compat`). If a card isn't supported, the app saves a report zip (no map data) and points the user to the [card report issue form](.github/ISSUE_TEMPLATE/card_report.yml). Next: OSM download, build and card writing. Build and test with `dotnet test app/OpenLion.slnx`; set `OPENLION_HOME` to keep the app's working files out of `%LOCALAPPDATA%\OpenLion` while developing, and `OPENLION_FACTORY_NAV` to a factory `navigation/` copy to run the full compatibility test.
 
 | Module | Purpose |
 |---|---|
@@ -60,6 +62,7 @@ The Windows app is in progress: the wizard, drive detection and `CardGuard` (the
 | `build.py` | Writes a complete `navigation/` folder (`--identity` or `--tables <dir>`), replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |
+| `compat.py` | Card compatibility check: re-encodes every replaceable table of a card and requires byte-identical output (`--json` for the app); reports hold no map data |
 
 Typical use, from the repo root, given your own copy of a card's `navigation/` folder:
 
@@ -67,6 +70,7 @@ Typical use, from the repo root, given your own copy of a card's `navigation/` f
 python -m openlion.flat navigation/db_aunz/db/auz.si auz.si.raw
 python -m openlion.render navigation/db_aunz/db/auz.mp0 auz.si.raw out.png 144.95 -37.86 145.06 -37.79
 python tests/roundtrip.py navigation/db_aunz/db
+python -m openlion.compat navigation
 python -m openlion.build navigation out/navigation --identity
 python tests/retile.py navigation/db_aunz/db
 python -m openlion.pipeline australia-latest.osm.pbf navigation/db_aunz/db osm_out

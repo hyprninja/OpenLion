@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using OpenLion.Core;
+using OpenLion.Core.Cards;
 using OpenLion.Core.Drives;
 
 namespace OpenLion.ViewModels;
@@ -7,11 +9,18 @@ namespace OpenLion.ViewModels;
 /// <summary>State shared between wizard steps.</summary>
 public sealed class Session
 {
+    public AppState State { get; } = AppState.Load();
     public DriveSnapshot? FactoryDrive { get; set; }
     public NavigationCard? FactoryCard { get; set; }
 
-    /// <summary>Set by the copy step once every file is hash-verified.</summary>
+    /// <summary>Set by the copy step once every file is hash-verified and the map format check passed.
+    /// Starts as the card verified in an earlier run, if any.</summary>
     public FactoryCardRecord? FactoryRecord { get; set; }
+    public CopyResult? FactoryCopy { get; set; }
+
+    public Session() => FactoryRecord = State.Factory;
+
+    public GuardOptions GuardOptions => new() { WrittenByOpenLion = State.WrittenVolumeSerials.ToHashSet() };
 
     /// <summary>Space the finished navigation/ folder needs; refined once the build has run.</summary>
     public long RequiredBytes { get; set; } = 1_000_000_000;
@@ -130,7 +139,8 @@ public sealed class WriteCardStep : StepViewModel
         Targets.Clear();
         // Every removable drive is shown with the guard's verdict, so the user sees why a card is refused.
         foreach (var d in drives.Where(d => d.IsRemovable || d.HasNavigationFolder))
-            Targets.Add(new TargetCandidate(CardGuard.CheckTarget(d, drives.ToList(), _session.FactoryRecord, _session.RequiredBytes)));
+            Targets.Add(new TargetCandidate(CardGuard.CheckTarget(d, drives.ToList(), _session.FactoryRecord,
+                _session.RequiredBytes, _session.GuardOptions)));
         Raise(nameof(NoneFound));
     }
 

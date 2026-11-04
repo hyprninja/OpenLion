@@ -10,6 +10,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\OpenLion.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\OpenLion.ico" />
+    <Resource Include="Assets\logo-128.png" />
+  </ItemGroup>
 
 </Project>

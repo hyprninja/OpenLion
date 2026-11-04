@@ -20,9 +20,7 @@ public sealed class MainViewModel : ObservableObject
         [
             new WelcomeStep(),
             new FactoryCardStep(s),
-            new PlaceholderStep("Copy card",
-                "Coming next: copy the factory card to this PC (read-only), check every file, " +
-                "and check that OpenLion understands this card's map format."),
+            new CopyCardStep(s),
             new PlaceholderStep("Get OSM data",
                 "Coming next: download the latest OpenStreetMap extract for Australia from Geofabrik."),
             new PlaceholderStep("Build maps",
