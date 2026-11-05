@@ -72,7 +72,7 @@ Copy-Item (Join-Path $repo "LICENSE") (Join-Path $stage "LICENSE.txt")
 Write-Host "== Smoke test of the bundled engine"
 Push-Location $env:TEMP
 try {
-    & (Join-Path $py "python.exe") -X utf8 -c "import osmium, sqlite3, zlib, openlion.make_card, openlion.compat; print('engine ok, osmium', osmium.__version__, osmium.__file__)"
+    & (Join-Path $py "python.exe") -X utf8 -c "import osmium, sqlite3, zlib, openlion.make_card, openlion.compat; import importlib.metadata as m; print('engine ok, osmium', m.version('osmium'), osmium.__file__)"
 } finally { Pop-Location }
 
 Write-Host "== MSI"
