@@ -18,13 +18,13 @@ def decode_parcel(r: bytes):
     for _ in range(n):
         hdr = r[off:off + 8]
         cnt = struct.unpack_from(">I", r, off + 8)[0]
-        la, ln = hdr[4], hdr[7]
+        la, ln = hdr[4], (hdr[6] << 8) | hdr[7]   # lenNames is a big-endian u16
         att = r[off + 12:off + 12 + la]
         names = r[off + 12 + la:off + 12 + la + ln]
         po = off + 12 + la + ln
         deltas = [struct.unpack_from(">hh", r, po + 4 * i) for i in range(cnt)]
         out.append({"category": hdr[0], "type": hdr[1], "flags": hdr[2], "scaleFlag": hdr[3],
-                    "b5": hdr[5], "b6": hdr[6], "attr": att, "names_raw": names, "deltas": deltas})
+                    "b5": hdr[5], "attr": att, "names_raw": names, "deltas": deltas})
         off = po + 4 * cnt
     if off != len(r):
         raise ValueError("feature parcel framing")
@@ -60,8 +60,10 @@ def encode_feature(f) -> bytes:
     if deltas is None:
         deltas = deltas_from_parts(f["parts"])
     b5 = f.get("b5", 1 if names else 0)
-    hdr = bytes([f["category"], f["type"], f["flags"], f["scaleFlag"], len(f["attr"]), b5,
-                 f.get("b6", 0), len(names)]) + struct.pack(">I", len(deltas))
+    if len(names) > 0xFFFF:
+        raise ValueError("feature names longer than 64 KB")
+    hdr = (bytes([f["category"], f["type"], f["flags"], f["scaleFlag"], len(f["attr"]), b5])
+           + struct.pack(">HI", len(names), len(deltas)))
     return hdr + f["attr"] + names + b"".join(struct.pack(">hh", a, b) for a, b in deltas)
 
 

@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import flat, roads, mapfile, mapwrite, features, feawrite  # noqa: E402
+from openlion import flat, roads, mapfile, mapwrite, features, feawrite, schema  # noqa: E402
 from openlion.common import build_header  # noqa: E402
 
 LIST_CODECS = {
@@ -90,6 +90,7 @@ def check_fea(path):
 
 if __name__ == "__main__":
     db = sys.argv[1]
+    print("datamodel: Arriba", schema.use_card(db).name)
     want = sys.argv[2:] or ["flat", "search", "mp0", "mg1", "mg2", "mg3", "mg4", "fea"]
     for w in want:
         t = time.time()

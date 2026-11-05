@@ -14,10 +14,7 @@ Factory rules this follows (report 11):
 """
 import struct
 
-from . import mapwrite
-from .mapfile import PCL_OFFS_FIELDS
-
-IDX = {n: i for i, n in enumerate(PCL_OFFS_FIELDS)}
+from . import mapwrite, schema
 
 # Factory id order of the 23-entry stats table in the mp0 parcel trailer (id 8 = shapes)
 STATS_IDS = [31, 15, 29, 13, 30, 14, 28, 12, 27, 11, 25, 9, 26, 10, 24, 8, 19, 3, 17, 1, 18, 2, 16]
@@ -47,7 +44,7 @@ def build_kd(g, node_ids, limits=None):
 
     def est_bytes(rec, segs):
         """Upper-bound estimate of the encoded parcel size."""
-        b = 318 + 14 * rec + 13 * len(segs)
+        b = schema.active().offs_len + 14 * rec + 13 * len(segs)
         for s in segs:
             sh = g.seg_shape[s]
             if sh is not None:
@@ -197,13 +194,15 @@ def build_parcel(g, cell_nodes, layer, is_node):
                       "hand": 0 if t["via"] == g.seg_a[s] else 1})
 
     # assemble the container
-    fields = [0] * len(PCL_OFFS_FIELDS)
-    trailer = [0] * 76
+    sch = schema.active()
+    IDX = sch.idx
+    fields = [0] * sch.n_fields
+    trailer = [0] * schema.TRAILER_LEN
     fixed = set()
     if layer != 0:
         fields[IDX["junction_view_count"]] = 256
         fixed = {IDX["junction_view_list"], IDX["junction_view_image_name_list"]}
-    pc = mapwrite.ParcelContainer(fields, trailer, {}, fixed)
+    pc = mapwrite.ParcelContainer(fields, trailer, {}, fixed, sch)
     pc.set("pos_list", mapwrite.encode_positions(mapwrite.blocks_from_points(positions)), len(positions))
     pc.set("exc_pos_list", mapwrite.encode_positions(mapwrite.blocks_from_points(exc)), len(exc))
     pc.set("node_list", mapwrite.encode_nodes(node_recs), len(positions))

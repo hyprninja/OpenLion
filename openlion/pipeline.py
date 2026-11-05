@@ -23,7 +23,7 @@ import time
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from openlion import (countries, flat, graph, layers, mapfile, osm_fea, osm_import, osm_names,  # noqa: E402
-                      osm_poi, roads, search, tiler)
+                      osm_poi, roads, schema, search, tiler)
 from openlion.common import build_header  # noqa: E402
 
 AU_BBOX = (9000000, -4810918, 17998594, -726427)   # factory map extent (deg * 1e5)
@@ -64,6 +64,8 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None):
     """pbf: one Australian extract, or [(Country, path)] (see inputs_of).
     stage: optional callback, called with a name from STAGES as each stage starts."""
     os.makedirs(os.path.join(out, "db"), exist_ok=True)
+    sch = schema.use_card(db)   # write tables in the card's own datamodel
+    log(f"datamodel: Arriba {sch.name}")
     region = bbox or AU_BBOX
     stage = stage or (lambda name: None)
     inputs = inputs_of(pbf)

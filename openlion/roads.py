@@ -5,19 +5,22 @@ Common header (0x5E bytes):
   0x00 char[16] x5  stamp, copyright, db_release, db_version, comp_version
   0x50 u32 dbID   0x54 u16 fileID   0x56 u32 rec_cnt   0x5A u32 byte_cnt
 
-Road record (29 bytes + nameNum * 5):
+Road record (29 bytes + nameNum * 5; datamodel 5.3 / MY17: 26 bytes + nameNum * 5):
   u8 countryID, u32 cityID, u8 roadInfo,
   i32 min_long, i32 min_lat, i32 delta_long, i32 delta_lat  (deg * 1e5)
-  u16 maxNumber, u16 minNumber, u8 nameNum, u16 intersectionCount,
+  u16 maxNumber, u16 minNumber      (5.2.1)   |   u8 hasNumbers (5.3)
+  u8 nameNum, u16 intersectionCount,
   nameNum x { u32 roadNameOffset (into .str), u8 mainSeqNr }
 
-Usage: python -I roads.py <auz.rd> <auz.str> [out.tsv]
+Usage: python -m openlion.roads <auz.rd> <auz.str> [out.tsv]
 """
 import struct
 import sys
 
+from . import schema
+
 HDR = 0x5E
-REC = struct.Struct("<BIBiiiiHHBH")  # 29 bytes
+REC = schema.V521.road_rec  # 29 bytes (5.2.1); the active schema decides
 NAME = struct.Struct("<IB")
 
 
@@ -26,14 +29,21 @@ def header(d):
     return {"dbID": dbid, "fileID": fid, "rec_cnt": cnt, "byte_cnt": size}
 
 
-def iter_roads(d):
+def iter_roads(d, sch=None):
+    sch = sch or schema.active()
+    rec = sch.road_rec
     h = header(d)
     off = HDR
     for i in range(h["rec_cnt"]):
         start = off
-        (cty_ctry, city, info, lon, lat, dlon, dlat,
-         maxn, minn, nn, ic) = REC.unpack_from(d, off)
-        off += REC.size
+        v = rec.unpack_from(d, off)
+        if sch.road_numbers == "u16pair":
+            (cty_ctry, city, info, lon, lat, dlon, dlat, maxn, minn, nn, ic) = v
+            nums = {"maxNumber": maxn, "minNumber": minn}
+        else:
+            (cty_ctry, city, info, lon, lat, dlon, dlat, has, nn, ic) = v
+            nums = {"hasNumbers": has}
+        off += rec.size
         names = []
         for _ in range(nn):
             no, seq = NAME.unpack_from(d, off)
@@ -42,8 +52,8 @@ def iter_roads(d):
         yield {
             "idx": i, "offset": start, "countryID": cty_ctry, "cityID": city,
             "roadInfo": info, "min_long": lon, "min_lat": lat,
-            "delta_long": dlon, "delta_lat": dlat, "maxNumber": maxn,
-            "minNumber": minn, "intersectionCount": ic, "names": names,
+            "delta_long": dlon, "delta_lat": dlat, **nums,
+            "intersectionCount": ic, "names": names,
         }
     if off != h["byte_cnt"]:
         raise ValueError(f"ended at {off:#x}, header says {h['byte_cnt']:#x}")
@@ -58,10 +68,20 @@ def string_at(s, off):
 
 # ---- writers ---------------------------------------------------------------
 
-def encode_road(r) -> bytes:
-    out = REC.pack(r["countryID"], r["cityID"], r["roadInfo"], r["min_long"], r["min_lat"],
-                   r["delta_long"], r["delta_lat"], r["maxNumber"], r["minNumber"],
-                   len(r["names"]), r["intersectionCount"])
+def encode_road(r, sch=None) -> bytes:
+    """Missing number fields are filled in from the other version's fields, so a
+    record dict from either datamodel encodes in the active one."""
+    sch = sch or schema.active()
+    if sch.road_numbers == "u16pair":
+        nums = (r.get("maxNumber", 0), r.get("minNumber", 0))
+    else:
+        has = r.get("hasNumbers")
+        if has is None:
+            has = 1 if (r.get("maxNumber") or r.get("minNumber")) else 0
+        nums = (has,)
+    out = sch.road_rec.pack(r["countryID"], r["cityID"], r["roadInfo"], r["min_long"], r["min_lat"],
+                            r["delta_long"], r["delta_lat"], *nums,
+                            len(r["names"]), r["intersectionCount"])
     return out + b"".join(NAME.pack(o, q) for o, q in r["names"])
 
 
@@ -112,5 +132,6 @@ if __name__ == "__main__":
             out.write(f"{r['idx']}\t{r['countryID']}\t{r['cityID']}\t{r['roadInfo']:#04x}\t"
                       f"{r['min_long']/1e5:.5f}\t{r['min_lat']/1e5:.5f}\t"
                       f"{(r['min_long']+r['delta_long'])/1e5:.5f}\t{(r['min_lat']+r['delta_lat'])/1e5:.5f}\t"
-                      f"{r['minNumber']}\t{r['maxNumber']}\t{r['intersectionCount']}\t{nm}\n")
+                      f"{r.get('minNumber', '')}\t{r.get('maxNumber', r.get('hasNumbers'))}\t"
+                      f"{r['intersectionCount']}\t{nm}\n")
     print(header(rd), "parsed", n, "records; framing consistent with byte_cnt")

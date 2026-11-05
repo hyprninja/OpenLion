@@ -5,7 +5,8 @@ Layout from au.mod (schema offsets 0x153E-0x5230).
   0x5E  mapHeader (0x20):
           i32 min_long, min_lat, max_long, max_lat   (deg * 1e5)
           u16 layer, u32 pcl_cnt, i32 kd_cnt, u16 kd_depth,
-          u16 max_tmcp_chain_len, u16 max_tmcp_location_size
+          u16 max_tmcp_chain_len, u16 max_tmcp_location_size   (5.2.1)
+          u32 maxPclId = pcl_cnt - 1 (same 4 bytes)              (5.3)
   0x7E  pcl_dir: kd_cnt x kd_node (13 bytes):
           i32 edge (cut coordinate), u32 lo_index, u32 hi_index, u8 kd_info
           kd_info bits: 0 kd_cut, 2 lo_empty, 3 lo_parcel, 6 hi_empty, 7 hi_parcel
@@ -15,6 +16,8 @@ Layout from au.mod (schema offsets 0x153E-0x5230).
 import struct
 import sys
 import zlib
+
+from . import schema
 
 MAPHDR = struct.Struct("<iiiiHIiHHH")  # 32 bytes
 KD = struct.Struct("<iIIB")           # 13 bytes
@@ -54,16 +57,17 @@ OFFS_NAMES = [
 
 
 class Parcel:
-    """Decompressed parcel. Starts with pcl_offs (318 bytes of u16):
-    (list_offset, count) pairs; shape_list has an extra shape_size."""
+    """Decompressed parcel. Starts with pcl_offs (u16 (list_offset, count) pairs;
+    shape_list has an extra shape_size). 318 bytes in datamodel 5.2.1, 326 in 5.3."""
 
     def __init__(self, raw: bytes):
         self.r = raw
-        u = struct.unpack_from("<159H", raw, 0)
-        self.offs = {n: (u[2 * i], u[2 * i + 1]) for i, n in enumerate(OFFS_NAMES)}
-        self.offs["shape"] = (u[26], u[27])
-        self.shape_size = u[28]
-        self.offs["turn_res"] = (u[29], u[30])
+        self.schema = schema.for_parcel(raw)
+        L = parcel_lists(raw)
+        self.offs = {n: (L[n + "_list"], L[n + "_cnt"]) for n in OFFS_NAMES}
+        self.offs["shape"] = (L["shape_list"], L["shape_cnt"])
+        self.shape_size = L["shape_size"]
+        self.offs["turn_res"] = (L["turn_res_list"], L["turn_res_cnt"])
 
     def positions(self, which="pos"):
         """One or more blocks, each: u16 n, i32 lon, i32 lat, n x (i16 dlon, i16 dlat).
@@ -217,37 +221,20 @@ class Parcel:
                 off += 1
             n_lim = self.r[off]
             off += 1
+            off += bool(content & 0x40) + bool(content & 0x80)   # 5.3 directional speeds
             out.append({"seg": seg, "speed_kmh": speed, "lanes": lanes, "n_limits": n_lim})
         self._adas_end = off
         return out
 
 
 def parcel_lists(raw):
-    """All (offset, count) list fields of pcl_offs by schema name (83 x u16)."""
-    names = PCL_OFFS_FIELDS
-    u = struct.unpack_from(f"<{len(names)}H", raw, 0)
-    return dict(zip(names, u))
+    """All (offset, count) list fields of pcl_offs by schema name."""
+    sch = schema.for_parcel(raw)
+    u = struct.unpack_from(f"<{sch.n_fields}H", raw, 0)
+    return dict(zip(sch.pcl_fields, u))
 
 
-PCL_OFFS_FIELDS = (
-    "pos_list pos_cnt alt_list alt_cnt exc_pos_list exc_pos_cnt exc_alt_list exc_alt_cnt "
-    "node_list node_cnt seg_list seg_cnt attr_list attr_cnt abs_addr_list abs_addr_cnt "
-    "short_addr_list short_addr_cnt long_addr_list long_addr_cnt adas_list adas_cnt "
-    "adas_speed_list adas_speed_cnt adas_oot_list adas_oot_cnt shape_list shape_cnt shape_size "
-    "turn_res_list turn_res_cnt abs_addr_list_2 abs_addr_cnt_2 short_addr_list_2 short_addr_cnt_2 "
-    "long_addr_list_2 long_addr_cnt_2 turn_info_list turn_info_cnt turn_info_time_dep_cnt "
-    "turn_info_vehicle_dep_cnt drivable_time_dependent_list drivable_time_dependent_cnt "
-    "drivable_info_list drivable_info_cnt drivable_info_time_and_vehicle_dep_cnt "
-    "drivable_oot_list drivable_oot_cnt lane_offs_list lane_offs_cnt lane_list lane_cnt "
-    "lane_conn_list lane_conn_cnt lane_pair_list lane_pair_cnt lane_arm_list lane_arm_cnt "
-    "slope_offs_list slope_offs_cnt slope_list slope_cnt citylistid_list citylistid_cnt "
-    "tmcp_list tmcp_size intersection_view_list intersection_view_count "
-    "intersection_view_arm_list intersection_view_arm_cnt intersection_view_image_name_list "
-    "intersection_view_image_name_size junction_view_list junction_view_count "
-    "junction_view_image_name_list junction_view_image_name_size traffic_sign_list "
-    "traffic_sign_cnt traffic_sign_exc_list traffic_sign_exc_cnt overtaking_list overtaking_cnt "
-    "traffic_sign_total_text_length"
-).split()
+PCL_OFFS_FIELDS = schema.V521.pcl_fields   # 5.2.1 names; see schema.py for 5.3
 
 
 def signposts(raw):

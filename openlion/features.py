@@ -58,8 +58,8 @@ class FeatureFile:
     def features(self, level, ix, iy, absolute=True):
         """Parcel: u32 feaCnt, then per feature
           u8 category (1 line, 2 poly, 4 point, 8 road, 16 label), u8 type,
-          u8 flags, u8 scaleFlag (bit per scale), u8 lenAtt, u8 nameCnt, u8 ?,
-          u8 lenNames, u32 feaPointCnt,
+          u8 flags, u8 scaleFlag (bit per scale), u8 lenAtt, u8 nameCnt,
+          u16 lenNames (> 255 for oceans named in many languages; MY17 card), u32 feaPointCnt,
           attribute[lenAtt], names[lenNames] ({u8 trans, u8 len, text} each),
           feaPointCnt x (i16, i16): first relative to parcel centre, rest cumulative.
         Coordinate unit = parcel_w / norm_x (= 1e-5 deg on level 0)."""
@@ -72,7 +72,8 @@ class FeatureFile:
         n = struct.unpack_from(">I", r, 0)[0]
         off, out = 4, []
         for _ in range(n):
-            cat, typ, fl, sf, la, b5, b6, ln = r[off:off + 8]
+            cat, typ, fl, sf, la, b5 = r[off:off + 6]
+            ln = struct.unpack_from(">H", r, off + 6)[0]
             cnt = struct.unpack_from(">I", r, off + 8)[0]
             att = r[off + 12:off + 12 + la]
             nb = r[off + 12 + la:off + 12 + la + ln]
@@ -97,7 +98,7 @@ class FeatureFile:
                 pts.append(p)
                 parts[-1].append(p)
             out.append({"category": cat, "type": typ, "flags": fl, "scaleFlag": sf,
-                        "b5": b5, "b6": b6, "attr": att, "names": names,
+                        "b5": b5, "attr": att, "names": names,
                         "points": pts, "parts": parts})
             off = po + 4 * cnt
         if off != len(r):

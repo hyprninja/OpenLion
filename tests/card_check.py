@@ -18,7 +18,7 @@
 import argparse, csv, os, sqlite3, struct, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
-from openlion import flat, mapfile, features, osm_poi, roads, search
+from openlion import flat, mapfile, features, osm_poi, roads, schema, search
 from openlion.build import POI_DB, REPLACEABLE, sha256
 from osm_names_region import lookup
 
@@ -31,6 +31,7 @@ ARGS = ap.parse_args()
 CARD = ARGS.card
 FACTORY = ARGS.factory
 DB = os.path.join(CARD, "db_aunz", "db")
+print(f"datamodel: Arriba {schema.use_card(DB).name}")
 MANIFEST = ARGS.manifest
 t0 = time.time()
 

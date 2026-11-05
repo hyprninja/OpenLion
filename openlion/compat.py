@@ -26,7 +26,7 @@ import traceback
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import feawrite, flat, mapfile, mapwrite, roads, search  # noqa: E402
+from openlion import feawrite, flat, mapfile, mapwrite, roads, schema, search  # noqa: E402
 from openlion.common import HDR, build_header, parse_header  # noqa: E402
 
 # Table kinds OpenLion replaces, found by file extension (names differ per database:
@@ -241,8 +241,13 @@ def run(nav, db_name="db_aunz", as_json=False):
         out.emit("result", ok=False, db=db_name, failed=[], missing=["(database folder)"],
                  error=f"{db_name}/db not found on this card")
         return False
+    try:
+        sch = schema.use_card(db)
+    except ValueError as e:  # a datamodel OpenLion has never seen
+        out.emit("result", ok=False, db=db_name, failed=["au.mod"], missing=[], error=str(e))
+        return False
     found, missing, ambiguous = find_tables(db)
-    out.emit("start", db=db_name, tables=[found[k] for k in KINDS if k in found],
+    out.emit("start", db=db_name, datamodel=sch.name, tables=[found[k] for k in KINDS if k in found],
              missing=missing, ambiguous=ambiguous)
     failed = []
     for k in KINDS:
@@ -265,7 +270,8 @@ def run(nav, db_name="db_aunz", as_json=False):
             failed.append(fn)
         out.emit("table", table=fn, kind=k, **info)
     ok = not failed and not missing and not ambiguous
-    out.emit("result", ok=ok, db=db_name, failed=failed, missing=missing, ambiguous=ambiguous)
+    out.emit("result", ok=ok, db=db_name, datamodel=sch.name, failed=failed, missing=missing,
+             ambiguous=ambiguous)
     return ok
 
 

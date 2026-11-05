@@ -7,50 +7,59 @@ factory parcels re-encode byte-for-byte. New (OSM) data simply leaves those at 0
 import struct
 import zlib
 
+from . import schema
 from .common import build_header
 from .mapfile import HNDL, KD, MAPHDR, PCL_OFFS_FIELDS
 
-OFFS_LEN = 318                     # 159 x u16
-N_FIELDS = len(PCL_OFFS_FIELDS)    # 83 named fields, then the trailer
-LIST_FIELDS = [i for i, n in enumerate(PCL_OFFS_FIELDS) if n.endswith("_list")]
-ADAS2_LIST = 83                    # trailer u16[0] is adas2_list: offset of parcel end
+# 5.2.1 layout constants, kept for callers that predate schema.py
+OFFS_LEN = schema.V521.offs_len    # 318 = 159 x u16
+N_FIELDS = schema.V521.n_fields    # 83 named fields, then the trailer
+LIST_FIELDS = schema.V521.list_fields
+ADAS2_LIST = N_FIELDS              # trailer u16[0] is adas2_list: offset of parcel end
 
 
 # ---- parcel container ------------------------------------------------------
 
 class ParcelContainer:
-    """pcl_offs (83 named u16 + 76-u16 trailer) + list blobs in field order.
+    """pcl_offs (named u16 fields + 76-u16 trailer) + list blobs in field order.
 
-    Lists are contiguous in field order starting at 318. A list field whose value
-    is out of order (mg layers: junction_view_* = 0) is kept as a fixed value."""
+    Lists are contiguous in field order starting right after pcl_offs. A list field
+    whose value is out of order (mg layers: junction_view_* = 0) is kept as a fixed
+    value. The field set depends on the datamodel (schema.py): 83 fields in 5.2.1,
+    87 in 5.3."""
 
-    def __init__(self, fields, trailer, blobs, fixed):
-        self.fields = list(fields)      # 83 u16
+    def __init__(self, fields, trailer, blobs, fixed, sch=None):
+        self.schema = sch or schema.active()
+        self.fields = list(fields)      # n_fields u16
         self.trailer = list(trailer)    # 76 u16 (trailer[0] recomputed)
         self.blobs = dict(blobs)        # field index -> bytes
         self.fixed = set(fixed)         # list field indices not laid out
+        if len(self.fields) != self.schema.n_fields:
+            raise ValueError(f"{len(self.fields)} pcl_offs fields for schema {self.schema.name}")
 
     @classmethod
     def decode(cls, raw: bytes):
-        u = struct.unpack_from("<159H", raw, 0)
-        fields, trailer = u[:N_FIELDS], u[N_FIELDS:]
-        order, fixed, prev = [], set(), OFFS_LEN
-        for k in LIST_FIELDS:
+        sch = schema.for_parcel(raw)
+        u = struct.unpack_from(f"<{sch.n_offs}H", raw, 0)
+        fields, trailer = u[:sch.n_fields], u[sch.n_fields:]
+        order, fixed, prev = [], set(), sch.offs_len
+        for k in sch.list_fields:
             if prev <= u[k] <= len(raw):
                 order.append(k)
                 prev = u[k]
             else:
                 fixed.add(k)
-        if u[ADAS2_LIST] != len(raw):
+        if trailer[0] != len(raw):
             raise ValueError("adas2_list is not the parcel end")
         ends = [u[k] for k in order[1:]] + [len(raw)]
         blobs = {k: raw[u[k]:e] for k, e in zip(order, ends)}
-        return cls(fields, trailer, blobs, fixed)
+        return cls(fields, trailer, blobs, fixed, sch)
 
     def encode(self) -> bytes:
+        sch = self.schema
         f = list(self.fields)
-        pos, body = OFFS_LEN, []
-        for k in LIST_FIELDS:
+        pos, body = sch.offs_len, []
+        for k in sch.list_fields:
             if k in self.fixed:
                 continue
             f[k] = pos
@@ -59,11 +68,11 @@ class ParcelContainer:
             pos += len(b)
         t = list(self.trailer)
         t[0] = pos
-        return struct.pack("<159H", *(f + t)) + b"".join(body)
+        return struct.pack(f"<{sch.n_offs}H", *(f + t)) + b"".join(body)
 
     # convenience: named access
     def idx(self, name):
-        return PCL_OFFS_FIELDS.index(name)
+        return self.schema.idx[name]
 
     def get(self, name):
         return self.blobs.get(self.idx(name), b"")
@@ -252,11 +261,16 @@ def encode_addr(seg, road_id_rel, nameinfo=0, rng=b""):
 
 
 def decode_adas(blob: bytes, cnt: int):
+    """u16 seg, u8 content, then optional bytes:
+    content bit1 speed_restricted -> u8 speed (km/h), bits2-3 no_of_lanes_present -> u8 lanes,
+    always u8 no_of_speed_limits, then (datamodel 5.3 only; 0 in 5.2.1)
+    bit6 speed_restricted_rl -> u8 speed against digitising direction,
+    bit7 speed_restricted_lr -> u8 speed along digitising direction."""
     out, off = [], 0
     for _ in range(cnt):
         seg, content = struct.unpack_from("<HB", blob, off)
         off += 3
-        speed = lanes = None
+        speed = lanes = rl = lr = None
         if content & 2:
             speed = blob[off]
             off += 1
@@ -265,7 +279,18 @@ def decode_adas(blob: bytes, cnt: int):
             off += 1
         n_lim = blob[off]
         off += 1
-        out.append({"seg": seg, "content": content, "speed_kmh": speed, "lanes": lanes, "n_limits": n_lim})
+        if content & 0x40:
+            rl = blob[off]
+            off += 1
+        if content & 0x80:
+            lr = blob[off]
+            off += 1
+        a = {"seg": seg, "content": content, "speed_kmh": speed, "lanes": lanes, "n_limits": n_lim}
+        if rl is not None:
+            a["speed_rl"] = rl
+        if lr is not None:
+            a["speed_lr"] = lr
+        out.append(a)
     if off != len(blob):
         raise ValueError("adas framing")
     return out
@@ -276,13 +301,19 @@ def encode_adas(items) -> bytes:
     for a in items:
         content = a.get("content")
         if content is None:
-            content = (2 if a.get("speed_kmh") is not None else 0) | (4 if a.get("lanes") is not None else 0)
+            content = ((2 if a.get("speed_kmh") is not None else 0) | (4 if a.get("lanes") is not None else 0)
+                       | (0x40 if a.get("speed_rl") is not None else 0)
+                       | (0x80 if a.get("speed_lr") is not None else 0))
         out += struct.pack("<HB", a["seg"], content)
         if content & 2:
             out.append(a["speed_kmh"])
         if (content >> 2) & 3:
             out.append(a["lanes"])
         out.append(a.get("n_limits", 0))
+        if content & 0x40:
+            out.append(a["speed_rl"])
+        if content & 0x80:
+            out.append(a["speed_lr"])
     return bytes(out)
 
 
@@ -319,7 +350,7 @@ def compress_parcel(raw: bytes) -> bytes:
 def encode_mapfile(template_header: bytes, maphdr: dict, kd_nodes, parcels_zipped, parcel_sizes) -> bytes:
     """Assemble a map file.
     maphdr: min_long, min_lat, max_long, max_lat, layer, kd_depth,
-            max_tmcp_chain_len, max_tmcp_location_size.
+            max_tmcp_chain_len, max_tmcp_location_size (5.2.1 only; 5.3 writes maxPclId).
     kd_nodes: [(edge, lo, hi, info)]; parcels_zipped: zlib blobs; parcel_sizes: raw sizes."""
     n = len(parcels_zipped)
     off = 0x5E + MAPHDR.size + KD.size * len(kd_nodes) + HNDL.size * n
@@ -330,9 +361,18 @@ def encode_mapfile(template_header: bytes, maphdr: dict, kd_nodes, parcels_zippe
             raise ValueError("parcel larger than 64 KB")
         handles.append(HNDL.pack(off, raw_n, len(z)))
         off += len(z)
+    if schema.active().max_pcl_id:
+        # 5.3: u32 maxPclId in place of the two TMC u16s (low half first)
+        tail = ((n - 1) & 0xFFFF, (n - 1) >> 16)
+    else:
+        tail = (maphdr.get("max_tmcp_chain_len", 0), maphdr.get("max_tmcp_location_size", 0))
     mh = MAPHDR.pack(maphdr["min_long"], maphdr["min_lat"], maphdr["max_long"], maphdr["max_lat"],
-                     maphdr["layer"], n, len(kd_nodes), maphdr["kd_depth"],
-                     maphdr.get("max_tmcp_chain_len", 0), maphdr.get("max_tmcp_location_size", 0))
-    head = build_header(template_header, n, off - data_off)
+                     maphdr["layer"], n, len(kd_nodes), maphdr["kd_depth"], *tail)
+    byte_cnt = off - data_off
+    if schema.active().max_pcl_id and maphdr["layer"] == 0:
+        # MY17 factory mp0 stores the whole file size here (its mg layers store the
+        # parcel data size, like every 5.2.1 map file). Copied as found.
+        byte_cnt = off
+    head = build_header(template_header, n, byte_cnt)
     return (head + mh + b"".join(KD.pack(*k) for k in kd_nodes) + b"".join(handles)
             + b"".join(parcels_zipped))
