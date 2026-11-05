@@ -19,3 +19,6 @@ decompressed/
 __pycache__/
 *.pyc
 .venv/
+
+# Release build output (packaging/build-release.ps1)
+dist/
