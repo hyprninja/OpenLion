@@ -24,6 +24,12 @@ public sealed record DriveSnapshot
 
     public long TotalBytes { get; init; }
 
+    /// <summary>Free space on the volume.</summary>
+    public long FreeBytes { get; init; }
+
+    /// <summary>File system as Windows names it: "FAT32", "exFAT", "NTFS"; empty if unknown.</summary>
+    public string FileSystem { get; init; } = "";
+
     /// <summary>Removable media (SD/USB) according to Windows.</summary>
     public bool IsRemovable { get; init; }
 

@@ -15,6 +15,7 @@ public class CardGuardTests
         PhysicalDiskNumber = disk,
         TotalBytes = 4_000_000_000,
         IsRemovable = true,
+        FileSystem = "FAT32",
     };
 
     static DriveSnapshot SystemC() => new()
@@ -45,6 +46,13 @@ public class CardGuardTests
         var r = Check(Blank());
         Assert.True(r.Allowed, string.Join("; ", r.Findings.Select(f => f.Message)));
     }
+
+    [Theory]
+    [InlineData("exFAT")]
+    [InlineData("NTFS")]
+    [InlineData("")]
+    public void OnlyFat32CardsAreWritten(string fs) =>
+        Assert.Equal([GuardProblem.NotFat32], Problems(Check(Blank() with { FileSystem = fs })));
 
     [Fact]
     public void FactoryCardIsRefused()

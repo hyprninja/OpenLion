@@ -15,6 +15,7 @@ public enum GuardProblem
     TooSmall,
     TooLarge,
     NotEmpty,
+    NotFat32,
 }
 
 public sealed record GuardFinding(GuardProblem Problem, string Message);
@@ -106,6 +107,13 @@ public static class CardGuard
         if (target.TotalBytes > MaxCardBytes)
             Add(GuardProblem.TooLarge,
                 $"This drive is {Gb(target.TotalBytes)} GB. Use an SD card of 32 GB or less.");
+
+        // The iQ unit reads FAT32 cards (the factory card is FAT32).
+        if (!string.Equals(target.FileSystem, "FAT32", StringComparison.OrdinalIgnoreCase))
+            Add(GuardProblem.NotFat32, target.FileSystem.Length == 0
+                ? "Windows didn't report this card's format. It must be FAT32."
+                : $"This card is formatted {target.FileSystem}, but the iQ unit needs FAT32. In File Explorer, right-click " +
+                  "the card, choose Format…, pick FAT32 and press Start (this erases the card).");
 
         if (target.RootEntryCount > 0 && !options.AllowNonEmpty && !writtenByUs)
             Add(GuardProblem.NotEmpty,

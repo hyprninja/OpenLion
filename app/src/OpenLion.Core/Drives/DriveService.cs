@@ -54,6 +54,8 @@ public static class DriveService
             PhysicalDiskNumber = disk,
             DiskSerial = diskSerial,
             TotalBytes = di.TotalSize,
+            FreeBytes = di.AvailableFreeSpace,
+            FileSystem = di.DriveFormat,
             IsRemovable = removable,
             IsSystemDisk = disk is not null && disk == systemDisk,
             IsReadOnly = readOnly,
@@ -62,6 +64,9 @@ public static class DriveService
                 .Count(e => !IgnoredRootEntries.Contains(e.Name)),
         };
     }
+
+    /// <summary>Volume GUID path currently mounted at a drive root, or null.</summary>
+    public static string? VolumeGuidOf(string root) => VolumeGuid(root);
 
     static SafeFileHandle OpenQueryOnly(string root) =>
         CreateFile(@"\\.\" + root.TrimEnd('\\'), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, 0, 0);
