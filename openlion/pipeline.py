@@ -2,7 +2,10 @@
 
 Usage:
   python -m openlion.pipeline <extract.osm.pbf> <factory navigation/db_aunz/db> <out dir>
-         [--bbox lon0 lat0 lon1 lat1] [--lookup CITY STREET ...]
+         [--extract NZ=<extract.osm.pbf> ...] [--bbox lon0 lat0 lon1 lat1] [--lookup CITY STREET ...]
+
+The first extract may be prefixed with its country (AU=..., NZ=...); a bare path is
+Australia. --extract adds more countries (see countries.py).
 
 Slow OSM reads are cached as pickles in <out dir>. Output tables go to <out dir>/db/
 with the factory file names, packed (FLAT) exactly as on the card, and the POI
@@ -19,8 +22,8 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import (flat, graph, layers, mapfile, osm_fea, osm_import, osm_names, osm_poi,  # noqa: E402
-                      roads, search, tiler)
+from openlion import (countries, flat, graph, layers, mapfile, osm_fea, osm_import, osm_names,  # noqa: E402
+                      osm_poi, roads, search, tiler)
 from openlion.common import build_header  # noqa: E402
 
 AU_BBOX = (9000000, -4810918, 17998594, -726427)   # factory map extent (deg * 1e5)
@@ -47,11 +50,29 @@ def cached(path, fn):
     return v
 
 
+def inputs_of(pbf):
+    """A path, or [(Country, path)] / ["NZ=path", ...] -> [(Country, path)] in catalog order."""
+    items = [pbf] if isinstance(pbf, (str, os.PathLike)) else list(pbf)
+    out = [countries.parse_input(os.fspath(p)) if not isinstance(p, tuple) else p for p in items]
+    codes = [c.code for c, _ in out]
+    if len(set(codes)) != len(codes):
+        raise ValueError(f"one extract per country, got {codes}")
+    return sorted(out, key=lambda cp: cp[0].catalog)
+
+
 def run(pbf, db, out, bbox=None, lookups=(), stage=None):
-    """stage: optional callback, called with a name from STAGES as each stage starts."""
+    """pbf: one Australian extract, or [(Country, path)] (see inputs_of).
+    stage: optional callback, called with a name from STAGES as each stage starts."""
     os.makedirs(os.path.join(out, "db"), exist_ok=True)
     region = bbox or AU_BBOX
     stage = stage or (lambda name: None)
+    inputs = inputs_of(pbf)
+    log("countries: " + ", ".join(f"{c.title} ({os.path.basename(p)})" for c, p in inputs))
+
+    def per_country(name, fn):
+        """fn(country, path) for every extract, each cached as <name>_<CODE>.pickle."""
+        return [(c, cached(os.path.join(out, f"{name}_{c.code}.pickle"), lambda c=c, p=p: fn(c, p)))
+                for c, p in inputs]
 
     def raw(fn):
         d = open(os.path.join(db, fn), "rb").read()
@@ -59,7 +80,9 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None):
 
     # 1. roads
     stage("roads")
-    c = cached(os.path.join(out, "roads_collected.pickle"), lambda: osm_import.read(pbf, bbox))
+    # read only what lies on the map (the AU extract has Heard Island, NZ's the Chathams)
+    c = osm_import.merge([(cn.catalog, col) for cn, col in
+                          per_country("roads", lambda cn, p: osm_import.read(p, region))])
     log(f"roads: {len(c.ways):,} ways, {len(c.restrictions):,} restriction relations")
     stage("graph")
     g, si, st = osm_import.build_graph(c)
@@ -79,15 +102,22 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None):
 
     # 2. names + search
     stage("boundaries")
-    areas = cached(os.path.join(out, "boundaries.pickle"), lambda: osm_names.read_boundaries(pbf, bbox))
-    log(f"boundaries: {len(areas):,} areas")
+    areas, places = [], []
+    for cn, a in per_country("boundaries", lambda cn, p: osm_names.read_boundaries(
+            p, region, cn.boundary_levels, cn.catalog)):
+        areas += a
+    for cn, (a, pts) in per_country("places", lambda cn, p: osm_names.read_places(p, region, cn.catalog)
+                                    if cn.localities == "places" else ([], [])):
+        areas += a
+        places += pts
+    log(f"boundaries: {len(areas):,} areas, {len(places):,} place points")
     factory = {"stt": raw("auz.stt"), "cny": raw("auz.cny"), "cal": raw("au.cal"), "cat": raw("au.cat")}
     for k, fn in (("str_header", "auz.str"), ("cty_header", "auz.cty"), ("rd_header", "auz.rd"),
                   ("rt_header", "auz.rt"), ("rl_header", "auz.rl"), ("cl_header", "auz.cl"),
                   ("ct_header", "auz.ct")):
         factory[k] = raw(fn)[:0x5E]
     stage("names")
-    tables, nst = osm_names.build(g, g.seg_label, areas, factory)
+    tables, nst = osm_names.build(g, g.seg_label, areas, factory, places=places)
     log(f"names/search: {dict(nst)}")
 
     # 3. seginfo
@@ -108,7 +138,12 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None):
 
     # 5. background
     stage("fea_read")
-    fc = cached(os.path.join(out, "fea_collected.pickle"), lambda: osm_fea.read(pbf, region))
+    fc = osm_fea.Collected()
+    for cn, part in per_country("fea", lambda cn, p: osm_fea.read(p, region)):
+        fc.areas += part.areas
+        fc.lines += part.lines
+        fc.coast += part.coast
+        fc.places += part.places
     log(f"background: {len(fc.areas):,} areas, {len(fc.lines):,} lines, {len(fc.coast):,} coastline ways")
 
     def fea_level_done(k):
@@ -124,10 +159,22 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None):
 
     # 6. points of interest
     stage("pois_read")
-    pois = cached(os.path.join(out, "pois.pickle"), lambda: osm_poi.read(pbf, bbox))
+    pois = []
+    for cn, part in per_country("pois", lambda cn, p: osm_poi.read(p, region)):
+        for cat, x, y, tags in part:
+            tags[osm_poi.COUNTRY_TAG] = cn.catalog
+            pois.append((cat, x, y, tags))
     stage("pois")
+    # POIs within 10 km of the road map only (card_check's rule): tramping huts deep in
+    # Fiordland are no use to a car and lie beyond every map parcel
+    xs = [p[0] for p in g.node_xy]
+    ys = [p[1] for p in g.node_xy]
+    m = 10000
+    poi_box = (max(region[0], min(xs) - m), max(region[1], min(ys) - m),
+               min(region[2], max(xs) + m), min(region[3], max(ys) + m))
     poi_path = os.path.join(out, "edb", "POI", "aunz_sql.db3")
-    pst = osm_poi.build(pois, os.path.join(db, "..", "edb", "POI", "aunz_sql.db3"), poi_path, areas, region)
+    pst = osm_poi.build(pois, os.path.join(db, "..", "edb", "POI", "aunz_sql.db3"), poi_path, areas, poi_box,
+                        places=places)
     log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM)")
 
     # 7. write: FLAT tables packed, others as-is
@@ -152,7 +199,10 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None):
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests"))
         from osm_names_region import lookup
         for i in range(0, len(lookups), 2):
-            r = lookup(tables, lookups[i], lookups[i + 1])
+            for cat, _ in enumerate(search.parse_trees(tables["auz.ct"])):     # every country's city tree
+                r = lookup(tables, lookups[i], lookups[i + 1], cat)
+                if isinstance(r, tuple):
+                    break
             log("  lookup " + (r[0] if isinstance(r, tuple) else r))
     return out_files
 
@@ -162,8 +212,9 @@ if __name__ == "__main__":
     ap.add_argument("pbf")
     ap.add_argument("db")
     ap.add_argument("out")
+    ap.add_argument("--extract", action="append", default=[], help="another country: NZ=<extract.osm.pbf>")
     ap.add_argument("--bbox", nargs=4, type=float)
     ap.add_argument("--lookup", nargs="*", default=[])
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
-    run(a.pbf, a.db, a.out, bb, a.lookup)
+    run([a.pbf] + a.extract, a.db, a.out, bb, a.lookup)

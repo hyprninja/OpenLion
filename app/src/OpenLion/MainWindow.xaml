@@ -204,29 +204,60 @@
                 <StackPanel>
                     <TextBlock Style="{StaticResource H1}" Text="Get the OpenStreetMap data"/>
                     <TextBlock Style="{StaticResource Body}">
-                        The new maps are made from OpenStreetMap, the free map built by volunteers. OpenLion downloads the
-                        Australia extract (about 1 GB) from Geofabrik, which updates it every day.
+                        The new maps are made from OpenStreetMap, the free map built by volunteers. OpenLion downloads
+                        each country's extract from Geofabrik, which updates them every day.
                     </TextBlock>
 
-                    <Border Style="{StaticResource Card}">
-                        <StackPanel>
-                            <TextBlock FontWeight="SemiBold" Margin="0,0,0,4" Text="On this PC"/>
-                            <TextBlock Text="{Binding CachedText}" TextWrapping="Wrap" Foreground="{StaticResource Good}"
-                                       Visibility="{Binding HasCached, Converter={StaticResource BoolToVis}}"/>
-                            <TextBlock Text="Nothing downloaded yet." Foreground="{StaticResource Muted}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HasCached}" Value="True">
-                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <TextBlock Text="{Binding RemoteText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                        </StackPanel>
-                    </Border>
+                    <TextBlock FontWeight="SemiBold" Margin="0,4,0,6" Text="Which maps do you want on the card?"/>
+                    <ListBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Choice}" IsEnabled="{Binding IsIdle}"
+                             BorderThickness="0" Background="Transparent" Margin="0,0,0,10"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <RadioButton IsChecked="{Binding IsSelected, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                                         GroupName="Countries" Margin="0,0,0,6" VerticalContentAlignment="Center">
+                                                <TextBlock TextWrapping="Wrap">
+                                                    <Run Text="{Binding Label, Mode=OneWay}" FontWeight="SemiBold"/>
+                                                    <Run Text="  "/>
+                                                    <Run Text="{Binding Note, Mode=OneWay}" Foreground="{StaticResource Muted}"/>
+                                                </TextBlock>
+                                            </RadioButton>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                    </ListBox>
+
+                    <ItemsControl ItemsSource="{Binding Rows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold" Margin="0,0,0,4" Text="{Binding Title}"/>
+                                        <TextBlock Text="{Binding CachedText}" TextWrapping="Wrap">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasCached}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource Good}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding RemoteText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                        <Button Content="Use a file I already have…" Command="{Binding ImportCommand}"
+                                                HorizontalAlignment="Left" Margin="0,10,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
 
                     <StackPanel Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" Margin="0,4,0,10">
                         <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"/>
@@ -243,12 +274,11 @@
                         <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
                                 Visibility="{Binding ShowDownload, Converter={StaticResource BoolToVis}}"/>
                         <Button Content="Check again" Command="{Binding CheckCommand}" Margin="0,0,8,6"/>
-                        <Button Content="Use a file I already have…" Command="{Binding ImportCommand}" Margin="0,0,8,6"/>
                     </WrapPanel>
 
                     <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,10,0,0">
                         Map data © OpenStreetMap contributors, available under the Open Database License (ODbL).
-                        Extract provided by Geofabrik GmbH.
+                        Extracts provided by Geofabrik GmbH.
                     </TextBlock>
                 </StackPanel>
             </ScrollViewer>

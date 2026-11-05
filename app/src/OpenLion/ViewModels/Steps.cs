@@ -18,8 +18,23 @@ public sealed class Session
     public FactoryCardRecord? FactoryRecord { get; set; }
     public CopyResult? FactoryCopy { get; set; }
 
-    /// <summary>The OSM extract to build from (set by the Get OSM data step).</summary>
-    public OpenLion.Core.Osm.OsmExtract? Osm { get; set; }
+    /// <summary>The countries to put on the card (chosen on the Get OSM data step).</summary>
+    public IReadOnlyList<OpenLion.Core.Osm.MapCountry> Countries { get; set; } = [OpenLion.Core.Osm.MapCountry.Australia];
+
+    /// <summary>One OSM extract per country in <see cref="Countries"/>, in the same order (set by the
+    /// Get OSM data step once every one is on this PC).</summary>
+    public IReadOnlyList<OpenLion.Core.Osm.OsmExtract>? Osm { get; set; }
+
+    /// <summary>"OpenStreetMap data for New Zealand from 3 November 2026" etc.</summary>
+    public string DescribeOsm()
+    {
+        if (Osm is not { Count: > 0 } osm)
+            return "";
+        if (osm.Count == 1)
+            return $"{osm[0].Describe()} ({OpenLion.Core.Osm.MapCountry.Describe(Countries)})";
+        var parts = Countries.Zip(osm, (c, e) => $"{c.Title}: {e.Describe()}");
+        return "OpenStreetMap data for " + OpenLion.Core.Osm.MapCountry.Describe(Countries) + " (" + string.Join("; ", parts) + ")";
+    }
 
     /// <summary>The finished map build to write (set by the Build maps step).</summary>
     public BuildRecord? Build { get; set; }

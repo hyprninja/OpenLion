@@ -317,7 +317,25 @@ ESSENTIAL = {(2, 125), (2, 110), (2, 80)}
 
 
 def fit_budget(feats, stats, level):
-    """Drop the smallest non-essential features until the parcel fits both limits."""
+    """Drop the smallest non-essential features until the parcel fits both limits. If the
+    essential ones alone are still too big (New Zealand's sounds and gulfs: dozens of
+    detailed bays), bays may go too, smallest first; sea and land always stay."""
+    first = collections.Counter()
+    kept = _fit(feats, first, level, ESSENTIAL)
+    if feats and _too_big(kept):
+        stats[f"L{level} parcels over budget with bays"] += 1
+        return _fit(feats, stats, level, ESSENTIAL - {(2, 80)})
+    stats.update(first)
+    return kept
+
+
+def _too_big(feats):
+    import zlib
+    raw = feawrite.encode_parcel(feats) if feats else b""
+    return len(raw) > MAX_PARCEL or (len(zlib.compress(raw, 9)) if raw else 0) > MAX_ZIPPED
+
+
+def _fit(feats, stats, level, essential):
     import zlib
     sizes = [len(feawrite.encode_feature(f)) for f in feats]
 
@@ -326,7 +344,7 @@ def fit_budget(feats, stats, level):
         ys = [p[1] for part in f["parts"] for p in part]
         return (max(xs) - min(xs)) + (max(ys) - min(ys))
 
-    cand = sorted((i for i, f in enumerate(feats) if (f["category"], f["type"]) not in ESSENTIAL),
+    cand = sorted((i for i, f in enumerate(feats) if (f["category"], f["type"]) not in essential),
                   key=lambda i: extent(feats[i]))
     budget = MAX_PARCEL
     drop = set()

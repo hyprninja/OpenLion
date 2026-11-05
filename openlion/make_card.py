@@ -3,7 +3,10 @@
 The one command the Windows app runs to build maps:
 
   python -m openlion.make_card <extract.osm.pbf> <factory navigation/> <work dir> <out navigation/>
-         [--manifest <manifest.tsv>] [--bbox lon0 lat0 lon1 lat1] [--json]
+         [--extract NZ=<extract.osm.pbf> ...] [--manifest <manifest.tsv>] [--bbox lon0 lat0 lon1 lat1] [--json]
+
+The first extract may name its country (AU=..., NZ=...); a bare path is Australia.
+Add --extract for each further country. Countries left out get no cities on the card.
 
 1. openlion.pipeline builds every map table and the POI database in <work dir>
    (slow OSM reads are cached there and reused while the extract is unchanged).
@@ -34,11 +37,12 @@ from openlion.compat import error_name, safe_traceback  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CARD_CHECK = os.path.join(ROOT, "tests", "card_check.py")
 
-# (stage, label, rough seconds for all of Australia on a fast PC with nothing cached)
+# (stage, label, rough seconds for all of Australia on a fast PC with nothing cached;
+#  scaled by the total extract size for other countries)
 STAGES = [
     ("roads", "Reading roads", 240),
     ("graph", "Building the road network", 130),
-    ("boundaries", "Reading suburbs and postcodes", 150),
+    ("boundaries", "Reading suburbs, towns and postcodes", 150),
     ("names", "Street names and address search", 300),
     ("layers", "Routing layers", 160),
     ("fea_read", "Reading water, parks and land use", 300),
@@ -57,6 +61,7 @@ STAGES = [
 assert [s for s, _, _ in STAGES][:len(pipeline.STAGES)] == list(pipeline.STAGES)
 
 CACHE_KEY = "cache_key.json"
+AU_EXTRACT_BYTES = 972_670_217    # the extract the stage times were measured with
 
 
 class Failed(Exception):
@@ -80,11 +85,13 @@ class Out:
             print(f"== {dict((s, l) for s, l, _ in STAGES)[name]}", flush=True)
 
 
-def reset_cache(pbf, work, bbox):
-    """The pipeline caches OSM reads as pickles in work/. Throw them away when the extract
-    or the area changes, so a new download is never mixed with an old one."""
-    st = os.stat(pbf)
-    key = {"size": st.st_size, "mtime": int(st.st_mtime), "bbox": list(bbox) if bbox else None}
+def reset_cache(inputs, work, bbox):
+    """The pipeline caches OSM reads as pickles in work/. Throw them away when an extract,
+    the set of countries or the area changes, so a new download is never mixed with an old one."""
+    key = {"extracts": [], "bbox": list(bbox) if bbox else None}
+    for country, path in inputs:
+        st = os.stat(path)
+        key["extracts"].append({"country": country.code, "size": st.st_size, "mtime": int(st.st_mtime)})
     path = os.path.join(work, CACHE_KEY)
     try:
         with open(path, encoding="utf-8") as f:
@@ -110,22 +117,28 @@ def folder_size(path):
 
 
 def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False):
+    """pbf: one Australian extract, or a list of "NZ=path" / (Country, path) (pipeline.inputs_of)."""
     o = Out(as_json)
-    o.emit("start", stages=[{"id": s, "label": l, "weight": w} for s, l, w in STAGES])
+    inputs = pipeline.inputs_of(pbf)
+    total = sum(os.path.getsize(p) for _, p in inputs if os.path.isfile(p))
+    scale = max(0.05, total / AU_EXTRACT_BYTES)
+    o.emit("start", stages=[{"id": s, "label": l, "weight": w if s in ("card", "check") else round(w * scale)}
+                            for s, l, w in STAGES])
     partial = out.rstrip("\\/") + ".partial"
     try:
         db = os.path.join(factory, "db_aunz", "db")
-        if not os.path.isfile(pbf):
-            raise Failed(f"OSM extract not found: {pbf}")
+        for _, p in inputs:
+            if not os.path.isfile(p):
+                raise Failed(f"OSM extract not found: {p}")
         if not os.path.isdir(db):
             raise Failed(f"no db_aunz/db folder in the factory copy: {factory}")
         if os.path.exists(out):
             raise Failed(f"output folder already exists: {out}")
         os.makedirs(work, exist_ok=True)
-        if reset_cache(pbf, work, bbox):
+        if reset_cache(inputs, work, bbox):
             print("reusing cached OSM reads from an earlier run", flush=True)
 
-        pipeline.run(pbf, db, work, bbox, stage=o.start_stage)
+        pipeline.run(inputs, db, work, bbox, stage=o.start_stage)
 
         o.start_stage("card")
         if os.path.exists(partial):
@@ -179,17 +192,18 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("pbf")
+    ap.add_argument("pbf", help="OSM extract; AU=<path> or NZ=<path> (a bare path is Australia)")
     ap.add_argument("factory", help="navigation/ folder of the factory card copy")
     ap.add_argument("work", help="working folder (cached OSM reads, new tables)")
     ap.add_argument("out", help="navigation/ folder to create")
     ap.add_argument("--manifest", help="manifest.tsv of the factory copy (default: the CD_7606 reference)")
     ap.add_argument("--bbox", nargs=4, type=float, help="build only this area (lon0 lat0 lon1 lat1), for testing")
+    ap.add_argument("--extract", action="append", default=[], help="another country: NZ=<extract.osm.pbf>")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
     t0 = time.time()
-    code = run(a.pbf, a.factory, a.work, a.out, a.manifest, bb, a.json)
+    code = run([a.pbf] + a.extract, a.factory, a.work, a.out, a.manifest, bb, a.json)
     if not a.json:
         print(f"{time.time() - t0:.0f}s")
     sys.exit(code)
