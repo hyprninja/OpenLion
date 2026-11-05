@@ -22,7 +22,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 $PyVersion = "3.12.10"
 $PyMd5 = "fe8ef205f2e9c3ba44d0cf9954e1abd3"   # from python.org's release page
-# SHA-256 of the same file, pinned when 1.1.1 was built (python.org publishes only MD5/Sigstore).
+# SHA-256 of the same file, pinned when 1.2.0 was built (python.org publishes only MD5/Sigstore).
 $PySha256 = "4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3"
 $Osmium = "4.3.2"
 $Requirements = Join-Path $PSScriptRoot "engine-requirements.txt"   # versions + SHA-256 of every wheel
