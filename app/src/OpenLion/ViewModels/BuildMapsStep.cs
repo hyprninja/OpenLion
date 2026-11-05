@@ -219,7 +219,7 @@ public sealed class BuildMapsStep : StepViewModel
             {
                 foreach (var d in new[] { AppPaths.BuildOutput, AppPaths.BuildOutput + ".partial" })
                     if (Directory.Exists(d))
-                        Directory.Delete(d, true);
+                        Directory.Delete(AppPaths.EnsureInside(d, AppPaths.Root), true);
             }, ct);
             _session.State.Build = null;
             _session.State.Save();

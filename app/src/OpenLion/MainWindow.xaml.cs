@@ -10,6 +10,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = new MainViewModel();
+        if (OpenLion.Core.Engine.EngineLocator.Locate() is { Bundled: false } dev)
+            Title += $" ({dev.Describe()})";
     }
 
     protected override void OnClosing(CancelEventArgs e)

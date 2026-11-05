@@ -22,7 +22,10 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 $PyVersion = "3.12.10"
 $PyMd5 = "fe8ef205f2e9c3ba44d0cf9954e1abd3"   # from python.org's release page
+# SHA-256 of the same file, pinned when 1.1.1 was built (python.org publishes only MD5/Sigstore).
+$PySha256 = "4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3"
 $Osmium = "4.3.2"
+$Requirements = Join-Path $PSScriptRoot "engine-requirements.txt"   # versions + SHA-256 of every wheel
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 New-Item -ItemType Directory -Force $Out | Out-Null
@@ -42,6 +45,7 @@ if (-not (Test-Path $zip)) {
     Invoke-WebRequest "https://www.python.org/ftp/python/$PyVersion/python-$PyVersion-embed-amd64.zip" -OutFile $zip
 }
 if ((Get-FileHash $zip -Algorithm MD5).Hash -ne $PyMd5) { throw "Python download has the wrong MD5: $zip" }
+if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $PySha256) { throw "Python download has the wrong SHA-256: $zip" }
 $py = Join-Path $stage "runtime\python"
 Expand-Archive $zip -DestinationPath $py
 # The ._pth file fixes sys.path (PYTHONPATH and the current folder are ignored): stdlib,
@@ -52,7 +56,8 @@ Set-Content (Join-Path $py "python312._pth") -Encoding ascii -Value @(
 Write-Host "== osmium $Osmium"
 $site = Join-Path $py "Lib\site-packages"
 & $BuildPython -m pip install --disable-pip-version-check --quiet --no-compile --target $site `
-    --only-binary=:all: --platform win_amd64 --python-version 3.12 --implementation cp "osmium==$Osmium"
+    --only-binary=:all: --platform win_amd64 --python-version 3.12 --implementation cp `
+    --require-hashes -r $Requirements
 # pip's command-line launchers point at the build machine's Python; the app doesn't use them.
 Remove-Item -Recurse -Force (Join-Path $site "bin") -ErrorAction SilentlyContinue
 
@@ -67,7 +72,7 @@ Copy-Item (Join-Path $repo "LICENSE") (Join-Path $stage "LICENSE.txt")
 Write-Host "== Smoke test of the bundled engine"
 Push-Location $env:TEMP
 try {
-    & (Join-Path $py "python.exe") -X utf8 -c "import osmium, sqlite3, zlib, openlion.make_card, openlion.compat; print('engine ok', osmium.__file__)"
+    & (Join-Path $py "python.exe") -X utf8 -c "import osmium, sqlite3, zlib, openlion.make_card, openlion.compat; print('engine ok, osmium', osmium.__version__, osmium.__file__)"
 } finally { Pop-Location }
 
 Write-Host "== MSI"

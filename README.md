@@ -175,7 +175,7 @@ Build and test the app with `dotnet test app/OpenLion.slnx`. Settings for develo
 | `osm_fea.py` | OSM areas/lines/coastline → background feature file |
 | `osm_poi.py` | OSM amenities → POI database (SQLite), keeping the factory schema and statements |
 | `pipeline.py` | One command: OSM extract → every replaceable table (cached stages, checks, sample lookups) |
-| `make_card.py` | What the app runs: pipeline → `build` → `tests/card_check.py` into a finished `navigation/` folder, with JSON progress (`--json`); OSM reads are cached until the extract changes |
+| `make_card.py` | What the app runs: pipeline → `build` → `tests/card_check.py` into a finished `navigation/` folder, with JSON progress (`--json`); OSM reads are cached until the extract changes; each cache file carries a SHA-256 and is re-read if it doesn't match |
 | `build.py` | Writes a complete `navigation/` folder (`--identity` or `--tables <dir>`), replacing only map tables and hash-verifying everything else |
 | `render.py`, `render_fea.py` | Draw decoded roads / features to PNG, no third-party libraries |
 | `fat32_list.py` | Read-only file lister + hasher for a raw SD image |

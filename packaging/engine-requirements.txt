@@ -1,0 +1,17 @@
+# Packages bundled into the app's Python 3.12 (win_amd64), pinned by version and SHA-256.
+# build-release.ps1 installs these with pip --require-hashes, so a release fails instead of
+# shipping anything PyPI serves differently. osmium needs the other five.
+# To update: pip download --only-binary=:all: --platform win_amd64 --python-version 3.12
+#   --implementation cp -d <dir> "osmium==<version>", then sha256 each wheel.
+osmium==4.3.2 \
+    --hash=sha256:3799c91ec427a3298302664179bde83b8fd96ca22dc68218b8d566056c841a71
+requests==2.34.2 \
+    --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
+urllib3==2.8.0 \
+    --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
+certifi==2026.10.23 \
+    --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
+idna==3.20 \
+    --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+charset-normalizer==3.5.2 \
+    --hash=sha256:780fbe7cab297b81dad9fb8dc5eb003c0468ffb0d9e5f65068c53a34661a96bc

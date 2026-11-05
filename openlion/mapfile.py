@@ -18,6 +18,7 @@ import sys
 import zlib
 
 from . import schema
+from .common import DamagedTable, MAX_PARCELS
 
 MAPHDR = struct.Struct("<iiiiHIiHHH")  # 32 bytes
 KD = struct.Struct("<iIIB")           # 13 bytes
@@ -27,11 +28,17 @@ HNDL = struct.Struct("<iHH")          # 8 bytes
 class MapFile:
     def __init__(self, data: bytes):
         self.d = data
+        if len(data) < 0x5E + MAPHDR.size:
+            raise DamagedTable(f"map file header truncated ({len(data)} bytes)")
         self.dbID, self.fileID, self.rec_cnt, self.byte_cnt = struct.unpack_from("<IHII", data, 0x50)
         (self.min_long, self.min_lat, self.max_long, self.max_lat, self.layer,
          self.pcl_cnt, self.kd_cnt, self.kd_depth, self.max_tmcp_chain_len,
          self.max_tmcp_location_size) = MAPHDR.unpack_from(data, 0x5E)
         off = 0x5E + MAPHDR.size
+        if not (0 <= self.kd_cnt <= MAX_PARCELS and self.pcl_cnt <= MAX_PARCELS):
+            raise DamagedTable(f"map file counts out of range (kd {self.kd_cnt}, parcels {self.pcl_cnt})")
+        if off + KD.size * self.kd_cnt + HNDL.size * self.pcl_cnt > len(data):
+            raise DamagedTable("map file directory runs past the end of the file")
         self.kd = [KD.unpack_from(data, off + i * KD.size) for i in range(self.kd_cnt)]
         off += self.kd_cnt * KD.size
         self.hndl_off = off
@@ -40,13 +47,18 @@ class MapFile:
 
     def parcel_raw(self, i):
         o, org, z = self.handles[i]
+        if o < self.data_off or o + z > len(self.d):
+            raise DamagedTable(f"parcel {i} lies outside the file")
         return self.d[o:o + z], org
 
     def parcel(self, i):
         z, org = self.parcel_raw(i)
-        out = zlib.decompress(z)
+        try:
+            out = zlib.decompress(z)
+        except zlib.error as e:
+            raise DamagedTable(f"parcel {i}: {e}") from None
         if len(out) != org:
-            raise ValueError(f"parcel {i}: {len(out)} != org_byte_cnt {org}")
+            raise DamagedTable(f"parcel {i}: {len(out)} != org_byte_cnt {org}")
         return out
 
 

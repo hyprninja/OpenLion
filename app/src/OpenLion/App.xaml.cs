@@ -11,11 +11,31 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         AppLog.Write($"start {ErrorReport.AppVersion}");
+        LogEnvironment();
         DispatcherUnhandledException += OnUnhandled;
         AppDomain.CurrentDomain.UnhandledException += (_, a) => AppLog.Write($"fatal: {a.ExceptionObject}");
         TaskScheduler.UnobservedTaskException += (_, a) => AppLog.Write($"unobserved task error: {a.Exception}");
         SessionEnding += (_, a) => AppLog.Write($"Windows session ending: {a.ReasonSessionEnding}");
         base.OnStartup(e);
+    }
+
+    /// <summary>What a bug report needs to show which code ran: signature, engine, data folder.</summary>
+    static void LogEnvironment()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath ?? "";
+            AppLog.Write($"app: {exe}, signature {Authenticode.Check(exe)}");
+            var engine = OpenLion.Core.Engine.EngineLocator.Locate();
+            AppLog.Write(engine is null ? "engine: not found" : $"engine: {engine.Describe()}" +
+                (engine.Bundled ? $", python signature {Authenticode.Check(engine.Python)}" : ""));
+            AppLog.Write($"data folder: {AppPaths.Root}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                                       or System.ComponentModel.Win32Exception)
+        {
+            AppLog.Write($"startup checks failed: {ex.Message}");
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

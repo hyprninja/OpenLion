@@ -102,7 +102,7 @@ public sealed class CopyCardStep : StepViewModel
                 Percent = p.BytesTotal == 0 ? 0 : 50.0 * p.BytesDone / p.BytesTotal;
                 Detail = $"{p.FilesDone:N0} of {p.FilesTotal:N0} files, {p.BytesDone / 1e6:N0} of {p.BytesTotal / 1e6:N0} MB";
             });
-            var dest = AppPaths.CardCopyFolder(drive);
+            var dest = AppPaths.EnsureInside(AppPaths.CardCopyFolder(drive), AppPaths.CardsFolder);
             AppLog.Write($"copy: {drive} -> {dest}");
             copy = await Task.Run(() => CardCopier.Copy(drive.Root, dest, copyProgress, ct), ct);
             var known = KnownCards.Identify(copy.Manifest);
