@@ -155,11 +155,6 @@
                             <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
                             <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold"
                                        Text="You can now take the factory card out and put it somewhere safe. OpenLion doesn't need it again."/>
-                            <CheckBox IsChecked="{Binding ConfirmUntested}"
-                                      Visibility="{Binding IsUntested, Converter={StaticResource BoolToVis}}">
-                                <TextBlock TextWrapping="Wrap"
-                                           Text="I understand nobody has tested OpenLion maps with this card version in a car yet, and I want to continue. (If it works, please tell us on GitHub!)"/>
-                            </CheckBox>
                         </StackPanel>
                     </Border>
 

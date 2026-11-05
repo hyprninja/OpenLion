@@ -12,6 +12,10 @@ What 5.3 changes for the tables OpenLion writes:
               adas and adas_speed records gain optional bytes behind content bits
               that 5.2.1 leaves at 0 (see mapwrite.decode_adas).
 
+The MY15 card (CD_8217, AUNZ 2014Q1) sits in between: au.mod and auz.rd are 5.2.1,
+but its map files already use the 5.3 parcel layout, maxPclId and the mp0 file-size
+byte_cnt. use_card() spots this from auz.mp0's first parcel (V521_MAPS53).
+
 The active schema is a process-wide setting: pick it from the card with use_card()
 before reading or writing tables. Parcels carry their own marker (pos_list, the
 first list, starts right after pcl_offs), so parcel decoding detects it per parcel.
@@ -78,6 +82,11 @@ class Schema:
 V521 = Schema("5.2.1", "Arriba 5.2.1", "u16pair", _fields(truck=False, tmcp=True), False)
 V53 = Schema("5.3", "Arriba 5.3", "flag", _fields(truck=True, tmcp=False), True)
 ALL = (V521, V53)
+# MY15 card (CD_8217, AUNZ 2014Q1): au.mod and auz.rd are 5.2.1, but the map files
+# (mp0/mg) already use the 5.3 parcel layout and mapHeader maxPclId, and mp0's
+# byte_cnt is the file size. au.mod can't tell this apart, so use_card probes auz.mp0.
+V521_MAPS53 = Schema("5.2.1+5.3maps", "Arriba 5.2.1", "u16pair",
+                     _fields(truck=True, tmcp=False), True)
 
 _active = V521
 
@@ -121,7 +130,26 @@ def use_card(path) -> Schema:
     if p is None:
         return use(V521)
     with open(p, "rb") as f:
-        return use(detect(f.read()))
+        s = detect(f.read())
+    mp0 = os.path.join(os.path.dirname(p), "auz.mp0")
+    if s is V521 and os.path.isfile(mp0) and map_parcel_layout(mp0) is V53:
+        s = V521_MAPS53
+    return use(s)
+
+
+def map_parcel_layout(path) -> Schema:
+    """Parcel layout of a map file, from its first parcel (reads only that parcel)."""
+    import zlib
+    with open(path, "rb") as f:
+        head = f.read(0x5E + 0x20)
+        pcl_cnt, kd_cnt = struct.unpack_from("<Ii", head, 0x5E + 18)
+        if pcl_cnt == 0:
+            return None
+        f.seek(0x5E + 0x20 + 13 * kd_cnt)
+        off, _raw_n, zip_n = struct.unpack("<iHH", f.read(8))
+        f.seek(off)
+        raw = zlib.decompress(f.read(zip_n))
+    return for_parcel(raw)
 
 
 def for_parcel(raw: bytes) -> Schema:

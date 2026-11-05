@@ -69,7 +69,7 @@ public sealed class WelcomeStep() : StepViewModel("Welcome")
 public sealed record FactoryCandidate(DriveSnapshot Drive, NavigationCard? Card)
 {
     public string Heading => Drive.ToString();
-    public string Version => Card?.Volume ?? "navigation folder found, but no cdrom.txt";
+    public string Version => Card?.DisplayName ?? "navigation folder found, but no card version file";
     public string Databases => Card is null ? "" :
         string.Join(Environment.NewLine, Card.Databases.Select(d =>
             $"{d.Folder}: {d.Name}, {d.Area}{(d.FolderExists ? "" : " (folder missing)")}"));
@@ -108,7 +108,7 @@ public sealed class FactoryCardStep : StepViewModel
     public bool HasSavedCopy => _session.State.Factory is { CopyVerified: true } &&
                                 _session.State.FactoryCopyPath is { } p && Directory.Exists(Path.Combine(p, "navigation"));
     public string SavedCopyText => _session.State.Factory is { } f
-        ? $"{f.CardVersion ?? "Factory card"}{(f.Label.Length > 0 ? $" (label {f.Label})" : "")}, {f.TotalBytes / 1e9:N1} GB card, copied and checked."
+        ? $"{CardNames.Display(f.CardVersion) ?? "Factory card"}{(f.Label.Length > 0 ? $" (label {f.Label})" : "")}, {f.TotalBytes / 1e9:N1} GB card, copied and checked."
         : "";
 
     void Refresh(IReadOnlyList<DriveSnapshot> drives)
