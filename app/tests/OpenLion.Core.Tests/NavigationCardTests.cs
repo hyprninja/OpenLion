@@ -78,4 +78,46 @@ public class NavigationCardTests
             Directory.Delete(root, true);
         }
     }
+
+    [Theory]
+    [InlineData("CD_7597 (= CD_7606 + CD_7335)", "MY12 (CD_7597)")]
+    [InlineData("CD_8217", "MY15 (CD_8217)")]
+    [InlineData("CD_8418", "MY17 (CD_8418)")]
+    [InlineData("CD_9999", "CD_9999")]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void DisplayNamesUseModelYears(string? volume, string? expected) =>
+        Assert.Equal(expected, CardNames.Display(volume));
+
+    [Fact]
+    public void ReadsCdromTocWhenThereIsNoCdromTxt()
+    {
+        // MY15 and MY17 cards have only navigation/db_aunz/cdrom.toc
+        var root = Directory.CreateTempSubdirectory("openlion-test").FullName;
+        try
+        {
+            var db = Directory.CreateDirectory(Path.Combine(root, "navigation", "db_aunz")).FullName;
+            File.WriteAllText(Path.Combine(db, "cdrom.toc"), """
+                Continental Automotive GmbH
+
+                Content
+
+                Volume:            CD_8217
+                db:                AUNZ(2014Q1)
+                Area:              Australia + New Zealand
+                Version:           505.1
+                Customer Version:  MY15
+                """.Replace("\n", "\r\n"));
+            var c = NavigationCard.TryRead(root);
+            Assert.NotNull(c);
+            Assert.Equal("CD_8217", c.Volume);
+            Assert.Equal("MY15 (CD_8217)", c.DisplayName);
+            Assert.Equal("MY15", c.CustomerVersion);
+            Assert.Equal(new MapDatabase("db_aunz", "AUNZ(2014Q1)", "Australia + New Zealand", "505.1", true), Assert.Single(c.Databases));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
 }

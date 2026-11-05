@@ -10,7 +10,7 @@ using OpenLion.Core.Reports;
 
 namespace OpenLion.ViewModels;
 
-public enum CopyPhase { Waiting, Copying, Checking, Verified, CompatibleUntested, Failed, Cancelled }
+public enum CopyPhase { Waiting, Copying, Checking, Verified, Failed, Cancelled }
 
 /// <summary>Step 3: copy the factory card to this PC, verify every file, then prove OpenLion can
 /// re-write this card's map tables byte for byte.</summary>
@@ -24,7 +24,6 @@ public sealed class CopyCardStep : StepViewModel
     string _detail = "";
     string? _reportPath;
     string _summary = "";
-    bool _confirmUntested;
     uint? _doneForSerial;
 
     public CopyCardStep(Session session) : base("Copy card")
@@ -50,7 +49,7 @@ public sealed class CopyCardStep : StepViewModel
         private set
         {
             if (!Set(ref _phase, value)) return;
-            Raise(nameof(IsBusy)); Raise(nameof(IsFailed)); Raise(nameof(IsUntested)); Raise(nameof(IsSuccess));
+            Raise(nameof(IsBusy)); Raise(nameof(IsFailed)); Raise(nameof(IsSuccess));
             Raise(nameof(CanRetry)); Raise(nameof(IsCancelled)); Raise(nameof(CanGoNext));
         }
     }
@@ -59,22 +58,15 @@ public sealed class CopyCardStep : StepViewModel
 
     public bool IsBusy => Phase is CopyPhase.Copying or CopyPhase.Checking;
     public bool IsFailed => Phase is CopyPhase.Failed;
-    public bool IsUntested => Phase is CopyPhase.CompatibleUntested;
-    public bool IsSuccess => Phase is CopyPhase.Verified or CopyPhase.CompatibleUntested;
+    public bool IsSuccess => Phase is CopyPhase.Verified;
     public bool CanRetry => Phase is CopyPhase.Failed or CopyPhase.Cancelled;
     public double Percent { get => _percent; private set => Set(ref _percent, value); }
     public string Status { get => _status; private set => Set(ref _status, value); }
     public string Detail { get => _detail; private set => Set(ref _detail, value); }
     public string? ReportPath { get => _reportPath; private set => Set(ref _reportPath, value); }
 
-    public bool ConfirmUntested
-    {
-        get => _confirmUntested;
-        set { if (Set(ref _confirmUntested, value)) Raise(nameof(CanGoNext)); }
-    }
-
     public override bool IsWorking => IsBusy;
-    public override bool CanGoNext => Phase == CopyPhase.Verified || (Phase == CopyPhase.CompatibleUntested && ConfirmUntested);
+    public override bool CanGoNext => Phase == CopyPhase.Verified;
 
     public override void OnEnter()
     {
@@ -96,7 +88,6 @@ public sealed class CopyCardStep : StepViewModel
         var ct = _cts.Token;
         ReportPath = null;
         _summary = "";
-        ConfirmUntested = false;
         _session.FactoryRecord = null;
         CopyResult? copy = null;
         CompatResult? compat = null;
@@ -151,16 +142,9 @@ public sealed class CopyCardStep : StepViewModel
             Percent = 100;
             Detail = $"{copy.Manifest.Count:N0} files, {copy.TotalBytes / 1e6:N0} MB copied and checked. " +
                      $"All {compat.Tables.Count} map tables re-created byte for byte.";
-            if (known is { Exact: true })
-            {
-                Status = $"Done. This is a known card ({known.Name}), already tested in a car with OpenLion maps.";
-                Phase = CopyPhase.Verified;
-            }
-            else
-            {
-                Status = "Done. OpenLion understands this card, but this card version hasn't been tested in a car yet.";
-                Phase = CopyPhase.CompatibleUntested;
-            }
+            var name = card?.DisplayName;
+            Status = name is null ? "Done. Your card is supported." : $"Done. Your {name} card is supported.";
+            Phase = CopyPhase.Verified;
         }
         catch (OperationCanceledException)
         {
@@ -197,7 +181,7 @@ public sealed class CopyCardStep : StepViewModel
             Detail = "The error report couldn't be saved: " + re.Message;
         }
         _summary = $"OpenLion {ErrorReport.AppVersion}: {step} failed.\n{message}\n" +
-                   $"Card: {card?.Volume ?? drive.Label}" +
+                   $"Card: {card?.DisplayName ?? drive.Label}" +
                    (compat is { Failed.Count: > 0 } ? $"\nTables: {string.Join(", ", compat.Failed)}" : "");
     }
 

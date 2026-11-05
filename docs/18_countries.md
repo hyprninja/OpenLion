@@ -87,6 +87,6 @@ The Get OSM data step asks which maps go on the card: Australia (~1 GB), New Zea
 ## Not done / to test in the car
 
 - A New Zealand card hasn't been in the car yet. Things to check: address entry offers New Zealand, "SUBURB, TOWN" search works, routing and guidance in NZ (demo mode, since the car is in Australia).
-- A one-country card leaves the other catalog empty. The 1.0 Australia-only card worked, but selecting New Zealand in address entry on such a card hasn't been tried.
+- A one-country card leaves the other catalog empty.
 - On a New Zealand-only card the background map shows Australia as sea (the background grid covers the whole factory extent, and nothing marks Australia as land).
 - Factory traffic (TMC) data is kept as on 1.0.

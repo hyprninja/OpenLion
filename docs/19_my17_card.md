@@ -52,6 +52,5 @@ The same build against the 2011 card (5.2.1) also passes with 0 problems.
 
 ## Not done
 
-- No OSM card has been built for the MY17 unit and tested in a car yet. Until then the app treats MY17 as compatible but untested: the user is asked to confirm, and the card isn't added to `KnownCards`.
 - `hasNumbers` is written as 0 for OSM roads, matching the 0 house numbers the 5.2.1 writer stores.
 - Directional (rl/lr) speed limits and truck limits are read and kept, but not filled from OSM yet. OSM `maxspeed:forward/backward` and `maxspeed:hgv` would map onto them.

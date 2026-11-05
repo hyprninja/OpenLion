@@ -56,4 +56,4 @@ The render (`openlion.render` on the new mp0 + .si) closely matches the factory 
 - Signposts (`destination`, `junction:ref`), lanes (`lanes`, `turn:lanes`), POIs, `.fea` background (water, parks, rail).
 - ~~Speed defaults where OSM has no `maxspeed`~~: decided 2026-11-05 not to add any. Limits come only from OSM tags.
 - Long ways crossing many parcels are fine. Nodes with more than 8 arms are counted but not split yet.
-- A full-Australia run (memory and time are fine for reading; tiling all of Australia is untested).
+- A full-Australia run (done in report 15).
