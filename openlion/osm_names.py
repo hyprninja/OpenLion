@@ -12,12 +12,14 @@ Model (matches the factory conventions, report 10 / 13 / 18):
            (NORTH MELBOURNE -> MELBOURNE;NORTH) plus "POSTCODE, NAME" when known.
 - every segment links (abs_addr) to exactly one road record.
 """
+import array
 import collections
 import struct
 import unicodedata
 
 from . import countries, roads, search
 from .common import HDR
+from .graph import Shape
 
 ALLOWED = set(search.ABC_ORDER)
 TYPE_WORDS = {
@@ -70,10 +72,12 @@ def rotations(name):
 # ---- boundaries --------------------------------------------------------------
 
 class Area:
-    __slots__ = ("level", "name", "postcode", "rings", "bbox", "osm_id", "country", "kind")
+    __slots__ = ("level", "name", "postcode", "rings", "bbox", "osm_id", "country", "kind", "_bands")
 
     def __init__(self, level, name, postcode, rings, osm_id, country=0, kind=None):
-        self.level, self.name, self.postcode, self.rings, self.osm_id = level, name, postcode, rings, osm_id
+        """rings: [(outer, [inner, ...])], each a list of (x, y); stored as flat arrays."""
+        self.level, self.name, self.postcode, self.osm_id = level, name, postcode, osm_id
+        self.rings = [(Shape(o), [Shape(i) for i in inners]) for o, inners in rings]
         self.country, self.kind = country, kind     # catalog; place=* value for place areas
         xs = [x for r in rings for x, _ in r[0]]
         ys = [y for r in rings for _, y in r[0]]
@@ -83,11 +87,18 @@ class Area:
         b = self.bbox
         if not (b[0] <= x <= b[2] and b[1] <= y <= b[3]):
             return False
+        try:
+            bands = self._bands
+        except AttributeError:       # built on first use (not pickled with the read cache)
+            bands = self._bands = [(_bands(o), [_bands(i) for i in inners]) for o, inners in self.rings]
         inside = False
-        for outer, inners in self.rings:
-            if _pip(outer, x, y) and not any(_pip(i, x, y) for i in inners):
+        for (outer, inners), (bo, bi) in zip(self.rings, bands):
+            if _pip(outer, x, y, bo) and not any(_pip(i, x, y, b) for i, b in zip(inners, bi)):
                 inside = not inside
         return inside
+
+    def __getstate__(self):
+        return (None, {k: getattr(self, k) for k in self.__slots__ if k != "_bands" and hasattr(self, k)})
 
     def centroid(self):
         outer = max((r[0] for r in self.rings), key=len)
@@ -95,25 +106,67 @@ class Area:
         return (sum(x for x, _ in outer) // n, sum(y for _, y in outer) // n)
 
 
-def _pip(ring, x, y):
+BAND_MIN_POINTS = 64     # rings smaller than this are tested edge by edge
+
+
+def _bands(ring):
+    """Edge index of a big ring by y band: bands[b] = indices i of the edges (i-1 -> i)
+    whose y range touches band b. Only those can change the even-odd count for a point
+    in band b, so _pip gives the same answer while testing a few edges, not all."""
+    xy = ring.xy
+    m = len(xy) // 2
+    if m < BAND_MIN_POINTS:
+        return None
+    ys = xy[1::2]
+    y0, y1 = min(ys), max(ys)
+    n = max(1, min(4096, m // 8))
+    h = (y1 - y0) // n + 1
+    out = [array.array("i") for _ in range(n)]
+    yj = xy[-1]
+    for i in range(m):
+        yi = xy[2 * i + 1]
+        lo, hi = (yi, yj) if yi < yj else (yj, yi)
+        if lo != hi:                 # a horizontal edge never counts
+            for b in range((lo - y0) // h, (hi - y0) // h + 1):
+                out[b].append(i)
+        yj = yi
+    return (y0, h, out)
+
+
+def _pip(ring, x, y, bands=None):
+    """Point in ring (a Shape: flat x/y array). Even-odd rule."""
+    xy = ring.xy
     c = False
-    j = len(ring) - 1
-    for i in range(len(ring)):
-        xi, yi = ring[i]
-        xj, yj = ring[j]
+    if bands is not None:
+        y0, h, out = bands
+        b = int((y - y0) // h)
+        if not 0 <= b < len(out):
+            return False
+        m2 = len(xy)
+        for i in out[b]:
+            xi, yi = xy[2 * i], xy[2 * i + 1]
+            j = 2 * i - 2 if i else m2 - 2
+            xj, yj = xy[j], xy[j + 1]
+            if (yi > y) != (yj > y) and x < xi + (y - yi) * (xj - xi) / (yj - yi):
+                c = not c
+        return c
+    xj, yj = xy[-2], xy[-1]
+    for i in range(0, len(xy), 2):
+        xi, yi = xy[i], xy[i + 1]
         if (yi > y) != (yj > y) and x < xi + (y - yi) * (xj - xi) / (yj - yi):
             c = not c
-        j = i
+        xj, yj = xi, yi
     return c
 
 
-def read_boundaries(pbf_path, bbox=None, levels=("4", "6", "9"), country=0):
+def read_boundaries(pbf_path, bbox=None, levels=("4", "6", "9"), country=0, node_index="flex_mem"):
     """Admin areas at the given admin_levels (Australia: 4 state, 6 LGA, 9 suburb /
     locality) plus postcode areas (level 0 here), overlapping bbox."""
     import osmium
     import osmium.filter
     kinds = (("boundary", "administrative"), ("boundary", "postal_code"))
     fp = (osmium.FileProcessor(pbf_path, osmium.osm.NODE | osmium.osm.WAY | osmium.osm.RELATION | osmium.osm.AREA)
+          .with_locations(node_index)
           .with_areas(osmium.filter.TagFilter(*kinds))
           .with_filter(osmium.filter.EntityFilter(osmium.osm.AREA))
           .with_filter(osmium.filter.TagFilter(*kinds)))
@@ -160,13 +213,14 @@ class Place:
         return (self.x, self.y)
 
 
-def read_places(pbf_path, bbox=None, country=0):
+def read_places(pbf_path, bbox=None, country=0, node_index="flex_mem"):
     """place=* localities -> (areas as level-9 Area, points as Place). A point inside an
     area of the same name is dropped: the area is the better shape."""
     import osmium
     import osmium.filter
     kinds = [("place", k) for k in countries.PLACE_WEIGHT]
     fp = (osmium.FileProcessor(pbf_path, osmium.osm.NODE | osmium.osm.WAY | osmium.osm.RELATION | osmium.osm.AREA)
+          .with_locations(node_index)
           .with_areas(osmium.filter.TagFilter(*kinds))
           .with_filter(osmium.filter.EntityFilter(osmium.osm.NODE | osmium.osm.AREA))
           .with_filter(osmium.filter.TagFilter(*kinds)))
@@ -421,6 +475,7 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
         e = extent.get(i)
         extent[i] = (x, y, x, y) if e is None else (min(e[0], x), min(e[1], y), max(e[2], x), max(e[3], y))
     stats["locality lookups"] = len(cache)
+    cache = None
 
     def country_of(key):
         return key[1] if isinstance(key, tuple) else loc[key].country
@@ -610,13 +665,16 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
         r["names"] = [(str_offs[str_index[(4, t)]], 0) for t in r["names"]]
         rd_body += roads.encode_road(r)   # layout of the active datamodel
     from .common import build_header
-    rd_raw = build_header(factory["rd_header"], len(records), HDR + len(rd_body)) + bytes(rd_body)
+    n_records = len(records)
+    rd_raw = build_header(factory["rd_header"], n_records, HDR + len(rd_body)) + bytes(rd_body)
+    records = rd_body = None
 
-    # segment -> road link
-    rid_of = {key: road_id[k] for k, key in enumerate(road_keys)}
-    for key, segs in groups.items():
-        for s in segs:
-            g.seg_names[s] = [("abs_addr", 0, rid_of[key], b"")]
+    # segment -> road link: one shared (read-only) link per road for all its segments
+    for k, key in enumerate(road_keys):
+        link = (("abs_addr", 0, road_id[k], b""),)
+        for s in groups[key]:
+            g.seg_names[s] = link
+    groups = None
 
     # road lists + road trees, one tree per city in city-table order
     roads_of_city = collections.defaultdict(list)
@@ -682,7 +740,7 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
                 struct.pack_into("<4i", recs[cat], 3, *b)
         out["au.cat"] = search.encode_records(factory["cat"][:HDR], [bytes(r) for r in recs])
 
-    stats.update({"cities": len(cities), "counties": len(counties), "road records": len(records),
+    stats.update({"cities": len(cities), "counties": len(counties), "road records": n_records,
                   "strings": len(strings), "city list": len(cl_entries), "road list": len(rl_recs)})
     return out, stats
 

@@ -176,12 +176,13 @@ def phone(raw, cc="61"):
     return cc + nsn, pretty
 
 
-def read(pbf_path, bbox=None):
+def read(pbf_path, bbox=None, node_index="flex_mem"):
     """[(category, lon_e5, lat_e5, tags)] for every OSM node / area that maps to a category."""
     import osmium
     import osmium.filter
     out = []
     fp = (osmium.FileProcessor(pbf_path, osmium.osm.NODE | osmium.osm.WAY | osmium.osm.RELATION | osmium.osm.AREA)
+          .with_locations(node_index)
           .with_areas(osmium.filter.KeyFilter(*KEYS))
           .with_filter(osmium.filter.EntityFilter(osmium.osm.NODE | osmium.osm.AREA))
           .with_filter(osmium.filter.KeyFilter(*KEYS)))

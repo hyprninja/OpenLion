@@ -29,7 +29,7 @@ if __name__ == "__main__":
     g, si, stats = osm_import.build_graph(c)
     rank = layers.node_ranks(g, si)
     for n in range(g.n_nodes):
-        g.node_info[n]["rank"] = rank[n]
+        g.node_info[n] = graph.shared({**g.node_info[n], "rank": rank[n]})
     print("graph:", dict(stats))
     # new seginfo table, factory header
     si_tpl = flat.unpack(open(os.path.join(db, "auz.si"), "rb").read())[:0x5E]

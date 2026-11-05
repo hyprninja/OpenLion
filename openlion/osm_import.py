@@ -8,10 +8,12 @@ records from tags -> arms ordered clockwise from north -> U-turn / wrong-way exi
 masks -> maxspeed -> turn-restriction relations. Names and address search are a later
 stage (they need the city model).
 """
+import array
 import collections
 import math
+import sys
 
-from .graph import Graph
+from .graph import Graph, Shape, shared
 from .mapfile import SEGINFO_FIELDS
 
 # private tag put on collected ways: the catalog of the extract they came from
@@ -144,10 +146,53 @@ def bearing(p, q):
     return math.degrees(math.atan2(dx, dy)) % 360
 
 
+# tags the build reads after way_ok() has passed; the rest are dropped at read time
+KEEP_TAGS = ("highway", "oneway", "junction", "maxspeed", "surface", "toll", "name", "ref")
+
+
+class WayPoints:
+    """A way's nodes as two compact arrays (node ids, interleaved x/y in deg * 1e5).
+    Behaves like the list of (node_id, x, y) tuples it replaces, at ~16 bytes per
+    point instead of ~250."""
+    __slots__ = ("ids", "xy")
+
+    def __init__(self, ids, xy):
+        self.ids = ids      # array('q')
+        self.xy = xy        # array('i'), 2 per point
+
+    def __len__(self):
+        return len(self.ids)
+
+    def __getitem__(self, k):
+        if isinstance(k, slice):
+            return [self[i] for i in range(*k.indices(len(self.ids)))]
+        if k < 0:
+            k += len(self.ids)
+        return self.ids[k], self.xy[2 * k], self.xy[2 * k + 1]
+
+    def __iter__(self):
+        xy = self.xy
+        for k, nid in enumerate(self.ids):
+            yield nid, xy[2 * k], xy[2 * k + 1]
+
+    def __reduce__(self):
+        return WayPoints, (self.ids, self.xy)
+
+
+def compact_tags(tags):
+    """Keep only KEEP_TAGS; intern the strings (road types and names repeat a lot)."""
+    out = {}
+    for k in KEEP_TAGS:
+        v = tags.get(k)
+        if v is not None:
+            out[k] = sys.intern(v)
+    return out
+
+
 class _Collector:
     def __init__(self, bbox):
         self.bbox = bbox
-        self.ways = []          # (way_id, tags dict, [(node_id, x, y)])
+        self.ways = []          # (way_id, tags dict (KEEP_TAGS), WayPoints)
         self.restrictions = []  # (type, from_way, via_node, to_way)
 
     def inside(self, x, y):
@@ -155,15 +200,17 @@ class _Collector:
         return b is None or (b[0] <= x <= b[2] and b[1] <= y <= b[3])
 
 
-def read(pbf_path, bbox=None, progress=None):
-    """Collect routable ways (any node inside bbox, in degrees*1e5) and restrictions."""
+def read(pbf_path, bbox=None, progress=None, node_index="flex_mem"):
+    """Collect routable ways (any node inside bbox, in degrees*1e5) and restrictions.
+    node_index: osmium location storage ("flex_mem", or "sparse_file_array,<path>"
+    to keep the node locations on disk; see resources.py)."""
     import osmium
     c = _Collector(bbox)
     import osmium.filter
     # nodes are read (in C++) only to fill the location cache; the filters keep them,
     # and untagged / non-road objects, away from Python
     fp = (osmium.FileProcessor(pbf_path, osmium.osm.NODE | osmium.osm.WAY | osmium.osm.RELATION)
-          .with_locations()
+          .with_locations(node_index)
           .with_filter(osmium.filter.EntityFilter(osmium.osm.WAY | osmium.osm.RELATION))
           .with_filter(osmium.filter.KeyFilter("highway", "type")))
     n = 0
@@ -172,17 +219,19 @@ def read(pbf_path, bbox=None, progress=None):
             tags = {t.k: t.v for t in obj.tags}
             if not way_ok(tags):
                 continue
-            pts = []
-            hit = False
+            ids, xy = array.array("q"), array.array("i")
+            hit, ok = False, True
             for nd in obj.nodes:
                 if not nd.location.valid():
-                    pts = None
+                    ok = False
                     break
                 x, y = round(nd.location.lon * 1e5), round(nd.location.lat * 1e5)
                 hit |= c.inside(x, y)
-                pts.append((nd.ref, x, y))
-            if pts and hit and len(pts) >= 2:
-                c.ways.append((obj.id, tags, pts))
+                ids.append(nd.ref)
+                xy.append(x)
+                xy.append(y)
+            if ok and hit and len(ids) >= 2:
+                c.ways.append((obj.id, compact_tags(tags), WayPoints(ids, xy)))
         elif obj.is_relation():
             tags = {t.k: t.v for t in obj.tags}
             if tags.get("type") != "restriction":
@@ -199,7 +248,7 @@ def read(pbf_path, bbox=None, progress=None):
                 elif mem.role == "via" and mem.type == "n":
                     via = mem.ref
             if frm and via and to:
-                c.restrictions.append((r, frm, via, to))
+                c.restrictions.append((sys.intern(r), frm, via, to))
         n += 1
         if progress and n % 2_000_000 == 0:
             progress(n, len(c.ways))
@@ -222,14 +271,30 @@ def merge(collected):
     return out
 
 
-def build_graph(c, max_shape_points=500):
-    """Collected OSM data -> (Graph, seginfo record list, stats)."""
-    use = collections.Counter()
-    for _, _, pts in c.ways:
-        for k, (nid, _, _) in enumerate(pts):
-            use[nid] += 1
-        use[pts[0][0]] += 1
-        use[pts[-1][0]] += 1
+def junction_nodes(ways, buckets=8):
+    """Node ids where a way must be split: used twice or more (by one way or several,
+    a way's two ends counting double). Counted in hash buckets, so at most 1/buckets
+    of the ~25M node references are Python objects at a time."""
+    out = set()
+    for b in range(buckets):
+        seen = set()
+        for _, _, pts in ways:
+            ids = pts.ids
+            for k, nid in enumerate(ids):
+                if nid % buckets != b:
+                    continue
+                if nid in seen or k == 0 or k == len(ids) - 1:
+                    out.add(nid)
+                seen.add(nid)
+    return out
+
+
+def build_graph(c, max_shape_points=500, consume=False):
+    """Collected OSM data -> (Graph, seginfo record list, stats).
+    consume=True empties c.ways as it goes, so the raw ways and the finished graph are
+    never in memory together (the pipeline takes what else it needs from them first)."""
+    junction = junction_nodes(c.ways)
+    in_restriction = {w for _, frm, _, to in c.restrictions for w in (frm, to)}
     g = Graph()
     g.seg_label = []      # OSM (name, ref) per segment, for osm_names
     g.seg_country = []    # catalog (countries.Country.catalog) per segment
@@ -243,14 +308,19 @@ def build_graph(c, max_shape_points=500):
             nodes[nid] = g.add_node((x, y))
         return nodes[nid]
 
-    for wid, tags, pts in c.ways:
+    for i in range(len(c.ways)):
+        wid, tags, pts = c.ways[i]
+        if consume:
+            c.ways[i] = None
         rec = pack_fields(seginfo_fields(tags))
         ow = oneway_dir(tags)
         speed = parse_speed(tags.get("maxspeed"))
+        label = shared((tags.get("name"), tags.get("ref")))
         # split points: junctions, plus extra cuts to bound shape length / avoid self-loops
         cuts = [0]
+        ids = pts.ids
         for k in range(1, len(pts) - 1):
-            if use[pts[k][0]] >= 2 or k - cuts[-1] >= max_shape_points:
+            if ids[k] in junction or k - cuts[-1] >= max_shape_points:
                 cuts.append(k)
         cuts.append(len(pts) - 1)
         pieces = list(zip(cuts, cuts[1:]))
@@ -281,12 +351,12 @@ def build_graph(c, max_shape_points=500):
             if v not in si_index:
                 si_index[v] = len(si_records)
                 si_records.append(v)
-            adas = {"content": 2, "speed_kmh": speed, "lanes": None, "n_limits": 0} if speed else None
-            s = g.add_segment(a, b, length_ft(xy), si_index[v], None, shape or None, [], adas)
-            g.seg_shape[s] = shape if shape else None
-            g.seg_label.append((tags.get("name"), tags.get("ref")))
+            adas = shared({"content": 2, "speed_kmh": speed, "lanes": None, "n_limits": 0}) if speed else None
+            s = g.add_segment(a, b, length_ft(xy), si_index[v], None, Shape(shape) if shape else None, [], adas)
+            g.seg_label.append(label)
             g.seg_country.append(tags.get(COUNTRY_TAG, 0))
-            piece_of[wid].append((s, seq[0][0], seq[-1][0]))
+            if wid in in_restriction:
+                piece_of[wid].append((s, seq[0][0], seq[-1][0]))
             stats["segments"] += 1
             stats["with speed limit"] += bool(speed)
 
@@ -320,7 +390,7 @@ def build_graph(c, max_shape_points=500):
                 si_index[v] = len(si_records)
                 si_records.append(v)
             con = g.add_segment(n, twin, 1, si_index[v], None, None, [], None)
-            g.seg_label.append((None, None))
+            g.seg_label.append(shared((None, None)))
             g.seg_country.append(g.seg_country[keep[0]])
             for s in move:
                 if g.seg_a[s] == n:
@@ -348,7 +418,7 @@ def build_graph(c, max_shape_points=500):
                     if t == s or not can_leave(n, t):
                         m |= 1 << k
             masks.append(m)
-        g.seg_restr[s] = tuple(masks) if any(masks) else None
+        g.seg_restr[s] = shared(tuple(masks)) if any(masks) else None
 
     # turn restriction relations (single via node); several relations can state the same ban
     seen_turns = set()
@@ -377,6 +447,8 @@ def build_graph(c, max_shape_points=500):
                 seen_turns.add(key)
                 g.turns.append({"seg": fs[0], "via": vn, "arms": [k], "direction": 0})
                 stats["turn restrictions"] += 1
+    if consume:
+        c.ways = []
     stats["nodes"] = g.n_nodes
     stats["seginfo records"] = len(si_records)
     return g, si_records, stats

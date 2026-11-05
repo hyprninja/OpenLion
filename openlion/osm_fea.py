@@ -7,12 +7,16 @@ per-type style bytes (flags, scaleFlag, priority/dimension), report 07/14.
 Ocean is drawn the factory way: an ocean square (2:125) over every parcel that is
 not entirely land, then the land mass (2:110, flags 3) clipped to the parcel on top.
 """
+import array
 import collections
 import math
 import struct
+import sys
 
 from . import feawrite
 from .features import FeatureFile, wrap16
+from .graph import Shape
+from .osm_import import WayPoints
 from .osm_names import normalise
 
 # (category, type) -> per level: (flags, scaleFlag, attr prefix bytes)
@@ -103,20 +107,27 @@ KEYS = ("natural", "water", "waterway", "landuse", "leisure", "boundary", "ameni
 
 
 class Collected:
+    """Background features, stored compactly (flat coordinate arrays, bboxes precomputed)."""
+
     def __init__(self):
-        self.areas = []      # (type, name, [outer rings])
-        self.lines = []      # (type, name, [points])
-        self.coast = []      # [(node_id, x, y)] per natural=coastline way
+        self.areas = []      # (type, name, [outer ring Shape], [ring bbox])
+        self.lines = []      # (type, name, Shape, bbox)
+        self.coast = []      # WayPoints per natural=coastline way
         self.places = []     # (name, x, y, place)
 
 
-def read(pbf_path, bbox, margin=20000):
+def _name(v):
+    return sys.intern(v) if v else None
+
+
+def read(pbf_path, bbox, margin=20000, node_index="flex_mem"):
     import osmium
     import osmium.filter
     b = (bbox[0] - margin, bbox[1] - margin, bbox[2] + margin, bbox[3] + margin)
     inb = lambda x, y: b[0] <= x <= b[2] and b[1] <= y <= b[3]
     c = Collected()
     fp = (osmium.FileProcessor(pbf_path, osmium.osm.NODE | osmium.osm.WAY | osmium.osm.RELATION | osmium.osm.AREA)
+          .with_locations(node_index)
           .with_areas(osmium.filter.KeyFilter(*KEYS))
           .with_filter(osmium.filter.KeyFilter(*KEYS)))
     for o in fp:
@@ -129,15 +140,20 @@ def read(pbf_path, bbox, margin=20000):
         elif o.is_way():
             t = {x.k: x.v for x in o.tags}
             if t.get("natural") == "coastline":
-                pts = [(n.ref, round(n.lon * 1e5), round(n.lat * 1e5)) for n in o.nodes if n.location.valid()]
-                if pts:
-                    c.coast.append(pts)
+                ids, xy = array.array("q"), array.array("i")
+                for n in o.nodes:
+                    if n.location.valid():
+                        ids.append(n.ref)
+                        xy.append(round(n.lon * 1e5))
+                        xy.append(round(n.lat * 1e5))
+                if ids:
+                    c.coast.append(WayPoints(ids, xy))
                 continue
             k = classify_line(t)
             if k:
                 pts = [(round(n.lon * 1e5), round(n.lat * 1e5)) for n in o.nodes if n.location.valid()]
                 if any(inb(*p) for p in pts):
-                    c.lines.append((k, t.get("name"), pts))
+                    c.lines.append((k, _name(t.get("name")), Shape(pts), _bb(pts)))
         elif o.is_area():
             t = {x.k: x.v for x in o.tags}
             k = classify_area(t)
@@ -145,7 +161,7 @@ def read(pbf_path, bbox, margin=20000):
                 continue
             rings = [[(round(n.lon * 1e5), round(n.lat * 1e5)) for n in r] for r in o.outer_rings()]
             if any(inb(*p) for r in rings for p in r[:50]):
-                c.areas.append((k, t.get("name"), rings))
+                c.areas.append((k, _name(t.get("name")), [Shape(r) for r in rings], [_bb(r) for r in rings]))
     return c
 
 
@@ -169,7 +185,7 @@ def coast_rings(chunks):
             used.add(id(nxt[0]))
             ring += nxt[0][1:]
         if ring[-1][0] == ring[0][0] and len(ring) >= 4:
-            rings.append([(x, y) for _, x, y in ring])
+            rings.append(Shape([(x, y) for _, x, y in ring]))
     return rings
 
 
@@ -244,7 +260,8 @@ def clip_line(pts, box):
 
 
 def simplify(pts, tol):
-    """Douglas-Peucker."""
+    """Douglas-Peucker. Always returns a new list of (x, y) tuples."""
+    pts = list(pts)
     if tol <= 0 or len(pts) < 3:
         return pts
     keep = [False] * len(pts)
@@ -420,111 +437,272 @@ def _bb(pts):
     return (min(xs), min(ys), max(xs), max(ys))
 
 
-def build(c, factory_fea: bytes, bbox, road_lines=(), progress=None):
+def _points(pts):
+    """[(x, y)] from a point list or a flat x/y array (the pipeline's compact form)."""
+    if pts and not isinstance(pts[0], tuple):
+        return list(zip(pts[0::2], pts[1::2]))
+    return pts
+
+
+def _overlaps(b, grid, rng):
+    """Does bbox b reach any cell of rng (same cell arithmetic as _bucket)?"""
+    x0g, y0g, W, H = grid
+    ix0, ix1, iy0, iy1 = rng
+    return (max(ix0, int((b[0] - x0g) // W)) <= min(ix1, int((b[2] - x0g) // W)) and
+            max(iy0, int((b[1] - y0g) // H)) <= min(iy1, int((b[3] - y0g) // H)))
+
+
+def _level_params(lv, k, bbox):
+    W, H = lv["parcel_w"], lv["parcel_h"]
+    x0g, y0g = lv["bbox"][0], lv["bbox"][1]
+    rng = (max(0, (bbox[0] - x0g) // W), min(lv["cnt_x"] - 1, (bbox[2] - x0g) // W),
+           max(0, (bbox[1] - y0g) // H), min(lv["cnt_y"] - 1, (bbox[3] - y0g) // H))
+    return {"k": k, "grid": (x0g, y0g, W, H), "rng": rng, "cnt_x": lv["cnt_x"],
+            "sx": lv["parcel_w"] / lv["norm_x"], "sy": lv["parcel_h"] / lv["norm_y"]}
+
+
+def build_strip(c, road_lines, P, rng, coast, has_sea):
+    """Encode the cells of one strip (rng = ix0, ix1, iy0, iy1) of level P["k"].
+    Only features reaching the strip are simplified. Each feature is simplified whole
+    and kept in its original order, so a cell comes out exactly as in a one-pass build.
+    coast: land_cells() result for (at least) these cells. -> ({cell index: bytes}, stats)"""
+    k, grid, sx, sy = P["k"], P["grid"], P["sx"], P["sy"]
+    x0g, y0g, W, H = grid
+    tol, mins = TOL[k], MIN_SIZE[k]
+    stats = collections.Counter()
+    areas = []
+    for key, name, rings, bbs in c.areas:
+        if k not in STYLE.get(key, {}):
+            continue
+        for r, b in zip(rings, bbs):
+            if b[2] - b[0] < mins and b[3] - b[1] < mins:
+                continue
+            if _overlaps(b, grid, rng):
+                areas.append((key, name, simplify(r, tol), b))
+    lines = [(key, name, simplify(pts, tol)) for key, name, pts, b in c.lines
+             if k in STYLE.get(key, {}) and _overlaps(b, grid, rng)]
+    roads_k = []
+    if k >= 1:
+        min_rank = {1: 2, 2: 3, 3: 4, 4: 4}[k]
+        for r in road_lines:
+            rank, cls, ref, pts = r[:4]
+            if rank < min_rank:
+                continue
+            b = r[4] if len(r) > 4 else _bb(_points(pts))
+            if _overlaps(b, grid, rng):
+                roads_k.append((rank, cls, ref, simplify(_points(pts), tol)))
+    a_cells = _bucket(areas, lambda a: a[3], grid, rng)
+    l_cells = _bucket(lines, lambda ln: _bb(ln[2]), grid, rng)
+    r_cells = _bucket(roads_k, lambda r: _bb(r[3]), grid, rng)
+    p_cells = collections.defaultdict(list)
+    for n, (name, x, y, pl) in enumerate(c.places):
+        if k >= 2 and pl not in ("city", "town"):
+            continue
+        if k >= 3 and pl != "city":
+            continue
+        p_cells[(int((x - x0g) // W), int((y - y0g) // H))].append(n)
+    todo = set(a_cells) | set(l_cells) | set(r_cells) | set(p_cells)
+    if has_sea:
+        for ix in range(rng[0], rng[1] + 1):
+            for iy in range(rng[2], rng[3] + 1):
+                if coast.get((ix, iy)) != "land":
+                    todo.add((ix, iy))
+    cells = {}
+    for (ix, iy) in sorted(todo):
+        if not (rng[0] <= ix <= rng[1] and rng[2] <= iy <= rng[3]):
+            continue
+        box = (x0g + ix * W, y0g + iy * H, x0g + (ix + 1) * W, y0g + (iy + 1) * H)
+        centre = (box[0] + W // 2, box[1] + H // 2)
+        cx, cy = centre
+        feats = collections.defaultdict(list)
+        cs = coast.get((ix, iy))
+        if has_sea and cs != "land":
+            sq = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
+            feats[(2, 125)].append(feature((2, 125), k, to_parcel([sq], centre, sx, sy, True)))
+            if cs:
+                pp = to_parcel(cs, centre, sx, sy, True)
+                if pp:
+                    feats[(2, 110)].append(feature((2, 110), k, pp))
+        for n in a_cells.get((ix, iy), []):
+            key, name, r, ab = areas[n]
+            pp = to_parcel([clip_poly(r, box)], centre, sx, sy, True)
+            if pp:
+                feats[key].append(feature(key, k, pp, name))
+        for n in l_cells.get((ix, iy), []):
+            key, name, pts = lines[n]
+            pp = to_parcel(clip_line(pts, box), centre, sx, sy, False)
+            if pp:
+                feats[key].append(feature(key, k, pp, name))
+        for n in r_cells.get((ix, iy), []):
+            rank, cls, ref, pts = roads_k[n]
+            pp = to_parcel(clip_line(pts, box), centre, sx, sy, False)
+            if pp and k in STYLE[(8, 190)]:
+                feats[(8, 190)].append(feature((8, 190), k, pp, None, bytes([rank, cls, 0])))
+                if ref and k in STYLE[(16, 195)]:
+                    p0 = pp[0][len(pp[0]) // 2]
+                    feats[(16, 195)].append(feature((16, 195), k, [[p0, (p0[0] - 2, p0[1] + 1)]], ref,
+                                                    b"\x96\x01\x00\x00"))
+        if k in STYLE[(2, 35)]:
+            for n in p_cells.get((ix, iy), []):
+                name, x, y, pl = c.places[n]
+                p = (round((x - cx) / sx), round((y - cy) / sy))
+                feats[(2, 35)].append(feature((2, 35), k, [[p, (p[0] - 2, p[1] + 1)]], name,
+                                              b"\x90\x00" + NONE + struct.pack(">hh", *p)))
+        out = []
+        for key in ORDER:
+            out += feats.get(key, [])
+        out = fit_budget(out, stats, k)
+        for ft in out:
+            stats[f"L{k} {ft['category']}:{ft['type']}"] += 1
+        if out:
+            cells[iy * P["cnt_x"] + ix] = feawrite.encode_parcel(out)
+    return cells, stats
+
+
+def _strips(rng, n):
+    """Split a cell range into up to n column strips."""
+    ix0, ix1, iy0, iy1 = rng
+    cols = ix1 - ix0 + 1
+    n = max(1, min(n, cols))
+    edges = [ix0 + cols * i // n for i in range(n + 1)]
+    return [(a, b - 1, iy0, iy1) for a, b in zip(edges, edges[1:]) if b > a]
+
+
+def _strip_inputs(c, road_lines, P, strips):
+    """Split the features among column strips in one pass: each strip gets the features
+    whose bbox reaches it (the test build_strip makes), in their original order."""
+    import bisect
+    x0g, y0g, W, H = P["grid"]
+    k = P["k"]
+    ix0, ix1, iy0, iy1 = P["rng"]
+    starts = [r[0] for r in strips]
+
+    def span(b):
+        a0, a1 = max(ix0, int((b[0] - x0g) // W)), min(ix1, int((b[2] - x0g) // W))
+        if a0 > a1 or max(iy0, int((b[1] - y0g) // H)) > min(iy1, int((b[3] - y0g) // H)):
+            return None
+        return bisect.bisect_right(starts, a0) - 1, bisect.bisect_right(starts, a1) - 1
+
+    subs = [Collected() for _ in strips]
+    roads = [[] for _ in strips]
+    for sub in subs:
+        sub.places = c.places
+    for a in c.areas:
+        if k not in STYLE.get(a[0], {}):
+            continue
+        hit = set()
+        for b in a[3]:
+            sp = span(b)
+            if sp:
+                hit.update(range(sp[0], sp[1] + 1))
+        for n in sorted(hit):
+            subs[n].areas.append(a)
+    for ln in c.lines:
+        if k in STYLE.get(ln[0], {}):
+            sp = span(ln[3])
+            if sp:
+                for n in range(sp[0], sp[1] + 1):
+                    subs[n].lines.append(ln)
+    if k >= 1:
+        min_rank = {1: 2, 2: 3, 3: 4, 4: 4}[k]
+        for r in road_lines:
+            if r[0] >= min_rank:
+                sp = span(r[4] if len(r) > 4 else _bb(_points(r[3])))
+                if sp:
+                    for n in range(sp[0], sp[1] + 1):
+                        roads[n].append(r)
+    return subs, roads
+
+
+def _worker_strip(args):
+    sub, roads, P, rng, coast, has_sea = args
+    return P["k"], build_strip(sub, roads, P, rng, coast, has_sea)
+
+
+def build(c, factory_fea: bytes, bbox, road_lines=(), progress=None, workers=1, strips=8):
     """-> new auz.fea bytes (factory grid, OSM content inside bbox) and stats.
-    road_lines: [(rank, class, ref, [points])] for the overview roads (levels 1-4)."""
+    road_lines: [(rank, class, ref, points[, bbox])] for the overview roads (levels 1-4);
+    points is [(x, y)] or a flat x/y array.
+
+    Each level is built in column strips. With workers == 1 they run here one after
+    another, so only one strip's simplified geometry is in memory at a time. With
+    workers > 1 they run in that many processes, each strip with just the features that
+    reach it. The output is identical either way."""
     f = FeatureFile(factory_fea)
     stats = collections.Counter()
     land = coast_rings(c.coast)
     stats["coast rings"] = len(land)
-    levels = []
-    for k, lv in enumerate(f.levels):
-        sx, sy = lv["parcel_w"] / lv["norm_x"], lv["parcel_h"] / lv["norm_y"]
-        x0g, y0g = lv["bbox"][0], lv["bbox"][1]
-        W, H = lv["parcel_w"], lv["parcel_h"]
-        grid = (x0g, y0g, W, H)
-        cells = [b""] * (lv["cnt_x"] * lv["cnt_y"])
-        rng = (max(0, (bbox[0] - x0g) // W), min(lv["cnt_x"] - 1, (bbox[2] - x0g) // W),
-               max(0, (bbox[1] - y0g) // H), min(lv["cnt_y"] - 1, (bbox[3] - y0g) // H))
-        tol, mins = TOL[k], MIN_SIZE[k]
-        # per-level geometry, simplified once, bucketed by cell
-        areas = []
-        for key, name, rings in c.areas:
-            if k not in STYLE.get(key, {}):
-                continue
-            for r in rings:
-                b = _bb(r)
-                if b[2] - b[0] < mins and b[3] - b[1] < mins:
-                    continue
-                areas.append((key, name, simplify(r, tol), b))
-        lines = [(key, name, simplify(pts, tol)) for key, name, pts in c.lines if k in STYLE.get(key, {})]
-        roads_k = []
-        if k >= 1:
-            min_rank = {1: 2, 2: 3, 3: 4, 4: 4}[k]
-            roads_k = [(rank, cls, ref, simplify(pts, tol)) for rank, cls, ref, pts in road_lines
-                       if rank >= min_rank]
-        a_cells = _bucket(areas, lambda a: a[3], grid, rng)
-        l_cells = _bucket(lines, lambda ln: _bb(ln[2]), grid, rng)
-        r_cells = _bucket(roads_k, lambda r: _bb(r[3]), grid, rng)
-        p_cells = collections.defaultdict(list)
-        for n, (name, x, y, pl) in enumerate(c.places):
-            if k >= 2 and pl not in ("city", "town"):
-                continue
-            if k >= 3 and pl != "city":
-                continue
-            p_cells[(int((x - x0g) // W), int((y - y0g) // H))].append(n)
+    has_sea = bool(land)
+    params = [_level_params(lv, k, bbox) for k, lv in enumerate(f.levels)]
+
+    def coast_of(P):
+        """land / sea per cell: one recursive pass over the whole level"""
         coast = {}
         if land:
-            land_cells([simplify(r, tol) for r in land], grid, rng, coast)
-        has_sea = bool(land)
-        todo = set(a_cells) | set(l_cells) | set(r_cells) | set(p_cells)
-        if has_sea:
-            for ix in range(rng[0], rng[1] + 1):
-                for iy in range(rng[2], rng[3] + 1):
-                    if coast.get((ix, iy)) != "land":
-                        todo.add((ix, iy))
-        for (ix, iy) in sorted(todo):
-            if not (rng[0] <= ix <= rng[1] and rng[2] <= iy <= rng[3]):
-                continue
-            box = (x0g + ix * W, y0g + iy * H, x0g + (ix + 1) * W, y0g + (iy + 1) * H)
-            centre = (box[0] + W // 2, box[1] + H // 2)
-            cx, cy = centre
-            feats = collections.defaultdict(list)
-            cs = coast.get((ix, iy))
-            if has_sea and cs != "land":
-                sq = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
-                feats[(2, 125)].append(feature((2, 125), k, to_parcel([sq], centre, sx, sy, True)))
-                if cs:
-                    pp = to_parcel(cs, centre, sx, sy, True)
-                    if pp:
-                        feats[(2, 110)].append(feature((2, 110), k, pp))
-            for n in a_cells.get((ix, iy), []):
-                key, name, r, ab = areas[n]
-                pp = to_parcel([clip_poly(r, box)], centre, sx, sy, True)
-                if pp:
-                    feats[key].append(feature(key, k, pp, name))
-            for n in l_cells.get((ix, iy), []):
-                key, name, pts = lines[n]
-                pp = to_parcel(clip_line(pts, box), centre, sx, sy, False)
-                if pp:
-                    feats[key].append(feature(key, k, pp, name))
-            for n in r_cells.get((ix, iy), []):
-                rank, cls, ref, pts = roads_k[n]
-                pp = to_parcel(clip_line(pts, box), centre, sx, sy, False)
-                if pp and k in STYLE[(8, 190)]:
-                    feats[(8, 190)].append(feature((8, 190), k, pp, None, bytes([rank, cls, 0])))
-                    if ref and k in STYLE[(16, 195)]:
-                        p0 = pp[0][len(pp[0]) // 2]
-                        feats[(16, 195)].append(feature((16, 195), k, [[p0, (p0[0] - 2, p0[1] + 1)]], ref,
-                                                        b"\x96\x01\x00\x00"))
-            if k in STYLE[(2, 35)]:
-                for n in p_cells.get((ix, iy), []):
-                    name, x, y, pl = c.places[n]
-                    p = (round((x - cx) / sx), round((y - cy) / sy))
-                    feats[(2, 35)].append(feature((2, 35), k, [[p, (p[0] - 2, p[1] + 1)]], name,
-                                                  b"\x90\x00" + NONE + struct.pack(">hh", *p)))
-            out = []
-            for key in ORDER:
-                out += feats.get(key, [])
-            out = fit_budget(out, stats, k)
-            for ft in out:
-                stats[f"L{k} {ft['category']}:{ft['type']}"] += 1
-            if out:
-                cells[iy * lv["cnt_x"] + ix] = feawrite.encode_parcel(out)
+            land_cells([simplify(r, TOL[P["k"]]) for r in land], P["grid"], P["rng"], coast)
+        return coast
+
+    results = [dict() for _ in f.levels]
+    if workers <= 1:
+        for k, P in enumerate(params):
+            coast = coast_of(P)       # one level's coastline at a time
+            for rng in _strips(P["rng"], strips):
+                cells, st = build_strip(c, road_lines, P, rng, coast, has_sea)
+                results[k].update(cells)
+                stats.update(st)
+            coast = None
+            if progress:
+                progress(k)
+    else:
+        # each strip goes to a worker with only the features that reach it; a few strips
+        # per worker are in flight at a time, so memory stays flat however many there are
+        import concurrent.futures as cf
+
+        def tasks():
+            for k, P in enumerate(params):
+                coast = coast_of(P)
+                strips_k = _strips(P["rng"], max(strips, workers * 3))
+                subs, roads = _strip_inputs(c, road_lines, P, strips_k)
+                for n, rng in enumerate(strips_k):
+                    cs = {xy: v for xy, v in coast.items() if rng[0] <= xy[0] <= rng[1]}
+                    yield k, n == len(strips_k) - 1, (subs[n], roads[n], P, rng, cs, has_sea)
+                    subs[n] = roads[n] = None
+                coast = subs = roads = None
+
+        left, all_sent, done_upto = collections.Counter(), set(), 0
+        with cf.ProcessPoolExecutor(max_workers=workers) as ex:
+            inflight = set()
+            gen = tasks()
+            more = True
+            while more or inflight:
+                while more and len(inflight) < workers * 2:
+                    try:
+                        k, last, args = next(gen)
+                    except StopIteration:
+                        more = False
+                        break
+                    inflight.add(ex.submit(_worker_strip, args))
+                    left[k] += 1
+                    if last:
+                        all_sent.add(k)
+                done, inflight = cf.wait(inflight, return_when=cf.FIRST_COMPLETED)
+                for fut in done:
+                    k, (cells, st) = fut.result()
+                    results[k].update(cells)
+                    stats.update(st)
+                    left[k] -= 1
+                while done_upto < len(params) and done_upto in all_sent and left[done_upto] == 0:
+                    if progress:
+                        progress(done_upto)
+                    done_upto += 1
+    land = None
+    levels = []
+    for k, lv in enumerate(f.levels):
+        cells = [b""] * (lv["cnt_x"] * lv["cnt_y"])
+        for idx, blob in results[k].items():
+            cells[idx] = blob
         levels.append({"bbox": lv["bbox"], "parcel_w": lv["parcel_w"], "parcel_h": lv["parcel_h"],
                        "cnt_x": lv["cnt_x"], "cnt_y": lv["cnt_y"], "norm_x": lv["norm_x"],
                        "norm_y": lv["norm_y"], "feaType": lv["feaType"], "scales": lv["scales"],
                        "raw_parcels": cells})
-        if progress:
-            progress(k)
     return feawrite.encode_fea(factory_fea[:0x64], levels), stats

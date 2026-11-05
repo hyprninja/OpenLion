@@ -98,10 +98,12 @@ def reset_cache(inputs, work, bbox):
             old = json.load(f)
     except (OSError, ValueError):
         old = None
+    current = tuple(f"{name}_" for name in pipeline.CACHES)
+    for fn in os.listdir(work):
+        stale = old != key or not fn.startswith(current)   # changed input, or an old cache format
+        if fn.endswith((".pickle", ".pickle.tmp", ".idx")) and stale:
+            os.remove(os.path.join(work, fn))
     if old != key:
-        for fn in os.listdir(work):
-            if fn.endswith((".pickle", ".pickle.tmp")):
-                os.remove(os.path.join(work, fn))
         with open(path, "w", encoding="utf-8") as f:
             json.dump(key, f)
     return old == key
@@ -116,8 +118,9 @@ def folder_size(path):
     return n, b
 
 
-def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False):
-    """pbf: one Australian extract, or a list of "NZ=path" / (Country, path) (pipeline.inputs_of)."""
+def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory_mode=None):
+    """pbf: one Australian extract, or a list of "NZ=path" / (Country, path) (pipeline.inputs_of).
+    memory_mode: "low" / "high" / None (decide from free RAM, see resources.py)."""
     o = Out(as_json)
     inputs = pipeline.inputs_of(pbf)
     total = sum(os.path.getsize(p) for _, p in inputs if os.path.isfile(p))
@@ -138,7 +141,7 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False):
         if reset_cache(inputs, work, bbox):
             print("reusing cached OSM reads from an earlier run", flush=True)
 
-        pipeline.run(inputs, db, work, bbox, stage=o.start_stage)
+        pipeline.run(inputs, db, work, bbox, stage=o.start_stage, memory_mode=memory_mode)
 
         o.start_stage("card")
         if os.path.exists(partial):
@@ -200,10 +203,12 @@ if __name__ == "__main__":
     ap.add_argument("--bbox", nargs=4, type=float, help="build only this area (lon0 lat0 lon1 lat1), for testing")
     ap.add_argument("--extract", action="append", default=[], help="another country: NZ=<extract.osm.pbf>")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--memory", choices=("auto", "low", "high"), default=None,
+                    help="memory plan (default: decide from free RAM)")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
     t0 = time.time()
-    code = run([a.pbf] + a.extract, a.factory, a.work, a.out, a.manifest, bb, a.json)
+    code = run([a.pbf] + a.extract, a.factory, a.work, a.out, a.manifest, bb, a.json, a.memory)
     if not a.json:
         print(f"{time.time() - t0:.0f}s")
     sys.exit(code)
