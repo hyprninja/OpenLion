@@ -306,7 +306,7 @@ def feature(key, level, parts, name=None, attr=None):
         attr = pre + NONE if cat == 1 else pre + NONE + NONE if cat == 2 else pre
     nm = [normalise(name)] if name and normalise(name) else []
     return {"category": cat, "type": key[1], "flags": flags, "scaleFlag": sf, "attr": attr,
-            "names": nm, "b5": 1 if nm else 0, "b6": 0, "parts": parts}
+            "names": nm, "b5": 1 if nm else 0, "parts": parts}
 
 
 # Factory maxima over the whole file (header Zip_Statistic): 57,420 bytes stored,

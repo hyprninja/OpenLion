@@ -69,10 +69,11 @@ def identity_replacements(src):
     """Rebuild every replaceable table from its parsed form (no new data)."""
     if not __package__:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from openlion import flat, roads, mapfile, mapwrite, feawrite
+    from openlion import flat, roads, mapfile, mapwrite, feawrite, schema
     from openlion.common import build_header
     import struct
     db = os.path.join(src, "db_aunz", "db")
+    schema.use_card(db)
     out = {}
     raw = flat.unpack(open(os.path.join(db, "auz.rd"), "rb").read())
     out["db_aunz/db/auz.rd"] = flat.pack(roads.encode_roads(raw[:0x5E], list(roads.iter_roads(raw))))

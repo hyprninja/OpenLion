@@ -16,9 +16,8 @@ import collections
 import struct
 import unicodedata
 
-from . import countries, search
+from . import countries, roads, search
 from .common import HDR
-from .roads import REC, NAME
 
 ALLOWED = set(search.ABC_ORDER)
 TYPE_WORDS = {
@@ -609,10 +608,7 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
         road_id.append(len(rd_body))
         r["cityID"] = cities[city_rec[key[0]]]["cityID"]
         r["names"] = [(str_offs[str_index[(4, t)]], 0) for t in r["names"]]
-        rd_body += REC.pack(r["countryID"], r["cityID"], r["roadInfo"], r["min_long"], r["min_lat"],
-                            r["delta_long"], r["delta_lat"], r["maxNumber"], r["minNumber"],
-                            len(r["names"]), r["intersectionCount"])
-        rd_body += b"".join(NAME.pack(o, q) for o, q in r["names"])
+        rd_body += roads.encode_road(r)   # layout of the active datamodel
     from .common import build_header
     rd_raw = build_header(factory["rd_header"], len(records), HDR + len(rd_body)) + bytes(rd_body)
 

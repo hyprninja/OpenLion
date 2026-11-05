@@ -10,7 +10,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import flat, graph, layers, mapfile, osm_import, osm_names, search, tiler  # noqa: E402
+from openlion import flat, graph, layers, mapfile, osm_import, osm_names, schema, search, tiler  # noqa: E402
 
 
 def lookup(tables, city, street, catalog=0):
@@ -43,8 +43,9 @@ def lookup(tables, city, street, catalog=0):
     for j in range(a, a + n):
         rid, q = RL[j]
         off = 0x5E + rid
-        rec = mapfile.struct.unpack_from("<BIBiiiiHHBH", rd, off)
-        nmo = struct.unpack_from("<I", rd, off + 29 + 5 * q)[0]
+        R = schema.active().road_rec          # 29 bytes (5.2.1) or 26 (5.3)
+        rec = R.unpack_from(rd, off)
+        nmo = struct.unpack_from("<I", rd, off + R.size + 5 * q)[0]
         if S(nmo) == street:
             return (f"{city} / {street}: tree {used_c}+{used_r} chars -> road record {rid} "
                     f"at {rec[3] / 1e5:.5f},{rec[4] / 1e5:.5f} +{rec[5] / 1e5:.4f},{rec[6] / 1e5:.4f}", rid)
