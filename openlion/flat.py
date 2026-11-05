@@ -14,21 +14,40 @@ import struct
 import sys
 import zlib
 
+try:
+    from .common import DamagedTable, MAX_TABLE_BYTES
+except ImportError:  # run as a script
+    from common import DamagedTable, MAX_TABLE_BYTES
+
 
 def unpack(data: bytes) -> bytes:
     if data[:4] != b"zip\x01":
         raise ValueError("not a zip\\x01 container")
+    if len(data) < 16:
+        raise DamagedTable(f"container header truncated ({len(data)} bytes)")
     bs, total, _maxc = struct.unpack_from("<III", data, 4)
+    if not 0 < bs <= 1 << 20:
+        raise DamagedTable(f"block size {bs} out of range")
+    if total > MAX_TABLE_BYTES:
+        raise DamagedTable(f"uncompressed size {total} too large")
     n = -(-total // bs)
+    first = 16 + 4 * (n + 1)
+    if first > len(data):
+        raise DamagedTable(f"offset list ({n + 1} entries) runs past the end of the file")
     offs = struct.unpack_from(f"<{n + 1}I", data, 16)
     if offs[-1] != len(data):
-        raise ValueError(f"end offset {offs[-1]} != file size {len(data)}")
+        raise DamagedTable(f"end offset {offs[-1]} != file size {len(data)}")
+    if (n and offs[0] < first) or any(offs[i] > offs[i + 1] for i in range(n)):
+        raise DamagedTable("block offsets out of order")
     out = bytearray()
     for i in range(n):
-        blk = zlib.decompress(data[offs[i]:offs[i + 1]])
+        try:
+            blk = zlib.decompress(data[offs[i]:offs[i + 1]])
+        except zlib.error as e:
+            raise DamagedTable(f"block {i}: {e}") from None
         want = min(bs, total - i * bs)
         if len(blk) != want:
-            raise ValueError(f"block {i}: got {len(blk)} want {want}")
+            raise DamagedTable(f"block {i}: got {len(blk)} want {want}")
         out += blk
     return bytes(out)
 
@@ -43,7 +62,7 @@ def pack(raw: bytes, block_size: int = 0xC00, level: int = 9) -> bytes:
         offs.append(pos)
         pos += len(b)
     offs.append(pos)
-    head = b"zip\x01" + struct.pack("<III", block_size, len(raw), max(map(len, blocks)))
+    head = b"zip\x01" + struct.pack("<III", block_size, len(raw), max(map(len, blocks), default=0))
     return head + struct.pack(f"<{len(offs)}I", *offs) + b"".join(blocks)
 
 

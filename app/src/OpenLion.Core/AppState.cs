@@ -4,14 +4,27 @@ using OpenLion.Core.Osm;
 
 namespace OpenLion.Core;
 
-/// <summary>Where OpenLion keeps its working files: %LOCALAPPDATA%\OpenLion, or the folder in the
-/// OPENLION_HOME environment variable (for development and testing).</summary>
+/// <summary>Where OpenLion keeps its working files: %LOCALAPPDATA%\OpenLion. A developer build
+/// (no bundled engine) may use the folder in the OPENLION_HOME environment variable instead;
+/// an installed release ignores it.</summary>
 public static class AppPaths
 {
-    public static string Root { get; set; } =
+    public static string Root { get; set; } = Path.GetFullPath(
+        !Engine.EngineLocator.HasBundledEngine() &&
         Environment.GetEnvironmentVariable("OPENLION_HOME") is { Length: > 0 } home
             ? home
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenLion");
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenLion"));
+
+    /// <summary>Throws unless <paramref name="path"/> is strictly inside <paramref name="parent"/>.
+    /// Guards every recursive delete of a folder the app manages.</summary>
+    public static string EnsureInside(string path, string parent)
+    {
+        var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+        var root = Path.GetFullPath(parent).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Refusing to change {full}: it is not inside {root}");
+        return full;
+    }
 
     public static string CardsFolder => Path.Combine(Root, "cards");
     public static string StateFile => Path.Combine(Root, "state.json");

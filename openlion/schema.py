@@ -154,8 +154,10 @@ def map_parcel_layout(path) -> Schema:
 
 def for_parcel(raw: bytes) -> Schema:
     """pos_list (first u16) is where the lists start = size of pcl_offs."""
+    if len(raw) < 2:
+        raise ValueError("parcel too short")
     first = struct.unpack_from("<H", raw, 0)[0]
     for s in ALL:
-        if first == s.offs_len:
+        if first == s.offs_len and len(raw) >= first:
             return s
     raise ValueError(f"unknown parcel layout (pcl_offs size {first})")

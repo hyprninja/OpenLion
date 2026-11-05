@@ -22,6 +22,7 @@ With --json, prints one JSON object per line, mixed with plain log lines:
    "stage": failed stage, "error": ..., "error_type": ..., "traceback": ...}
 """
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -32,6 +33,7 @@ import time
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from openlion import build, pipeline  # noqa: E402
+from openlion.common import DamagedTable  # noqa: E402
 from openlion.compat import error_name, safe_traceback  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -85,13 +87,25 @@ class Out:
             print(f"== {dict((s, l) for s, l, _ in STAGES)[name]}", flush=True)
 
 
+def fingerprint(path, size, span=1 << 20):
+    """SHA-256 of an extract's first and last MB: catches a replaced file that kept its
+    size and time, without reading a multi-GB extract on every build."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        h.update(f.read(span))
+        f.seek(max(0, size - span))
+        h.update(f.read(span))
+    return h.hexdigest()
+
+
 def reset_cache(inputs, work, bbox):
     """The pipeline caches OSM reads as pickles in work/. Throw them away when an extract,
     the set of countries or the area changes, so a new download is never mixed with an old one."""
     key = {"extracts": [], "bbox": list(bbox) if bbox else None}
     for country, path in inputs:
         st = os.stat(path)
-        key["extracts"].append({"country": country.code, "size": st.st_size, "mtime": int(st.st_mtime)})
+        key["extracts"].append({"country": country.code, "size": st.st_size, "mtime": int(st.st_mtime),
+                                "sha256_ends": fingerprint(path, st.st_size)})
     path = os.path.join(work, CACHE_KEY)
     try:
         with open(path, encoding="utf-8") as f:
@@ -101,7 +115,7 @@ def reset_cache(inputs, work, bbox):
     current = tuple(f"{name}_" for name in pipeline.CACHES)
     for fn in os.listdir(work):
         stale = old != key or not fn.startswith(current)   # changed input, or an old cache format
-        if fn.endswith((".pickle", ".pickle.tmp", ".idx")) and stale:
+        if fn.endswith((".pickle", ".pickle.tmp", ".pickle.sha256", ".pickle.sha256.tmp", ".idx")) and stale:
             os.remove(os.path.join(work, fn))
     if old != key:
         with open(path, "w", encoding="utf-8") as f:
@@ -182,13 +196,18 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
     except Exception as e:  # report every failure as a result line, the app shows it
         if os.path.exists(partial):
             shutil.rmtree(partial, ignore_errors=True)
-        msg = str(e) if isinstance(e, Failed) else (
-            "the PC ran out of memory" if isinstance(e, MemoryError) else f"{error_name(e)}: {e}")
+        friendly = isinstance(e, (Failed, DamagedTable))
+        if isinstance(e, DamagedTable):
+            msg = f"a map table in the factory card copy looks damaged ({e}). Copy the factory card again."
+        elif isinstance(e, Failed):
+            msg = str(e)
+        else:
+            msg = "the PC ran out of memory" if isinstance(e, MemoryError) else f"{error_name(e)}: {e}"
         o.emit("result", ok=False, stage=o.stage, error=msg, error_type=error_name(e),
-               traceback=None if isinstance(e, Failed) else safe_traceback())
+               traceback=None if friendly else safe_traceback())
         if not as_json:
             print(f"FAILED {'during ' + o.stage if o.stage else 'before starting'}: {msg}", file=sys.stderr)
-            if not isinstance(e, Failed):
+            if not friendly:
                 print(safe_traceback(), file=sys.stderr)
         return 1
 

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using OpenLion.Core.Drives;
 using OpenLion.Core.Engine;
 
@@ -28,7 +29,7 @@ public sealed record ReportInput
 /// Writes a zip that helps fix OpenLion for a card it doesn't support, without any map data:
 /// it is meant to be attached to a public GitHub issue.
 /// </summary>
-public static class ErrorReport
+public static partial class ErrorReport
 {
     public const string IssueUrl = "https://github.com/hyprninja/OpenLion/issues/new?template=card_report.yml";
 
@@ -185,13 +186,21 @@ public static class ErrorReport
         if (profile.Length > 3)
         {
             text = text.Replace(profile, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase)
-                       .Replace(profile.Replace("\\", "\\\\"), "%USERPROFILE%", StringComparison.OrdinalIgnoreCase);
+                       .Replace(profile.Replace("\\", "\\\\"), "%USERPROFILE%", StringComparison.OrdinalIgnoreCase)
+                       .Replace(profile.Replace('\\', '/'), "%USERPROFILE%", StringComparison.OrdinalIgnoreCase);
         }
+        // Any other profile path: other separators, doubled backslashes, 8.3 short names (SIMON~1).
+        text = UsersPath().Replace(text, "%USERPROFILE%");
         var user = Environment.UserName;
         if (user.Length >= 3)
-            text = text.Replace("\\" + user + "\\", "\\%USERNAME%\\", StringComparison.OrdinalIgnoreCase);
+            text = Regex.Replace(text, $@"(?<![\p{{L}}\p{{N}}_]){Regex.Escape(user)}(?![\p{{L}}\p{{N}}_])", "%USERNAME%",
+                RegexOptions.IgnoreCase);
         return text;
     }
+
+    /// <summary>A drive letter, "Users" and the next folder name, with \, \\ or / between.</summary>
+    [GeneratedRegex(@"[A-Za-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/)[^\\/\s""':;|<>]+", RegexOptions.IgnoreCase)]
+    private static partial Regex UsersPath();
 
     static void AddText(ZipArchive zip, string name, string text)
     {

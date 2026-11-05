@@ -5,15 +5,25 @@ namespace OpenLion.Core.Engine;
 /// <param name="Python">python.exe to run.</param>
 /// <param name="EngineRoot">Folder that contains the openlion/ package.</param>
 /// <param name="Bundled">True for the copy shipped with the app, false for a developer setup.</param>
-public sealed record EnginePaths(string Python, string EngineRoot, bool Bundled);
+public sealed record EnginePaths(string Python, string EngineRoot, bool Bundled)
+{
+    /// <summary>One line for the log and, for a developer engine, the window title.</summary>
+    public string Describe() => Bundled
+        ? $"bundled engine at {EngineRoot}"
+        : $"developer engine: {Python} with {EngineRoot}";
+}
 
 public static class EngineLocator
 {
+    /// <summary>Oldest Python the engine runs on (developer setups; the app bundles 3.12).</summary>
+    public static readonly Version MinPython = new(3, 12);
+
     /// <summary>
-    /// Finds the conversion engine, in order: the bundled copy next to the app
-    /// (runtime\python\python.exe + engine\openlion), the OPENLION_PYTHON / OPENLION_ENGINE
-    /// environment variables, then a developer checkout (an openlion/ folder above the app,
-    /// with python.exe from PATH). Null if none is found.
+    /// Finds the conversion engine. The bundled copy next to the app (runtime\python\python.exe +
+    /// engine\openlion) always wins when it is there, so an installed app can't be redirected.
+    /// Only without it (a developer build) are the OPENLION_PYTHON / OPENLION_ENGINE environment
+    /// variables used, then a developer checkout (an openlion/ folder above the app, with the
+    /// first Python 3.12+ on PATH). Null if none is found.
     /// </summary>
     public static EnginePaths? Locate(string? baseDir = null)
     {
@@ -25,8 +35,8 @@ public static class EngineLocator
 
         var envPy = Environment.GetEnvironmentVariable("OPENLION_PYTHON");
         var envEngine = Environment.GetEnvironmentVariable("OPENLION_ENGINE");
-        if (File.Exists(envPy) && envEngine is not null && HasPackage(envEngine))
-            return new EnginePaths(envPy, envEngine, false);
+        if (File.Exists(envPy) && envEngine is not null && HasPackage(envEngine) && IsSupportedPython(envPy))
+            return new EnginePaths(Path.GetFullPath(envPy), Path.GetFullPath(envEngine), false);
 
         for (var dir = new DirectoryInfo(baseDir); dir is not null; dir = dir.Parent)
         {
@@ -39,13 +49,52 @@ public static class EngineLocator
         return null;
     }
 
+    /// <summary>True when the app ships its own engine (an installed release).</summary>
+    public static bool HasBundledEngine(string? baseDir = null)
+    {
+        baseDir ??= AppContext.BaseDirectory;
+        return File.Exists(Path.Combine(baseDir, "runtime", "python", "python.exe")) &&
+               HasPackage(Path.Combine(baseDir, "engine"));
+    }
+
     static bool HasPackage(string root) => File.Exists(Path.Combine(root, "openlion", "__init__.py"));
 
     static string? FindOnPath(string exe) =>
         (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
             .Where(d => d.Length > 0 && !d.Contains("WindowsApps", StringComparison.OrdinalIgnoreCase)) // Store stub
             .Select(d => Path.Combine(d.Trim('"'), exe))
-            .FirstOrDefault(File.Exists);
+            .Where(File.Exists)
+            .FirstOrDefault(IsSupportedPython);
+
+    static readonly Dictionary<string, bool> VersionOk = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Asks the interpreter for its version once per path; false below MinPython or on any error.</summary>
+    static bool IsSupportedPython(string python)
+    {
+        lock (VersionOk)
+            if (VersionOk.TryGetValue(python, out var known))
+                return known;
+        bool ok = false;
+        try
+        {
+            var psi = new ProcessStartInfo(python) { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("import sys; print('%d.%d' % sys.version_info[:2])");
+            using var p = Process.Start(psi);
+            if (p is not null)
+            {
+                var text = p.StandardOutput.ReadToEnd().Trim();
+                ok = p.WaitForExit(10_000) && p.ExitCode == 0 && Version.TryParse(text, out var v) && v >= MinPython;
+            }
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            ok = false;
+        }
+        lock (VersionOk)
+            VersionOk[python] = ok;
+        return ok;
+    }
 }
 
 /// <summary>Runs the Python engine as a child process, line by line. Cancelling kills it.</summary>

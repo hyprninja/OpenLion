@@ -14,6 +14,7 @@ database to <out dir>/edb/POI/aunz_sql.db3.
 import argparse
 import collections
 import gc
+import hashlib
 import os
 import pickle
 import struct
@@ -24,7 +25,7 @@ if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from openlion import (countries, flat, graph, layers, mapfile, memory, osm_fea, osm_import,  # noqa: E402
                       osm_names, osm_poi, resources, roads, schema, search, tiler)
-from openlion.common import build_header  # noqa: E402
+from openlion.common import DamagedTable, build_header  # noqa: E402
 
 AU_BBOX = (9000000, -4810918, 17998594, -726427)   # factory map extent (deg * 1e5)
 
@@ -44,15 +45,64 @@ def log(msg, t0=[float(os.environ["OPENLION_T0"])]):
           flush=True)
 
 
-def cached(path, fn):
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    v = fn()
+# Cache files are pickles, and unpickling can run code, so only files this pipeline
+# wrote are loaded: each has a SHA-256 sidecar written with it. A file without one, or
+# that no longer matches it (corrupt, hand-edited, older version), is deleted and re-read.
+
+def _sidecar(path):
+    return path + ".sha256"
+
+
+def _file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 22), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def cache_ok(path):
+    """True if the cache file exists and matches its sidecar; otherwise removes both."""
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(_sidecar(path), encoding="ascii") as f:
+            want = f.read().strip()
+    except (OSError, ValueError):
+        want = ""
+    if want and want == _file_sha256(path):
+        return True
+    for p in (path, _sidecar(path)):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    return False
+
+
+def save_cache(path, v):
     tmp = path + ".tmp"          # a run killed mid-write must not leave a broken cache
     with open(tmp, "wb") as f:
         pickle.dump(v, f, protocol=5)
+    with open(_sidecar(path) + ".tmp", "w", encoding="ascii") as f:
+        f.write(_file_sha256(tmp))
+    os.replace(_sidecar(path) + ".tmp", _sidecar(path))
     os.replace(tmp, path)
+
+
+def load_cache(path):
+    if not cache_ok(path):
+        raise RuntimeError(f"cache file {os.path.basename(path)} is missing or was changed; run the build again")
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def cached(path, fn):
+    if cache_ok(path):
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    v = fn()
+    save_cache(path, v)
     return v
 
 
@@ -183,13 +233,15 @@ class _Ctx:
         """[(country, read result)] from the cache files the read workers wrote."""
         res = []
         for cn, _ in self.countries():
-            with open(self.cache(name, cn), "rb") as f:
-                res.append((cn, pickle.load(f)))
+            res.append((cn, load_cache(self.cache(name, cn))))
         return res
 
     def raw(self, fn):
         d = open(os.path.join(self.db, fn), "rb").read()
-        return flat.unpack(d) if d[:4] == b"zip\x01" else d
+        try:
+            return flat.unpack(d) if d[:4] == b"zip\x01" else d
+        except DamagedTable as e:
+            raise DamagedTable(f"{fn}: {e}") from None
 
     def write(self, name, blob):
         if not name.startswith("au.") and name not in MAP_FILES:
@@ -215,6 +267,8 @@ def _stage_main(fn, label, ctx, q):
         sampler.stop()
         q.put(("peaks", label, sampler.peaks()))
         q.put(("done", label))
+    except DamagedTable as e:
+        q.put(("damaged", label, str(e)))
     except BaseException:
         import traceback
         q.put(("error", label, traceback.format_exc()))
@@ -317,14 +371,13 @@ def _fea_stage(ctx, stage, q):
     road_lines, seen = [], set()
     for cn, _ in ctx.countries():      # catalog order, first extract wins: as osm_import.merge
         oc = _overview_cache(ctx.cache("roads2", cn))
-        if not os.path.exists(oc):     # roads read by an older version: derive it now
-            with open(ctx.cache("roads2", cn), "rb") as f:
-                cached(oc, lambda f=f: _road_lines(pickle.load(f), with_ids=True))
-        with open(oc, "rb") as f:
-            for item in pickle.load(f):
-                if item[0] not in seen:
-                    seen.add(item[0])
-                    road_lines.append(item[1:])
+        roads_cache = ctx.cache("roads2", cn)
+        lines = cached(oc, lambda p=roads_cache: _road_lines(load_cache(p), with_ids=True))
+        for item in lines:
+            if item[0] not in seen:
+                seen.add(item[0])
+                road_lines.append(item[1:])
+        lines = None
     seen = None
     fc = osm_fea.Collected()
     for cn, part in ctx.per_country("fea2"):
@@ -390,7 +443,7 @@ def _run(pbf, db, out, bbox, lookups, stage, region, plan):
     # (node locations in a file on disk), several at once on a big one
     forward("roads")
     jobs = [(name, cn.code, p, region, ctx.cache(name, cn), plan.node_index(out, f"nodes_{name}_{cn.code}"))
-            for name in READS for cn, p in inputs if not os.path.exists(ctx.cache(name, cn))]
+            for name in READS for cn, p in inputs if not cache_ok(ctx.cache(name, cn))]
     if jobs:
         import concurrent.futures as cf
         # biggest first: Australia before New Zealand, roads and background before the rest
@@ -446,6 +499,8 @@ def _run(pbf, db, out, bbox, lookups, stage, region, plan):
                 pending.discard(msg[1])
                 procs[msg[1]].join()
                 log(f"stage {msg[1]}: done, peak {memory.gb(max(peaks.get(msg[1], {0: 0}).values()))}")
+            elif kind == "damaged":
+                raise DamagedTable(msg[2])
             elif kind == "error":
                 raise RuntimeError(f"stage {msg[1]} failed:\n{msg[2]}")
 

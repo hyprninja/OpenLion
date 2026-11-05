@@ -9,7 +9,7 @@ namespace OpenLion.Core.Osm;
 
 /// <summary>An OSM extract on this PC.</summary>
 /// <param name="DataDate">Date of the OSM data, from Geofabrik's file name; null if unknown.</param>
-/// <param name="Md5">Checked against Geofabrik's checksum; null for a file the user supplied.</param>
+/// <param name="Md5">The file's MD5: checked against Geofabrik's or a .md5 file when there is one, else only recorded.</param>
 public sealed record OsmExtract(string Path, string FileName, DateOnly? DataDate, long Bytes, string? Md5,
     DateTime AddedUtc, string Source)
 {
@@ -33,7 +33,8 @@ public class OsmDownloadException(string message, Exception? inner = null) : Exc
 /// Downloads one country's extract from Geofabrik into its cache folder, keeping one extract
 /// there. "-latest" redirects to a dated file (australia-261103.osm.pbf) that never changes, so
 /// a download can safely resume from its .part file. Every download is checked against
-/// Geofabrik's MD5 before it is used.
+/// Geofabrik's MD5 before it is used. MD5 is all Geofabrik publishes: it catches a damaged or
+/// incomplete download, but it doesn't prove who made the file (both come over the same HTTPS).
 /// </summary>
 public sealed class OsmDownloader(HttpClient http, string folder, MapCountry? country = null)
 {
@@ -191,6 +192,13 @@ public sealed class OsmDownloader(HttpClient http, string folder, MapCountry? co
                 File.Delete(final);
                 throw new OsmDownloadException("The file doesn't match the checksum in its .md5 file; it may be damaged.");
             }
+        }
+        else
+        {
+            // Nothing to check against (e.g. the file already sits in the cache): record its
+            // checksum anyway, so the log and extract.json say exactly which file was used.
+            md5 = await Md5Async(final, progress, ct);
+            AppLog.Write($"osm import: {name} has no .md5 file; contents not verified, md5 {md5}");
         }
         return Commit(new OsmExtract(final, name, DateFromName(name), len, md5, DateTime.UtcNow, "file: " + name));
     }

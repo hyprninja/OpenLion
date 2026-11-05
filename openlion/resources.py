@@ -50,7 +50,9 @@ class Plan:
 
 
 def make_plan(mode=None, available=None, cpus=None):
-    mode = (mode or os.environ.get("OPENLION_MEMORY") or "auto").lower()
+    mode = (mode or os.environ.get("OPENLION_MEMORY") or "auto").strip().lower()
+    if mode not in ("auto", "low", "high"):
+        raise ValueError(f"OPENLION_MEMORY must be auto, low or high, not {mode!r}")
     available = memory.available() if available is None else available
     cpus = cpus or os.cpu_count() or 1
     usable = available - RESERVE
@@ -61,7 +63,9 @@ def make_plan(mode=None, available=None, cpus=None):
         return Plan("low", 1, 1, True, available, cpus)
     reads = int(max(1, min(cpus - 1, usable // READ_WORKER)))
     fea = int(max(2, min(cpus - 2, (usable - STAGES_HIGH) // FEA_WORKER)))
-    forced = os.environ.get("OPENLION_WORKERS")
+    forced = (os.environ.get("OPENLION_WORKERS") or "").strip()
     if forced:
-        fea = reads = max(1, int(forced))
+        if not forced.isdigit():
+            raise ValueError(f"OPENLION_WORKERS must be a whole number, not {forced!r}")
+        fea = reads = min(max(1, int(forced)), cpus)
     return Plan("high", reads, fea, False, available, cpus)
