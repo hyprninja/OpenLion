@@ -14,6 +14,9 @@ import math
 from .graph import Graph
 from .mapfile import SEGINFO_FIELDS
 
+# private tag put on collected ways: the catalog of the extract they came from
+COUNTRY_TAG = "openlion:country"
+
 FT = 0.3048
 
 # highway=* -> (base rank, class). road_rank() refines rank by speed (urban vs rural);
@@ -66,6 +69,9 @@ def parse_speed(v):
     if not v:
         return None
     v = v.strip().lower()
+    for unit in ("km/h", "kmh", "kph"):
+        if v.endswith(unit):
+            v = v[:-len(unit)].strip()
     if v.endswith("mph"):
         try:
             return round(float(v[:-3]) * 1.609)
@@ -200,6 +206,22 @@ def read(pbf_path, bbox=None, progress=None):
     return c
 
 
+def merge(collected):
+    """[(catalog, collector)] -> one collector; ways tagged with their catalog.
+    A way in two extracts (they overlap at the edges) is kept once."""
+    out = _Collector(None)
+    seen = set()
+    for catalog, c in collected:
+        for wid, tags, pts in c.ways:
+            if wid in seen:
+                continue
+            seen.add(wid)
+            tags[COUNTRY_TAG] = catalog
+            out.ways.append((wid, tags, pts))
+        out.restrictions += c.restrictions
+    return out
+
+
 def build_graph(c, max_shape_points=500):
     """Collected OSM data -> (Graph, seginfo record list, stats)."""
     use = collections.Counter()
@@ -210,6 +232,7 @@ def build_graph(c, max_shape_points=500):
         use[pts[-1][0]] += 1
     g = Graph()
     g.seg_label = []      # OSM (name, ref) per segment, for osm_names
+    g.seg_country = []    # catalog (countries.Country.catalog) per segment
     nodes = {}
     si_index, si_records = {}, []
     stats = collections.Counter()
@@ -262,6 +285,7 @@ def build_graph(c, max_shape_points=500):
             s = g.add_segment(a, b, length_ft(xy), si_index[v], None, shape or None, [], adas)
             g.seg_shape[s] = shape if shape else None
             g.seg_label.append((tags.get("name"), tags.get("ref")))
+            g.seg_country.append(tags.get(COUNTRY_TAG, 0))
             piece_of[wid].append((s, seq[0][0], seq[-1][0]))
             stats["segments"] += 1
             stats["with speed limit"] += bool(speed)
@@ -297,6 +321,7 @@ def build_graph(c, max_shape_points=500):
                 si_records.append(v)
             con = g.add_segment(n, twin, 1, si_index[v], None, None, [], None)
             g.seg_label.append((None, None))
+            g.seg_country.append(g.seg_country[keep[0]])
             for s in move:
                 if g.seg_a[s] == n:
                     g.seg_a[s] = twin

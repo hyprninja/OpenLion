@@ -13,8 +13,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from openlion import flat, graph, layers, mapfile, osm_import, osm_names, search, tiler  # noqa: E402
 
 
-def lookup(tables, city, street):
-    """Follow the unit's path: city tree -> city list -> road tree -> road list -> road record."""
+def lookup(tables, city, street, catalog=0):
+    """Follow the unit's path: city tree -> city list -> road tree -> road list -> road record.
+    catalog: the country's city tree (0 Australia, 1 New Zealand)."""
     st, cty, cl, ct, rl, rt, rd = (tables[k] for k in ("auz.str", "auz.cty", "auz.cl", "auz.ct", "auz.rl", "auz.rt", "auz.rd"))
     S = lambda o: st[0x5E + o + 1:st.index(b"\0", 0x5E + o)].decode("latin-1")
     C = {c["cityID"]: c for c in search.parse_cities(cty)}
@@ -33,7 +34,7 @@ def lookup(tables, city, street):
             i, used = nxt[0], used + 1
         return t["listID_start"] + N[i][3], N[i][4], used
 
-    a, n, used_c = descend(trees_c[0], city)
+    a, n, used_c = descend(list(trees_c.values())[catalog], city)
     hits = [CL[j] for j in range(a, a + n) if S(C[CL[j][0]]["name_offsets"][CL[j][1]]) == city]
     if not hits:
         return f"city {city!r}: not found (tree covered {used_c} chars, {n} candidates)"

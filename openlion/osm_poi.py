@@ -28,6 +28,8 @@ import shutil
 import sqlite3
 import unicodedata
 
+COUNTRY_TAG = "openlion:country"     # same private tag as osm_import.COUNTRY_TAG
+
 KEYS = ("amenity", "shop", "tourism", "leisure", "place", "aeroway", "historic", "office",
         "craft", "railway", "highway", "public_transport")
 
@@ -152,24 +154,26 @@ def unmorton(v):
     return (round((x * 360.0 / 4294967296.0 - 180.0) * 1e5), round((y * 360.0 / 4294967296.0 - 180.0) * 1e5))
 
 
-def phone(raw):
-    """'+61 3 9670 4506' -> ('61396704506', '+(61)-3-96704506')."""
+def phone(raw, cc="61"):
+    """'+61 3 9670 4506' -> ('61396704506', '+(61)-3-96704506'); cc = dialling code
+    (New Zealand '+64 9 379 0000' -> ('6493790000', '+(64)-9-3790000'))."""
     if not raw:
         return None, None
     d = re.sub(r"\D", "", raw.split(";")[0])
-    if d.startswith("61"):
-        nsn = d[2:]
+    if d.startswith(cc):
+        nsn = d[len(cc):]
     elif d.startswith("0"):
         nsn = d[1:]
-    elif len(d) in (6, 10) and d.startswith("1"):
+    elif cc == "61" and len(d) in (6, 10) and d.startswith("1"):     # 13 xx xx, 1300 / 1800
         nsn = d
     else:
         return None, None
     if len(nsn) < 6:
         return None, None
     nsn = nsn.lstrip("0")
-    pretty = f"+(61)-{nsn}" if nsn.startswith("1") else f"+(61)-{nsn[0]}-{nsn[1:]}"
-    return "61" + nsn, pretty
+    short = cc == "61" and nsn.startswith("1")
+    pretty = f"+({cc})-{nsn}" if short else f"+({cc})-{nsn[0]}-{nsn[1:]}"
+    return cc + nsn, pretty
 
 
 def read(pbf_path, bbox=None):
@@ -204,17 +208,17 @@ def read(pbf_path, bbox=None):
     return out
 
 
-def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None):
+def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, places=()):
     """Write out_path: the factory POI database with its POIs replaced by `pois`.
-    areas: osm_names.read_boundaries() output, for the city / state of each POI.
+    areas / places: osm_names.read_boundaries() / read_places() output, for the city /
+    state of each POI. A POI's country is the catalog in tags[COUNTRY_TAG] (default 0).
     bbox: map extent (deg * 1e5); POIs outside it (e.g. Heard Island) are left out."""
-    from . import osm_names
+    from . import countries, osm_names
     stats = collections.Counter()
     loc_idx = st_idx = None
     if areas:
-        locs = [a for a in areas if a.level == 9]
-        states = [a for a in areas if a.level == 4]
-        loc_idx, st_idx = osm_names.AreaIndex(locs), osm_names.AreaIndex(states, cell=50000)
+        loc_idx = osm_names.Localities(areas, places)
+        st_idx = osm_names.AreaIndex([a for a in areas if a.level == 4], cell=50000)
 
     # names, de-duplication (same category and name within ~100 m: node + area of one place)
     rows, seen = [], set()
@@ -266,22 +270,23 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None):
     city_cache = {}
     base, addr, alert = [], [], []
     for pid, (code, cat, x, y, name, tags) in enumerate(rows, start=1):
+        country = countries.BY_CATALOG.get(tags.get(COUNTRY_TAG, 0), countries.AU)
         city = text(tags.get("addr:suburb") or tags.get("addr:city"))
         region = None
         if loc_idx is not None:
-            k = (x // 200, y // 200)
+            k = (country.catalog, x // 200, y // 200)
             if k not in city_cache:
-                li, si_ = loc_idx.find(x, y), st_idx.find(x, y)
-                city_cache[k] = (text(loc_idx.areas[li].name) if li is not None else None,
+                li, si_ = loc_idx.find(x, y, country.catalog), st_idx.find(x, y)
+                city_cache[k] = (text(loc_idx.loc[li].name) if li is not None else None,
                                  text(st_idx.areas[si_].name) if si_ is not None else None)
             c2, region = city_cache[k]
             city = city or c2
         if cat == 18:
             city = name
-        p_raw, p_pretty = phone(tags.get("phone") or tags.get("contact:phone"))
+        p_raw, p_pretty = phone(tags.get("phone") or tags.get("contact:phone"), country.phone_cc)
         base.append((pid, cat, code, sid(name), name, p_raw))
         addr.append((pid, sid(text(tags.get("addr:housenumber"), 20)), sid(text(tags.get("addr:street"))), None,
-                     sid(city), sid(region), sid("AUSTRALIA"), None, sid(p_pretty)))
+                     sid(city), sid(region), sid(country.name), None, sid(p_pretty)))
         alert.append((pid, None, None, None, None, None, None))
         stats[f"category {cat}"] += 1
     cur.executemany("insert into String_BaseAttributes (String_ID, Value) values (?, ?)",

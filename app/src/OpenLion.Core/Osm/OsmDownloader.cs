@@ -30,14 +30,17 @@ public sealed record DownloadProgress(DownloadPhase Phase, long Done, long? Tota
 public class OsmDownloadException(string message, Exception? inner = null) : Exception(message, inner);
 
 /// <summary>
-/// Downloads the Australia extract from Geofabrik into one cache folder, keeping one extract.
-/// "-latest" redirects to a dated file (australia-261103.osm.pbf) that never changes, so a
-/// download can safely resume from its .part file. Every download is checked against
+/// Downloads one country's extract from Geofabrik into its cache folder, keeping one extract
+/// there. "-latest" redirects to a dated file (australia-261103.osm.pbf) that never changes, so
+/// a download can safely resume from its .part file. Every download is checked against
 /// Geofabrik's MD5 before it is used.
 /// </summary>
-public sealed class OsmDownloader(HttpClient http, string folder)
+public sealed class OsmDownloader(HttpClient http, string folder, MapCountry? country = null)
 {
-    public static readonly Uri LatestUrl = new("https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf");
+    /// <summary>Australia's "-latest" URL (OpenLion 1.0 only downloaded Australia).</summary>
+    public static readonly Uri LatestUrl = MapCountry.Australia.LatestUrl;
+
+    public MapCountry Country { get; } = country ?? MapCountry.Australia;
     const string InfoFile = "extract.json";
     const long SpaceMargin = 200_000_000;
 
@@ -82,10 +85,11 @@ public sealed class OsmDownloader(HttpClient http, string folder)
     /// <summary>Asks Geofabrik for the newest extract: its dated name, size and MD5.</summary>
     public async Task<OsmRemote> CheckLatestAsync(CancellationToken ct = default)
     {
-        using var head = new HttpRequestMessage(HttpMethod.Head, LatestUrl);
+        var latest = Country.LatestUrl;
+        using var head = new HttpRequestMessage(HttpMethod.Head, latest);
         using var r = await http.SendAsync(head, ct);
         r.EnsureSuccessStatusCode();
-        var url = r.RequestMessage?.RequestUri ?? LatestUrl; // after redirects
+        var url = r.RequestMessage?.RequestUri ?? latest; // after redirects
         var name = Path.GetFileName(url.LocalPath);
         var md5Text = await http.GetStringAsync(new Uri(url + ".md5"), ct);
         var md5 = md5Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
@@ -207,7 +211,7 @@ public sealed class OsmDownloader(HttpClient http, string folder)
 
     OsmExtract Commit(OsmExtract e)
     {
-        // keep only this extract
+        // keep only this extract (other countries live in their own folders)
         foreach (var f in Directory.EnumerateFiles(folder, "*.osm.pbf"))
             if (!f.Equals(e.Path, StringComparison.OrdinalIgnoreCase))
                 File.Delete(f);

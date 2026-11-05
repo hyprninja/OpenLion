@@ -12,7 +12,7 @@
   · <a href="#questions">Questions</a>
 </p>
 
-Holden stopped updating the iQ's maps in 2016. Whole suburbs and new roads built since then simply aren't there. OpenLion is a free Windows app that makes a new map card for your car from today's [OpenStreetMap](https://www.openstreetmap.org) data. It copies your factory card, builds fresh maps for all of Australia and writes them to a spare SD card. Your factory card isn't changed.
+Holden stopped updating the iQ's maps in 2016. Whole suburbs and new roads built since then simply aren't there. OpenLion is a free Windows app that makes a new map card for your car from today's [OpenStreetMap](https://www.openstreetmap.org) data. It copies your factory card, builds fresh maps for Australia, New Zealand or both, and writes them to a spare SD card. Your factory card isn't changed.
 
 | Before: factory card | After: OpenLion card |
 |---|---|
@@ -45,7 +45,7 @@ OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11�
 1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.0.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
 2. **Read and accept the warning.** OpenLion is unofficial, and you use it at your own risk.
 3. **Insert your factory card.** Set its lock switch first if you can. OpenLion copies it to your PC and checks every file, then checks that it understands your card's map format.
-4. **Get the map data.** OpenLion downloads the latest Australia extract from OpenStreetMap (via Geofabrik) and checks it.
+4. **Get the map data.** Choose Australia, New Zealand, or both (the factory card had both). OpenLion downloads the latest extract for each from OpenStreetMap (via Geofabrik) and checks it.
 5. **Build the maps.** This takes an hour or more. You can leave the PC to it; OpenLion keeps it awake.
 6. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
 7. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
@@ -76,7 +76,7 @@ It runs these checks again right before writing, in case cards were swapped. The
 
 > **Disclaimer.** OpenLion is an unofficial tool, not made by, affiliated with or endorsed by Holden, General Motors or Continental. It is provided as is, with no warranty. You use it at your own risk: the author is not responsible for damaged or erased cards, a navigation unit that stops working, wrong directions, or anything else. Always follow road signs and the road rules over the navigation.
 >
-> Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL. The Australia extract is provided by [Geofabrik](https://download.geofabrik.de). OpenLion is released under the [MIT License](LICENSE).
+> Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL. The Australia and New Zealand extracts are provided by [Geofabrik](https://download.geofabrik.de). OpenLion is released under the [MIT License](LICENSE).
 
 ---
 
@@ -105,6 +105,7 @@ The iQ reads its maps from a full-size SD card. The map data turns out to be an 
 | OSM street names + address search: suburbs, LGAs, postcodes, road records, speller trees (tested on inner Melbourne) | Working | [13](docs/13_osm_names_search.md) |
 | OSM background layer (`.fea`): water, parks, landuse, rail, coast/ocean, labels, overview roads (tested on Melbourne) | Working | [14](docs/14_osm_background.md) |
 | Full-Australia build: all 17 tables in one run (`python -m openlion.pipeline`), lookups work in every capital | Done | [15](docs/15_full_australia.md) |
+| Choose your country: Australia, New Zealand or both, each in its own search catalog; NZ suburbs from place points | Done, not yet car-tested | [18](docs/18_countries.md) |
 | Test card assembly: complete `navigation/` folder with OSM maps, every other file byte-identical; read-back check passes | Done | [16](docs/16_test_card.md) |
 | Points of interest from OSM (270k POIs, factory schema and compiled queries kept); CANBERRA as a municipality over its suburbs | Done | [17](docs/17_poi_canberra.md) |
 | `.fea` size reduction, NZ, road-sense alerts (speed cameras, school zones) | Not started | |
@@ -182,6 +183,7 @@ python -m openlion.pipeline australia-latest.osm.pbf navigation/db_aunz/db osm_o
 python -m openlion.build navigation card/navigation --tables osm_out/db --poi osm_out/edb/POI/aunz_sql.db3
 python tests/card_check.py card/navigation navigation
 python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card2/navigation   # all of the above in one
+python -m openlion.make_card AU=australia-latest.osm.pbf navigation osm_work card3/navigation --extract NZ=new-zealand-latest.osm.pbf   # both countries
 ```
 
 ## Legal and data policy

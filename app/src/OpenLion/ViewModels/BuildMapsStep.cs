@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using OpenLion.Core;
 using OpenLion.Core.Engine;
+using OpenLion.Core.Osm;
 using OpenLion.Core.Reports;
 
 namespace OpenLion.ViewModels;
@@ -94,13 +95,13 @@ public sealed class BuildMapsStep : StepViewModel
             return;
         var osm = _session.Osm;
         var build = _session.State.Build;
-        if (build is not null && build.Matches(_session.FactoryRecord, osm?.FileName))
+        if (build is not null && osm is not null && build.Matches(_session.FactoryRecord, BuildRecord.OsmKey(osm)))
         {
             _session.Build = build;
             _session.RequiredBytes = build.Bytes;
-            Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {osm!.Describe()}.";
+            Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {_session.DescribeOsm()}.";
             Detail = $"{build.Files:N0} files, {build.Bytes / 1e6:N0} MB, checked.";
-            Warning = build.Partial ? "This is a TEST build of a small area only, not all of Australia." : "";
+            Warning = build.Partial ? $"This is a TEST build of a small area only, not all of {Places}." : "";
             Phase = BuildPhase.Done;
             return;
         }
@@ -108,14 +109,29 @@ public sealed class BuildMapsStep : StepViewModel
         Status = Detail = "";
         Phase = BuildPhase.Ready;
         Intro = osm is null ? "" :
-            $"OpenLion will build new maps from {osm.Describe()}, using your factory card's copy. " +
-            "This takes about an hour on a fast PC (longer on slower ones). You can keep using the PC, " +
-            "and OpenLion stops Windows going to sleep until it's done.";
+            $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}, using your factory card's copy. " +
+            $"This takes {Duration} on a fast PC (longer on slower ones). You can keep using the PC, " +
+            "and OpenLion stops Windows going to sleep until it's done." +
+            (_session.Countries.Count == 1
+                ? $" Only {Places} will have streets and addresses; the other country on the factory card is left empty."
+                : "");
         Warning = CheckResources();
         if (FactoryNavigation is null || !Directory.Exists(FactoryNavigation) || osm is null)
         {
             Warning = "Go back and finish copying the factory card and getting the OSM data first.";
             Phase = BuildPhase.Blocked;
+        }
+    }
+
+    string Places => MapCountry.Describe(_session.Countries);
+
+    /// <summary>Rough build time, by extract size (all of Australia, ~1 GB, takes about an hour).</summary>
+    string Duration
+    {
+        get
+        {
+            var gb = (_session.Osm ?? []).Sum(e => e.Bytes) / 1e9;
+            return gb < 0.6 ? "about half an hour" : gb < 1.2 ? "about an hour" : "an hour and a half or so";
         }
     }
 
@@ -195,9 +211,11 @@ public sealed class BuildMapsStep : StepViewModel
             _session.State.Save();
 
             var bbox = MapBuild.BboxFromEnvironment();
-            var req = new BuildRequest(osm.Path, nav, FactoryManifest is { } m && File.Exists(m) ? m : null,
+            var extracts = _session.Countries.Zip(osm, (c, e) => (c.Code, e.Path)).ToList();
+            var req = new BuildRequest(extracts, nav, FactoryManifest is { } m && File.Exists(m) ? m : null,
                 AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox);
-            AppLog.Write($"build: engine {engine.Python} ({(engine.Bundled ? "bundled" : "dev")}), pbf {osm.Path}, " +
+            AppLog.Write($"build: engine {engine.Python} ({(engine.Bundled ? "bundled" : "dev")}), " +
+                         $"extracts {string.Join(", ", extracts.Select(x => $"{x.Code}={x.Path}"))}, " +
                          $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}");
             var progress = new Progress<BuildProgress>(p =>
             {
@@ -217,16 +235,16 @@ public sealed class BuildMapsStep : StepViewModel
                 return;
             }
             var record = new BuildRecord(result.CardPath ?? AppPaths.BuildOutput, _session.FactoryRecord?.VolumeSerial ?? 0,
-                osm.FileName, osm.DataDate, result.Files, result.Bytes, DateTime.UtcNow, bbox is not null);
+                BuildRecord.OsmKey(osm), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null);
             _session.State.Build = record;
             _session.State.Save();
             _session.Build = record;
             _session.RequiredBytes = record.Bytes;
             Percent = 100;
-            Status = $"Maps are ready: built in {Format(_clock.Elapsed)} from {osm.Describe()}.";
+            Status = $"Maps are ready: built in {Format(_clock.Elapsed)} from {_session.DescribeOsm()}.";
             Detail = $"{result.Files:N0} files, {result.Bytes / 1e6:N0} MB. {result.Replaced} map files replaced, " +
                      "everything else is identical to your factory card, and the new card passed its checks.";
-            Warning = bbox is not null ? "This is a TEST build of a small area only, not all of Australia." : "";
+            Warning = bbox is not null ? $"This is a TEST build of a small area only, not all of {Places}." : "";
             Phase = BuildPhase.Done;
         }
         catch (OperationCanceledException)
@@ -274,6 +292,6 @@ public sealed class BuildMapsStep : StepViewModel
             Detail = "The error report couldn't be saved: " + re.Message;
         }
         _summary = $"OpenLion {ErrorReport.AppVersion}: map build failed{(stage is null ? "" : " during " + stage)}.\n{message}\n" +
-                   $"OSM data: {_session.Osm?.FileName}\nMemory: {GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (double)(1L << 30):N0} GB";
+                   $"OSM data: {(_session.Osm is { } o ? BuildRecord.OsmKey(o) : "none")}\nMemory: {GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (double)(1L << 30):N0} GB";
     }
 }

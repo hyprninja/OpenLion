@@ -30,14 +30,24 @@ public sealed record BuildResult
     public IReadOnlyList<string> Log { get; init; } = [];
 }
 
-/// <param name="Pbf">OSM extract.</param>
+/// <param name="Extracts">OSM extracts, one per country: (country code, path).</param>
 /// <param name="FactoryNavigation">navigation/ folder of the factory card copy.</param>
 /// <param name="Manifest">manifest.tsv written when the factory card was copied.</param>
 /// <param name="WorkFolder">Engine working folder (cached OSM reads, new tables).</param>
 /// <param name="OutputNavigation">navigation/ folder to create.</param>
 /// <param name="Bbox">Optional area (lon0 lat0 lon1 lat1) for quick test builds.</param>
-public sealed record BuildRequest(string Pbf, string FactoryNavigation, string? Manifest, string WorkFolder,
-    string OutputNavigation, double[]? Bbox = null);
+public sealed record BuildRequest(IReadOnlyList<(string Country, string Path)> Extracts, string FactoryNavigation,
+    string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null)
+{
+    /// <summary>One Australian extract (OpenLion 1.0).</summary>
+    public BuildRequest(string pbf, string factoryNavigation, string? manifest, string workFolder,
+        string outputNavigation, double[]? bbox = null)
+        : this([("AU", pbf)], factoryNavigation, manifest, workFolder, outputNavigation, bbox) { }
+
+    /// <summary>make_card's arguments before the factory folder: the first extract, then
+    /// --extract for each other country is added by <see cref="MapBuild.Arguments"/>.</summary>
+    public string FirstExtract => $"{Extracts[0].Country}={Extracts[0].Path}";
+}
 
 /// <summary>Runs <c>python -m openlion.make_card --json</c>: OSM extract + factory copy to a
 /// finished, checked navigation/ folder.</summary>
@@ -54,17 +64,28 @@ public static class MapBuild
         return v.Length == 4 ? v : null;
     }
 
-    public static async Task<BuildResult> RunAsync(EnginePaths engine, BuildRequest req,
-        IProgress<BuildProgress>? progress = null, CancellationToken ct = default)
+    /// <summary>The engine command line for a request. Public for tests.</summary>
+    public static List<string> Arguments(BuildRequest req)
     {
+        if (req.Extracts.Count == 0)
+            throw new ArgumentException("no OSM extract to build from", nameof(req));
         var args = new List<string>
         {
-            "-m", "openlion.make_card", req.Pbf, req.FactoryNavigation, req.WorkFolder, req.OutputNavigation, "--json",
+            "-m", "openlion.make_card", req.FirstExtract, req.FactoryNavigation, req.WorkFolder, req.OutputNavigation, "--json",
         };
+        foreach (var (country, path) in req.Extracts.Skip(1))
+            args.AddRange(["--extract", $"{country}={path}"]);
         if (req.Manifest is not null)
             args.AddRange(["--manifest", req.Manifest]);
         if (req.Bbox is { Length: 4 } b)
             args.AddRange(["--bbox", .. b.Select(x => x.ToString(CultureInfo.InvariantCulture))]);
+        return args;
+    }
+
+    public static async Task<BuildResult> RunAsync(EnginePaths engine, BuildRequest req,
+        IProgress<BuildProgress>? progress = null, CancellationToken ct = default)
+    {
+        var args = Arguments(req);
         var parser = new Parser(progress);
         // Below normal priority: the build takes most of an hour and the PC should stay usable.
         int code = await EngineRunner.RunAsync(engine, args, parser.Feed, ct, ProcessPriorityClass.BelowNormal);

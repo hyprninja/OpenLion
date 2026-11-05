@@ -1,5 +1,6 @@
 using System.Text.Json;
 using OpenLion.Core.Drives;
+using OpenLion.Core.Osm;
 
 namespace OpenLion.Core;
 
@@ -15,6 +16,9 @@ public static class AppPaths
     public static string CardsFolder => Path.Combine(Root, "cards");
     public static string StateFile => Path.Combine(Root, "state.json");
     public static string OsmFolder => Path.Combine(Root, "osm");
+    /// <summary>One extract per country: Australia's stays where OpenLion 1.0 kept it.</summary>
+    public static string OsmFolderFor(MapCountry c) =>
+        c == MapCountry.Australia ? OsmFolder : Path.Combine(OsmFolder, c.Code.ToLowerInvariant());
     /// <summary>Engine working folder: cached OSM reads and the new map tables.</summary>
     public static string BuildWorkFolder => Path.Combine(Root, "build", "work");
     /// <summary>The finished navigation/ folder that gets written to the new card.</summary>
@@ -29,10 +33,16 @@ public static class AppPaths
     }
 }
 
-/// <summary>A finished build: which factory card and OSM extract it came from.</summary>
+/// <summary>A finished build: which factory card and OSM extracts it came from.</summary>
+/// <param name="OsmFileName">The extract's file name; several countries' names joined by "+"
+/// (see <see cref="OsmKey"/>).</param>
 public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial, string OsmFileName, DateOnly? OsmDate,
     int Files, long Bytes, DateTime BuiltUtc, bool Partial)
 {
+    /// <summary>What a build is keyed on: the extracts' file names in country order. One
+    /// Australian extract gives its plain file name, as OpenLion 1.0 stored it.</summary>
+    public static string OsmKey(IEnumerable<OsmExtract> extracts) => string.Join("+", extracts.Select(e => e.FileName));
+
     /// <summary>Still usable: the folder exists and it was built from this card and extract.</summary>
     public bool Matches(FactoryCardRecord? factory, string? osmFileName) =>
         factory is not null && factory.VolumeSerial == FactoryVolumeSerial &&
@@ -48,6 +58,8 @@ public sealed class AppState
     public List<uint> WrittenVolumeSerials { get; set; } = [];
     /// <summary>The last finished map build, if any.</summary>
     public BuildRecord? Build { get; set; }
+    /// <summary>Countries to put on the card (MapCountry codes); null means Australia, as in 1.0.</summary>
+    public List<string>? Countries { get; set; }
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

@@ -12,13 +12,13 @@
    a road record, every .fea parcel parses, and CBD street lookups resolve
    (--skip-lookups for builds of a small area without the capitals).
 3. A replaced POI database passes SQLite's integrity check, every row points at a
-   real category and string, and every POI lies in Australia. With the factory
+   real category and string, and every POI lies on the road map. With the factory
    folder given, its schema, compiled statements and categories must be unchanged.
 """
 import argparse, csv, os, sqlite3, struct, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
-from openlion import flat, mapfile, features, osm_poi, roads
+from openlion import flat, mapfile, features, osm_poi, roads, search
 from openlion.build import POI_DB, REPLACEABLE, sha256
 from osm_names_region import lookup
 
@@ -90,13 +90,22 @@ problems += errs
 print(f"fea: {len(ff.levels)} levels, {nf:,} features, parse errors {errs}, largest raw parcel {mx_raw:,} B (factory limit 116,000)")
 
 tables = {fn: raw(fn) for fn in ("auz.str", "auz.cty", "auz.cl", "auz.ct", "auz.rl", "auz.rt", "auz.rd")}
-for city, street in (("SYDNEY", "GEORGE STREET"), ("MELBOURNE", "SWANSTON STREET"), ("BRISBANE CITY", "QUEEN STREET"),
-                     ("PERTH (WESTERN AUSTRALIA)", "HAY STREET"), ("ADELAIDE", "KING WILLIAM STREET"),
-                     ("HOBART", "ELIZABETH STREET"), ("DARWIN CITY", "MITCHELL STREET"), ("CANBERRA", "NORTHBOURNE AVENUE"),
-                     ("BRADDON, CANBERRA", "LONSDALE STREET")):
-    r = lookup(tables, city, street)
-    print("  lookup", r[0] if isinstance(r, tuple) else r)
-    problems += not isinstance(r, tuple) and not ARGS.skip_lookups   # printed, not counted, for small areas
+# CBD streets of each country that has cities on the card (an empty catalog's tree is root-only)
+LOOKUPS = {0: (("SYDNEY", "GEORGE STREET"), ("MELBOURNE", "SWANSTON STREET"), ("BRISBANE CITY", "QUEEN STREET"),
+               ("PERTH (WESTERN AUSTRALIA)", "HAY STREET"), ("ADELAIDE", "KING WILLIAM STREET"),
+               ("HOBART", "ELIZABETH STREET"), ("DARWIN CITY", "MITCHELL STREET"), ("CANBERRA", "NORTHBOURNE AVENUE"),
+               ("BRADDON, CANBERRA", "LONSDALE STREET")),
+           1: (("AUCKLAND", "QUEEN STREET"), ("WELLINGTON", "LAMBTON QUAY"), ("CHRISTCHURCH", "COLOMBO STREET"),
+               ("HAMILTON", "VICTORIA STREET"), ("DUNEDIN", "GEORGE STREET"), ("PONSONBY, AUCKLAND", "PONSONBY ROAD"))}
+city_trees = list(search.parse_trees(tables["auz.ct"]).values())
+for cat, queries in LOOKUPS.items():
+    if cat >= len(city_trees) or len(city_trees[cat]["nodes"]) <= 2:
+        print(f"  catalog {cat}: no cities on this card")
+        continue
+    for city, street in queries:
+        r = lookup(tables, city, street, cat)
+        print("  lookup", r[0] if isinstance(r, tuple) else r)
+        problems += not isinstance(r, tuple) and not ARGS.skip_lookups   # printed, not counted, for small areas
 if POI_DB in changed:
     con = sqlite3.connect(f"file:{os.path.join(CARD, POI_DB)}?mode=ro", uri=True)
     q = lambda sql: con.execute(sql).fetchall()
