@@ -30,23 +30,23 @@ Same spot, same car. The factory map stops at Worland Road. The OpenLion card sh
 
 ## Will it work in my car?
 
-OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11–MY16)**, the unit that reads its maps from a full-size SD card in the dash. It has been tested on a card labelled CD_7606 (MY12). Other iQ card versions are checked before anything is built. If yours isn't supported yet, OpenLion says so, saves a report with no map data in it, and helps you send it in so support can be added.
+OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11–MY16)**, the unit that reads its maps from a full-size SD card in the dash. It has been tested in the car on a card labelled CD_7606 (MY12). The newer MY17 card (CD_8418, with 2016 maps) uses a newer map format, which OpenLion also supports. It passes every check but hasn't been tried in a car yet. Other iQ card versions are checked before anything is built. If yours isn't supported yet, OpenLion says so, saves a report with no map data in it, and helps you send it in so support can be added.
 
 ## What you need
 
-- A Windows 10 or 11 PC (64-bit) with **16 GB of memory or more** (32 GB recommended) and **about 6 GB of free disk space**.
+- A Windows 10 or 11 PC (64-bit) with **8 GB of memory or more** and **about 6 GB of free disk space**. More memory and cores make the build faster.
 - Your **factory map card**. OpenLion only reads it.
 - A **blank SD card** of 1 to 32 GB, formatted FAT32. A 2 GB card is plenty. Use a full-size card, or a microSD card in a full-size adapter.
 - An internet connection for the map download (about 1 GB).
-- **About 1 to 2 hours.** Most of it is the map build, which runs by itself.
+- **About half an hour to 2 hours**, depending on the PC. Most of it is the map build, which runs by itself.
 
 ## How it works
 
-1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.0.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
+1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.1.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
 2. **Read and accept the warning.** OpenLion is unofficial, and you use it at your own risk.
 3. **Insert your factory card.** Set its lock switch first if you can. OpenLion copies it to your PC and checks every file, then checks that it understands your card's map format.
 4. **Get the map data.** Choose Australia, New Zealand, or both (the factory card had both). OpenLion downloads the latest extract for each from OpenStreetMap (via Geofabrik) and checks it.
-5. **Build the maps.** This takes an hour or more. You can leave the PC to it; OpenLion keeps it awake.
+5. **Build the maps.** This takes about half an hour on a fast PC with plenty of memory, and up to 1½ hours on one with 8 GB. You can leave the PC to it; OpenLion keeps it awake.
 6. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
 7. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
 
@@ -73,6 +73,10 @@ It runs these checks again right before writing, in case cards were swapped. The
 **Something went wrong. What now?** OpenLion saves a report (with no map data) and shows you how to [open an issue](https://github.com/hyprninja/OpenLion/issues/new/choose). Include your car's model and year and what happened.
 
 **Can I improve the maps?** Yes. Anyone can edit OpenStreetMap at [openstreetmap.org](https://www.openstreetmap.org). Fix your street, and the next card you build will include it.
+
+## Thanks
+
+Thanks to **Jonny Bee**, who shared a copy of a MY17 card. That card is how OpenLion learned the newer map format, so MY17 cars can use it too.
 
 > **Disclaimer.** OpenLion is an unofficial tool, not made by, affiliated with or endorsed by Holden, General Motors or Continental. It is provided as is, with no warranty. You use it at your own risk: the author is not responsible for damaged or erased cards, a navigation unit that stops working, wrong directions, or anything else. Always follow road signs and the road rules over the navigation.
 >
@@ -108,7 +112,9 @@ The iQ reads its maps from a full-size SD card. The map data turns out to be an 
 | Choose your country: Australia, New Zealand or both, each in its own search catalog; NZ suburbs from place points | Done, not yet car-tested | [18](docs/18_countries.md) |
 | Test card assembly: complete `navigation/` folder with OSM maps, every other file byte-identical; read-back check passes | Done | [16](docs/16_test_card.md) |
 | Points of interest from OSM (270k POIs, factory schema and compiled queries kept); CANBERRA as a municipality over its suburbs | Done | [17](docs/17_poi_canberra.md) |
-| `.fea` size reduction, NZ, road-sense alerts (speed cameras, school zones) | Not started | |
+| MY17 card (CD_8418, datamodel Arriba 5.3): newer road records, parcel header and speed limits; every table round-trips byte-identical | Done, not yet car-tested | [19](docs/19_my17_card.md) |
+| Builds on an 8 GB PC (about 3.6 GB peak) and in parallel on big ones (Australia + New Zealand in 25 min on 44 threads); output unchanged | Done | [20](docs/20_memory.md) |
+| `.fea` size reduction, road-sense alerts (speed cameras, school zones) | Not started | |
 | In-car test: unit accepts the OSM card, shows post-2010 streets, address search works, routes 200 km in demo mode, live guidance and voice instructions work on a real drive | Passed (2026-11-05) | [16](docs/16_test_card.md) |
 
 Every structural claim in the docs was checked against the full factory dataset (for example, all 11,282 map parcels and 192,282 feature parcels decode and frame exactly).
@@ -128,6 +134,8 @@ packaging/   release build: embedded Python + engine + app → MSI (WiX 6)
 
 Version 1.0.0 is complete and car-tested. It has the wizard, drive detection, `CardGuard` (the checks that refuse to write to a factory card), and copying the factory card with every file hash-verified, followed by the compatibility check (`openlion.compat`). If a card isn't supported, the app saves a report zip (no map data) and points the user to the [card report issue form](.github/ISSUE_TEMPLATE/card_report.yml). The app downloads the Australia extract from Geofabrik (resumable, MD5-checked; or the user picks a `.osm.pbf` they already have) and builds the maps with `openlion.make_card`, showing progress per stage. It then writes the maps to a blank FAT32 card: `CardGuard` runs again on a fresh drive list right before writing, the files go to `navigation.partial` and are read back from the card and hash-checked before the folder is renamed, and the card gets the factory card's volume label. A full run (fresh download, 1 h 13 min build, peak engine memory 16.6 GB, 3 min write) made a card that works in the car.
 
+Version 1.1.0 adds New Zealand, the MY17 card format, and a build that adapts to the PC: in about 3.6 GB on an 8 GB PC, or with every core and much more memory on a big one, with the same maps either way (report [20](docs/20_memory.md)).
+
 The installed app is self-contained: the .NET runtime, an embedded Python 3.12 with `osmium`, and the engine (`openlion/`, the `tests/` checks and the reference manifest) all sit in its folder. Nothing else needs to be installed.
 
 To build the MSI (needs the .NET 10 SDK, WiX 6 and any Python with pip):
@@ -135,7 +143,7 @@ To build the MSI (needs the .NET 10 SDK, WiX 6 and any Python with pip):
 ```powershell
 dotnet tool install -g wix --version 6.0.2
 wix extension add -g WixToolset.UI.wixext/6.0.2
-pwsh packaging/build-release.ps1 -Version 1.0.0     # → dist/OpenLion-1.0.0.msi (+ .sha256)
+pwsh packaging/build-release.ps1 -Version 1.1.0     # → dist/OpenLion-1.1.0.msi (+ .sha256)
 ```
 
 Build and test the app with `dotnet test app/OpenLion.slnx`. Settings for development:
