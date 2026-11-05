@@ -1,10 +1,90 @@
-<img src="app/src/OpenLion/Assets/logo.png" alt="OpenLion logo" width="120" align="right">
+<p align="center">
+  <img src="app/src/OpenLion/Assets/logo.png" alt="OpenLion logo" width="160">
+</p>
 
-# OpenLion
+<h1 align="center">OpenLion</h1>
 
-Open tools and format documentation for the **Holden iQ factory satellite navigation** (VE Commodore Series II, MY11–MY16), with the goal of building **up-to-date map cards from OpenStreetMap**.
+<p align="center"><b>New maps for your Holden iQ satellite navigation, made from OpenStreetMap.</b></p>
 
-Holden stopped issuing map updates in 2016. The iQ reads its maps from a full-size SD card, and the map data turns out to be an unencrypted Siemens VDO / Continental database ("Arriba" data model, format 5.0.5) built from Navteq data. This repo documents that format and provides readers for it. The aim is an OSM → native converter that writes a new `navigation/` map set while leaving the card's metadata, version files and libraries unchanged.
+<p align="center">
+  <a href="https://github.com/hyprninja/OpenLion/releases/latest"><b>Download OpenLion for Windows</b></a>
+  · <a href="#how-it-works">How it works</a>
+  · <a href="#questions">Questions</a>
+</p>
+
+Holden stopped updating the iQ's maps in 2016. Whole suburbs and new roads built since then simply aren't there. OpenLion is a free Windows app that makes a new map card for your car from today's [OpenStreetMap](https://www.openstreetmap.org) data. It copies your factory card, builds fresh maps for all of Australia and writes them to a spare SD card. Your factory card isn't changed.
+
+| Before: factory card | After: OpenLion card |
+|---|---|
+| ![The factory map shows an empty block next to Worland Road, with no streets](docs/images/before.jpg) | ![The OpenLion map shows Cruse Street and the new subdivision's streets along Worland Road](docs/images/after.jpg) |
+
+Same spot, same car. The factory map stops at Worland Road. The OpenLion card shows Cruse Street and every street in the new estate.
+
+## What you get
+
+- **Every road in OpenStreetMap**, including streets built in the last ten years, with speed limits where OpenStreetMap has them.
+- **Turn-by-turn guidance and voice instructions**, just like the factory maps. The new card uses the same map format, so the car reads it like its own.
+- **Address search** by suburb, street and house number, with suburbs, councils and postcodes from OpenStreetMap.
+- **Points of interest**: about 270,000 fuel stations, shops, cafés, hospitals and more.
+- **Up-to-date data whenever you want it.** OpenStreetMap changes every day. Run OpenLion again any time for a new card.
+
+## Will it work in my car?
+
+OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11–MY16)**, the unit that reads its maps from a full-size SD card in the dash. It has been tested on a card labelled CD_7606 (MY12). Other iQ card versions are checked before anything is built. If yours isn't supported yet, OpenLion says so, saves a report with no map data in it, and helps you send it in so support can be added.
+
+## What you need
+
+- A Windows 10 or 11 PC (64-bit) with **16 GB of memory or more** (32 GB recommended) and **about 6 GB of free disk space**.
+- Your **factory map card**. OpenLion only reads it.
+- A **blank SD card** of 1 to 32 GB, formatted FAT32. A 2 GB card is plenty. Use a full-size card, or a microSD card in a full-size adapter.
+- An internet connection for the map download (about 1 GB).
+- **About 1 to 2 hours.** Most of it is the map build, which runs by itself.
+
+## How it works
+
+1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.0.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
+2. **Read and accept the warning.** OpenLion is unofficial, and you use it at your own risk.
+3. **Insert your factory card.** Set its lock switch first if you can. OpenLion copies it to your PC and checks every file, then checks that it understands your card's map format.
+4. **Get the map data.** OpenLion downloads the latest Australia extract from OpenStreetMap (via Geofabrik) and checks it.
+5. **Build the maps.** This takes an hour or more. You can leave the PC to it; OpenLion keeps it awake.
+6. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
+7. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
+
+If anything isn't right, put your factory card back in. It's exactly as it was.
+
+## Your factory card is protected
+
+OpenLion only ever **reads** the factory card. Before it writes anything, it checks the target card several ways and refuses it if any check fails:
+
+- Is this the factory card you copied (same volume serial)?
+- Does it hold any navigation maps?
+- Is the factory card still in the reader?
+- Is any other card inserted?
+- Is it a removable SD card of a sensible size, formatted FAT32?
+
+It runs these checks again right before writing, in case cards were swapped. The new maps are written to a temporary folder and only become the card's maps once every file has been read back and checked.
+
+## Questions
+
+**Does this replace the factory software?** No. Only the map tables change. Every other file on the new card, including the software, voices and settings, is copied unchanged from your own factory card.
+
+**Is it legal?** OpenLion includes no Holden, GM, Navteq or Continental data. It works only from the card you already own. The new maps are built from OpenStreetMap, which is free to use under the [Open Database License](https://opendatacommons.org/licenses/odbl/).
+
+**Something went wrong. What now?** OpenLion saves a report (with no map data) and shows you how to [open an issue](https://github.com/hyprninja/OpenLion/issues/new/choose). Include your car's model and year and what happened.
+
+**Can I improve the maps?** Yes. Anyone can edit OpenStreetMap at [openstreetmap.org](https://www.openstreetmap.org). Fix your street, and the next card you build will include it.
+
+> **Disclaimer.** OpenLion is an unofficial tool, not made by, affiliated with or endorsed by Holden, General Motors or Continental. It is provided as is, with no warranty. You use it at your own risk: the author is not responsible for damaged or erased cards, a navigation unit that stops working, wrong directions, or anything else. Always follow road signs and the road rules over the navigation.
+>
+> Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL. The Australia extract is provided by [Geofabrik](https://download.geofabrik.de). OpenLion is released under the [MIT License](LICENSE).
+
+---
+
+# Technical documentation
+
+Everything below is for developers and anyone curious about how the iQ's maps work.
+
+The iQ reads its maps from a full-size SD card. The map data turns out to be an unencrypted Siemens VDO / Continental database ("Arriba" data model, format 5.0.5) built from Navteq data. This repo documents that format and has readers and writers for it. The converter writes a new `navigation/` map set from OpenStreetMap and leaves the card's metadata, version files and libraries unchanged.
 
 ## Status
 
@@ -40,16 +120,29 @@ docs/reference/manifest_sha256.tsv   file list + SHA-256 of the MY12 (CD_7606) c
 openlion/    pure-Python (3.9+, standard library only) readers, writers and renderers
 tests/       round-trip, re-tiling, OSM region and card checks against your own card copy
 app/         Windows app (.NET 10, WPF): wizard that copies a factory card, builds maps and writes a blank card
+packaging/   release build: embedded Python + engine + app → MSI (WiX 6)
 ```
 
-The Windows app is in progress. Done: the wizard, drive detection, `CardGuard` (the checks that refuse to write to a factory card), and copying the factory card with every file hash-verified, followed by the compatibility check (`openlion.compat`). If a card isn't supported, the app saves a report zip (no map data) and points the user to the [card report issue form](.github/ISSUE_TEMPLATE/card_report.yml). The app downloads the Australia extract from Geofabrik (resumable, MD5-checked; or the user picks a `.osm.pbf` they already have) and builds the maps with `openlion.make_card`, showing progress per stage. It then writes the maps to a blank FAT32 card: `CardGuard` runs again on a fresh drive list right before writing, the files go to `navigation.partial` and are read back from the card and hash-checked before the folder is renamed, and the card gets the factory card's volume label. A full run (fresh download, 1 h 13 min build, 3 min write) made a card that works in the car. Next: bundling Python and an installer.
+### The Windows app
 
-Build and test with `dotnet test app/OpenLion.slnx`. Settings for development:
+Version 1.0.0 is complete and car-tested. It has the wizard, drive detection, `CardGuard` (the checks that refuse to write to a factory card), and copying the factory card with every file hash-verified, followed by the compatibility check (`openlion.compat`). If a card isn't supported, the app saves a report zip (no map data) and points the user to the [card report issue form](.github/ISSUE_TEMPLATE/card_report.yml). The app downloads the Australia extract from Geofabrik (resumable, MD5-checked; or the user picks a `.osm.pbf` they already have) and builds the maps with `openlion.make_card`, showing progress per stage. It then writes the maps to a blank FAT32 card: `CardGuard` runs again on a fresh drive list right before writing, the files go to `navigation.partial` and are read back from the card and hash-checked before the folder is renamed, and the card gets the factory card's volume label. A full run (fresh download, 1 h 13 min build, peak engine memory 16.6 GB, 3 min write) made a card that works in the car.
+
+The installed app is self-contained: the .NET runtime, an embedded Python 3.12 with `osmium`, and the engine (`openlion/`, the `tests/` checks and the reference manifest) all sit in its folder. Nothing else needs to be installed.
+
+To build the MSI (needs the .NET 10 SDK, WiX 6 and any Python with pip):
+
+```powershell
+dotnet tool install -g wix --version 6.0.2
+wix extension add -g WixToolset.UI.wixext/6.0.2
+pwsh packaging/build-release.ps1 -Version 1.0.0     # → dist/OpenLion-1.0.0.msi (+ .sha256)
+```
+
+Build and test the app with `dotnet test app/OpenLion.slnx`. Settings for development:
 
 | Variable | Effect |
 |---|---|
 | `OPENLION_HOME` | Keep the app's working files here instead of `%LOCALAPPDATA%\OpenLion` |
-| `OPENLION_PYTHON`, `OPENLION_ENGINE` | Python with `osmium` installed, and the folder holding `openlion/` (until Python is bundled) |
+| `OPENLION_PYTHON`, `OPENLION_ENGINE` | Python with `osmium` installed, and the folder holding `openlion/` (used when there's no bundled engine next to the app) |
 | `OPENLION_BBOX` | Build only this area, e.g. `148.76 -35.92 149.40 -35.12` (Canberra), for quick test builds; the app marks the result as a test build |
 | `OPENLION_FACTORY_NAV` | A factory `navigation/` copy, to run the full compatibility test |
 
@@ -93,7 +186,7 @@ python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card2/
 
 ## Legal and data policy
 
-- **No factory map data is in this repo**: no card contents, no decoded tables, no renders of factory data, no junction-view artwork. The Whereis/Navteq/Holden map data and GM/Continental software are proprietary. Work from your own card.
+- **No factory map data is in this repo**: no card contents, no decoded tables, no renders made from factory data, no junction-view artwork. (The "before" picture is a photo of the car's own screen.) The Whereis/Navteq/Holden map data and GM/Continental software are proprietary. Work from your own card.
 - Format documentation and tools are original work.
 - Maps built from OpenStreetMap are © OpenStreetMap contributors and must be distributed under the **ODbL**, with attribution.
 
