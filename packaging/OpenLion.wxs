@@ -4,7 +4,9 @@
        user into %LOCALAPPDATA%\Programs\OpenLion without needing administrator rights. -->
   <Package Name="OpenLion" Manufacturer="OpenLion" Version="$(var.Version)"
            UpgradeCode="{6F1D3C52-8E0B-4E3A-9C1B-0A57E1D4C0B1}" Scope="perUserOrMachine" Compressed="yes">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of OpenLion is already installed." />
+    <!-- Same-version upgrades too: every build has a new product code, and two builds of
+         one version must not end up installed side by side in the same folder. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of OpenLion is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Icon Id="OpenLion.ico" SourceFile="..\app\src\OpenLion\Assets\OpenLion.ico" />
