@@ -35,7 +35,7 @@ OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11â€
 ## What you need
 
 - A Windows 10 or 11 PC (64-bit) with **8 GB of memory or more** and **about 6 GB of free disk space**. More memory and cores make the build faster.
-- Your **factory map card**. OpenLion only reads it.
+- Your **factory map card**. OpenLion only reads it. Instructions for removing the SD card can be found [here](https://www.autoinstruct.com.au/manufacturer/holden/ve-commodore/holden-iq-navigation-upgrade/).
 - A **blank SD card** of 1 to 32 GB, formatted FAT32. A 2 GB card is plenty. Use a full-size card, or a microSD card in a full-size adapter.
 - An internet connection for the map download (about 1 GB).
 - **About half an hour to 2 hours**, depending on the PC. Most of it is the map build, which runs by itself.
