@@ -16,9 +16,16 @@ public enum BuildPhase { Ready, Building, Done, Failed, Cancelled, Blocked }
 /// copy into a finished, checked navigation/ folder.</summary>
 public sealed class BuildMapsStep : StepViewModel
 {
-    /// <summary>Free space the engine needs: cached OSM reads (~1.7 GB), new tables and the card folder.</summary>
-    const long NeededBytes = 3_500_000_000;
-    const long RecommendedMemory = 32L << 30;
+    /// <summary>Free space the engine needs: cached OSM reads (~1.3 GB), new tables, the card folder and,
+    /// on PCs short of memory, osmium's node-location file for one read at a time (up to ~2.2 GB).</summary>
+    const long NeededBytes = 6_000_000_000;
+    /// <summary>The engine's memory-saving plan fits in about 4 GB (report 20), so an 8 GB PC works.</summary>
+    const long MinimumMemory = 8L << 30;
+    /// <summary>From about here the engine runs reads and map stages side by side (resources.py).</summary>
+    const long FastMemory = 16L << 30;
+
+    static long Memory => GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+    static bool FastPc => Memory >= FastMemory && Environment.ProcessorCount >= 8;
 
     readonly Session _session;
     readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -125,12 +132,15 @@ public sealed class BuildMapsStep : StepViewModel
 
     string Places => MapCountry.Describe(_session.Countries);
 
-    /// <summary>Rough build time, by extract size (all of Australia, ~1 GB, takes about an hour).</summary>
+    /// <summary>Rough build time, by extract size and PC (Australia + New Zealand, 1.4 GB of extracts:
+    /// 25 minutes on a 44-thread PC with 64 GB, about an hour and a half in the memory-saving plan).</summary>
     string Duration
     {
         get
         {
             var gb = (_session.Osm ?? []).Sum(e => e.Bytes) / 1e9;
+            if (FastPc)
+                return gb < 0.6 ? "10 to 15 minutes" : "half an hour or so";
             return gb < 0.6 ? "about half an hour" : gb < 1.2 ? "about an hour" : "an hour and a half or so";
         }
     }
@@ -146,10 +156,14 @@ public sealed class BuildMapsStep : StepViewModel
                 notes.Add($"Only {free / 1e9:N1} GB free on {root.TrimEnd('\\')}; the build needs about {NeededBytes / 1e9:N1} GB.");
         }
         catch (Exception e) when (e is IOException or ArgumentException) { }
-        var mem = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
-        if (mem < RecommendedMemory)
-            notes.Add($"This PC has {mem / (double)(1L << 30):N0} GB of memory. The build has only been tested on a PC " +
-                      "with 64 GB and may run out of memory with less than 32 GB. Close other programs before you start.");
+        var mem = Memory;
+        var gbMem = mem / (double)(1L << 30);
+        if (mem < MinimumMemory - (512L << 20))     // "8 GB" PCs report a little under 8
+            notes.Add($"This PC has {gbMem:N0} GB of memory. OpenLion needs about 8 GB; with less, the build may be " +
+                      "very slow or run out of memory. Close other programs before you start.");
+        else if (mem < FastMemory)
+            notes.Add($"This PC has {gbMem:N0} GB of memory, so OpenLion builds in its memory-saving mode: one step " +
+                      "at a time, which takes longer. Close other programs before you start.");
         if (MapBuild.BboxFromEnvironment() is { } b)
             notes.Add($"OPENLION_BBOX is set: only the test area {string.Join(" ", b)} will be built.");
         return string.Join(Environment.NewLine + Environment.NewLine, notes);

@@ -9,9 +9,58 @@ Conventions (all verified on the factory database, see report 11):
 - Turn restriction = start segment + the junction it enters (one of its ends) +
   the arm index taken at each successive junction.
 """
+import array
 import collections
 
 from . import mapfile, mapwrite
+
+
+class Shape:
+    """A segment's intermediate points as one flat x/y array (8 bytes per point).
+    Reads like the list of (x, y) tuples it stands for: len, indexing (negative
+    too), iteration, truthiness."""
+    __slots__ = ("xy",)
+
+    def __init__(self, points):
+        if isinstance(points, array.array):
+            self.xy = points
+        else:
+            self.xy = array.array("i", [v for p in points for v in p])
+
+    def __len__(self):
+        return len(self.xy) >> 1
+
+    def __getitem__(self, k):
+        n = len(self.xy) >> 1
+        if k < 0:
+            k += n
+        if not 0 <= k < n:
+            raise IndexError(k)
+        return self.xy[2 * k], self.xy[2 * k + 1]
+
+    def __iter__(self):
+        xy = self.xy
+        return zip(xy[0::2], xy[1::2])
+
+    def __eq__(self, other):
+        return list(self) == list(other)
+
+    def __reduce__(self):
+        return Shape, (self.xy,)
+
+
+_SHARED = {}
+
+
+def shared(value):
+    """One shared object per distinct value: node info dicts, speed dicts and mask
+    tuples repeat millions of times in a country-sized graph. Callers must treat the
+    result as read-only (copy before changing). Unhashable values are returned as-is."""
+    try:
+        key = (type(value), tuple(sorted(value.items())) if isinstance(value, dict) else value)
+        return _SHARED.setdefault(key, value)
+    except TypeError:
+        return value
 
 
 class Graph:
@@ -30,9 +79,10 @@ class Graph:
         self.turns = []          # dict: seg, via (node id), arms, direction, unused_arms
 
     def add_node(self, xy, info=None):
+        """info is stored as given (shared() dicts are fine); treat node_info as read-only."""
         self.node_xy.append(tuple(xy))
         self.node_arms.append([])
-        self.node_info.append(info or {})
+        self.node_info.append(info if info is not None else shared({}))
         return len(self.node_xy) - 1
 
     def add_segment(self, a, b, length_ft, seginfo, restr=None, shape=None, names=(), adas=None):
@@ -44,7 +94,7 @@ class Graph:
         self.seg_info.append(seginfo)
         self.seg_restr.append(restr)
         self.seg_shape.append(shape)
-        self.seg_names.append(list(names))
+        self.seg_names.append(list(names) if names else ())   # replaced, never appended to
         self.seg_adas.append(adas)
         return len(self.seg_a) - 1
 

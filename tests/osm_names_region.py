@@ -65,7 +65,7 @@ if __name__ == "__main__":
     g, si, st0 = osm_import.build_graph(c)
     rank = layers.node_ranks(g, si)
     for n in range(g.n_nodes):
-        g.node_info[n]["rank"] = rank[n]
+        g.node_info[n] = graph.shared({**g.node_info[n], "rank": rank[n]})
     bcache = os.path.join(out, "boundaries.pickle")
     t = time.time()
     if os.path.exists(bcache):

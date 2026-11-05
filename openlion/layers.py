@@ -6,7 +6,7 @@ and keep all their arms in the same order; the far end of a stub that is not a c
 node becomes a dangling end (written as a border point). Node rank = the highest
 layer in which the node is a core node. Shapes, names and speeds are dropped.
 """
-from .graph import Graph
+from .graph import Graph, shared
 
 
 def node_ranks(g, si_records):
@@ -33,9 +33,7 @@ def derive(g, k, si_records, turn_filter="all_segments_in_layer"):
 
     def node(n):
         if n not in nmap:
-            info = dict(g.node_info[n]) if core_node[n] else {"dangling": True}
-            if core_node[n]:
-                info["rank"] = rank[n]
+            info = shared({**g.node_info[n], "rank": rank[n]}) if core_node[n] else shared({"dangling": True})
             nmap[n] = out.add_node(g.node_xy[n], info)
         return nmap[n]
 
