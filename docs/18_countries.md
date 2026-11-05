@@ -41,7 +41,44 @@ Each road segment carries its extract's country (`g.seg_country`, from the priva
 
 ## Results
 
-RESULTS
+### New Zealand only (`new-zealand-261103.osm.pbf`, 406 MB)
+
+| | Factory 2010 (NZ part) | OSM 2026 |
+|---|---|---|
+| road segments | – | 523,342 (41% with a speed limit) |
+| road records | 76,375 | 98,454 |
+| cities (localities) | 1,672 | 5,649, of which 1,052 suburbs listed under a town |
+| counties (councils) | 66 | 66 |
+| POIs | 44,274 | 64,250 |
+
+OSM has more localities than the factory because hamlets and rural localities are points of their own; every street still lands in exactly one. Make_card: 22 min with nothing cached (roads 1 min, names 1.5 min, background 13 min, POIs 2 min), card 238 MB. `card_check`: 0 problems; Auckland / Queen Street, Wellington / Lambton Quay, Christchurch / Colombo Street, Hamilton / Victoria Street, Dunedin / George Street and "PONSONBY, AUCKLAND" / Ponsonby Road all resolve.
+
+The first full run found three things the Hamilton test area didn't:
+
+1. **Christchurch twice.** OSM has a Christchurch city area and a city point. The point lies inside the "Christchurch Central" suburb area, so the reader's same-name check (first area found) missed it; both became "CHRISTCHURCH (CANTERBURY)". Fixed in `osm_names.dedupe_places` (a point within 5 km of a same-name area, or an area inside a bigger same-name area, is dropped), and place areas nest, so a street goes to the smallest one containing it (`AreaIndex.find_smallest`).
+2. **Background parcels over the factory maximum.** Three parcels (Hauraki Gulf, Bay of Islands, Marlborough Sounds) were up to 168 KB raw, over the 116 KB the factory header promises, because sea, land and bays are never dropped and those parcels hold 42–45 detailed bays. `fit_budget` now lets bays go, smallest first, when a parcel is still too big without its optional features. Largest parcel now 109,998 B. Australia never reaches this branch, so its output is unchanged.
+3. **16 POIs beyond the road map** (Fiordland and Stewart Island huts and tracks). POIs are now kept within 10 km of the road map's extent, the rule `card_check` applies.
+
+### Australia regression
+
+The Canberra test area (148.9–149.4°E, 35.1–35.5°S) built with 1.0 and with this version: the same cities (152, 121 Canberra suburbs), road records (9,335, same names and boxes), segment-to-road links, routing layers, background, county table and POIs (4,522). Road records are now written in city-table order, so record offsets differ. The only content change is the catch-all UNKNOWN LOCALITY city, whose box now covers just its own streets instead of the whole map.
+
+### Australia and New Zealand (`australia-latest` 973 MB + `new-zealand-261103` 406 MB)
+
+| | Factory 2010 (AU + NZ) | OSM 2026 |
+|---|---|---|
+| road segments | – | 3,746,653 (35% with a speed limit) |
+| road records | 624,756 | 706,694 |
+| cities | – | 21,196 (15,547 AU, 5,649 NZ) |
+| city list entries | 25,244 | 48,512 |
+| counties | – | 667 |
+| POIs | – | 334,207 |
+| `auz.mp0` | 82.7 MB | 126.5 MB, 11,135 parcels |
+| `auz.fea` | 55.6 MB | 268.8 MB, largest raw parcel 110,000 B |
+
+Make_card: 98 min with nothing cached (roads 8 min, names 10 min, background 55 min, POIs 20 min); card 646 MB, 2,225 files (the 1.0 Australia card was 571 MB). Peak memory wasn't measured on this run. `card_check`: 0 problems, and all nine Australian and six New Zealand lookups resolve, each in its own catalog. The NZ figures match the NZ-only build exactly.
+
+Six Australian `admin_level=4` areas have no factory state (Christmas Island, Cocos (Keeling) Islands, Ashmore and Cartier, Coral Sea Islands, Norfolk Island, Jervis Bay Territory). Their streets go to the first Australian state, as in 1.0; the new counter only makes this visible.
 
 ## App
 
