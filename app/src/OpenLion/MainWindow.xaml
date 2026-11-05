@@ -324,15 +324,62 @@
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top">
                     <TextBlock Style="{StaticResource H1}" Text="Write the new card"/>
-                    <TextBlock Style="{StaticResource Body}">
-                        Remove the factory card and put it somewhere safe. Then insert a blank SD card.
-                        OpenLion checks every drive and only writes to one that is clearly a spare card.
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="Waiting for a blank card…"
-                               Visibility="{Binding NoneFound, Converter={StaticResource BoolToVis}}"/>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding BuildText}" FontWeight="SemiBold"/>
+                    <StackPanel Visibility="{Binding IsChoosing, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Body}">
+                            Remove the factory card and put it somewhere safe. Then insert a blank FAT32 SD card.
+                            OpenLion checks every drive and only writes to one that is clearly a spare card. Click the card to choose it.
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="Waiting for a blank card…"
+                                   Visibility="{Binding NoneFound, Converter={StaticResource BoolToVis}}"/>
+                    </StackPanel>
                 </StackPanel>
-                <ItemsControl ItemsSource="{Binding Targets}">
-                    <ItemsControl.ItemTemplate>
+
+                <!-- Confirm and write -->
+                <StackPanel DockPanel.Dock="Bottom" Visibility="{Binding IsChoosing, Converter={StaticResource BoolToVis}}">
+                    <StackPanel Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}" Margin="0,6,0,0">
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding ConfirmPrompt}" FontWeight="SemiBold"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox Text="{Binding ConfirmLetter, UpdateSourceTrigger=PropertyChanged}" Width="60"
+                                     FontSize="16" Padding="4,2" MaxLength="2" VerticalContentAlignment="Center"/>
+                            <Button Content="Write card" Command="{Binding WriteCommand}" Margin="10,0,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Writing / done / failed -->
+                <StackPanel DockPanel.Dock="Bottom" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"/>
+                    <ProgressBar Height="10" Value="{Binding Percent, Mode=OneWay}" Maximum="100" Margin="0,0,0,8"/>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                    <TextBlock Style="{StaticResource Body}" Text="Don't remove the card until this finishes."/>
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" HorizontalAlignment="Left"/>
+                </StackPanel>
+                <Border DockPanel.Dock="Bottom" Style="{StaticResource Card}" BorderBrush="{StaticResource Good}" BorderThickness="2"
+                        Visibility="{Binding IsDone, Converter={StaticResource BoolToVis}}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold" Foreground="{StaticResource Good}"/>
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                        <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold" Text="Next:"/>
+                        <TextBlock Style="{StaticResource Body}" Margin="16,0,0,0">
+                            1. Eject the card in File Explorer (right-click it, Eject) before pulling it out.<LineBreak/>
+                            2. With the car switched off, put the new card in the nav slot. Then start the car and wait for the map.<LineBreak/>
+                            3. Check a street built after 2010, plan a route and try an address search.<LineBreak/>
+                            4. If anything is wrong, put the factory card back: it's unchanged.
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+                <StackPanel DockPanel.Dock="Bottom" Visibility="{Binding IsFailed, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Error}" FontWeight="SemiBold" Foreground="{StaticResource Accent}"/>
+                    <Button Content="Try again" Command="{Binding AgainCommand}" HorizontalAlignment="Left"/>
+                </StackPanel>
+
+                <ListBox ItemsSource="{Binding Targets}" SelectedItem="{Binding Selected}" BorderThickness="0"
+                         Background="Transparent" HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         IsEnabled="{Binding IsChoosing}"
+                         Visibility="{Binding IsChoosing, Converter={StaticResource BoolToVis}}">
+                    <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
@@ -359,8 +406,8 @@
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                    </ListBox.ItemTemplate>
+                </ListBox>
             </DockPanel>
         </DataTemplate>
     </Window.Resources>

@@ -124,39 +124,20 @@ public sealed class FactoryCardStep : StepViewModel
     }
 }
 
-public sealed record TargetCandidate(GuardResult Guard)
+public sealed record TargetCandidate(GuardResult Guard, bool WrittenByOpenLion)
 {
-    public string Heading => Guard.Target.ToString();
+    public string Heading => Guard.Target.ToString() + (Guard.Target.FileSystem.Length > 0 ? "  " + Guard.Target.FileSystem : "");
     public bool Allowed => Guard.Allowed;
-    public string Verdict => Guard.Allowed ? "OK to write" : "Will not write to this drive";
+    public string Verdict => !Guard.Allowed ? "Will not write to this drive" :
+        WrittenByOpenLion ? "OK to write: an OpenLion card, its old maps will be replaced" : "OK to write";
     public IEnumerable<string> Reasons => Guard.Findings.Select(f => f.Message);
-}
+    public string Letter => Guard.Target.Root[..1].ToUpperInvariant();
 
-public sealed class WriteCardStep : StepViewModel
-{
-    readonly Session _session;
-    readonly DrivePoller _poller = new();
+    /// <summary>Everything shown for a drive; equal keys mean nothing on screen would change.</summary>
+    public static string Key(TargetCandidate t) =>
+        $"{t.Guard.Target}|{t.Guard.Target.VolumeSerial:X8}|{t.Guard.Target.FileSystem}|{t.Guard.Target.RootEntryCount}|" +
+        $"{t.WrittenByOpenLion}|{t.Allowed}|{string.Join("|", t.Reasons)}";
 
-    public ObservableCollection<TargetCandidate> Targets { get; } = [];
-    public bool NoneFound => Targets.Count == 0;
-    public override bool CanGoNext => false;
-
-    public WriteCardStep(Session session) : base("Write new card")
-    {
-        _session = session;
-        _poller.Updated += Refresh;
-    }
-
-    void Refresh(IReadOnlyList<DriveSnapshot> drives)
-    {
-        Targets.Clear();
-        // Every removable drive is shown with the guard's verdict, so the user sees why a card is refused.
-        foreach (var d in drives.Where(d => d.IsRemovable || d.HasNavigationFolder))
-            Targets.Add(new TargetCandidate(CardGuard.CheckTarget(d, drives.ToList(), _session.FactoryRecord,
-                _session.RequiredBytes, _session.GuardOptions)));
-        Raise(nameof(NoneFound));
-    }
-
-    public override void OnEnter() => _poller.Start();
-    public override void OnLeave() => _poller.Stop();
+    // Screen readers and UI Automation read the item's name from this.
+    public override string ToString() => $"{Heading}: {Verdict}";
 }
