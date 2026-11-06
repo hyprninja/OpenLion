@@ -8,6 +8,7 @@ public static partial class CardNames
 {
     static readonly Dictionary<string, string> ModelYears = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["CD_7172"] = "MY10",
         ["CD_7597"] = "MY12",
         ["CD_8217"] = "MY15",
         ["CD_8418"] = "MY17",

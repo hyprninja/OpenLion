@@ -75,16 +75,19 @@ class Parcel:
     def __init__(self, raw: bytes):
         self.r = raw
         self.schema = schema.for_parcel(raw)
+        self.compact = self.schema.compact      # MY10: varint lists, see schema.py
         L = parcel_lists(raw)
         self.offs = {n: (L[n + "_list"], L[n + "_cnt"]) for n in OFFS_NAMES}
         self.offs["shape"] = (L["shape_list"], L["shape_cnt"])
         self.shape_size = L["shape_size"]
         self.offs["turn_res"] = (L["turn_res_list"], L["turn_res_cnt"])
+        self._segs = None
 
     def positions(self, which="pos"):
-        """One or more blocks, each: u16 n, i32 lon, i32 lat, n x (i16 dlon, i16 dlat).
-        Deltas are cumulative from the block's anchor. Blocks repeat until
-        `cnt` points have been read."""
+        """One or more blocks, each: u16 n, i32 lon, i32 lat, n x (i16 dlon, i16 dlat)
+        (compact: n x mapwrite.read_pair). Deltas are cumulative from the block's
+        anchor. Blocks repeat until `cnt` points have been read."""
+        from .mapwrite import read_pair
         off, cnt = self.offs[which]
         pts = []
         while len(pts) < cnt:
@@ -92,8 +95,11 @@ class Parcel:
             off += 10
             pts.append((x, y))
             for i in range(n):
-                a, b = struct.unpack_from("<hh", self.r, off)
-                off += 4
+                if self.compact:
+                    (a, b), off = read_pair(self.r, off)
+                else:
+                    a, b = struct.unpack_from("<hh", self.r, off)
+                    off += 4
                 x += a
                 y += b
                 pts.append((x, y))
@@ -109,13 +115,26 @@ class Parcel:
                     u8 nodeinfo3, 8 x u16 slot
         First `count` slots are the arms: seg index = low 12 bits, top 4 = flags.
         hands bit k = 1 when the node is arm k's higher-index ("right") end.
-        The continuation index is returned as {"continuation": True}."""
+        The continuation index is returned as {"continuation": True}.
+        Compact (MY10): the same header bytes, then `count` varint slots."""
+        from .mapwrite import read_uv
         off, cnt = self.offs["node"]
         out = []
         while len(out) < cnt:
             b = self.r[off]
             c = b & 15
-            if c < 5:
+            if self.compact:
+                if c < 5:
+                    info, hands, long_ = self.r[off + 1:off + 2], b >> 4, False
+                    off += 2
+                else:
+                    info, hands, long_ = self.r[off + 2:off + 4], self.r[off + 1], True
+                    off += 4
+                slots = []
+                for _ in range(c):
+                    v, off = read_uv(self.r, off)
+                    slots.append(v)
+            elif c < 5:
                 slots = struct.unpack_from("<4H", self.r, off + 2)[:c]
                 info, hands, long_ = self.r[off + 1:off + 2], b >> 4, False
                 off += 10
@@ -158,9 +177,26 @@ class Parcel:
     def segments(self):
         """seginfo0 bits (LSB first): marker_left, marker_right, turn_restr,
         ext_count:2, seginfoID:3; then ext bytes, [restr_left, restr_right],
-        [left_node u16], [right_node u16], i32 length (feet)."""
+        [left_node u16], [right_node u16], i32 length (feet).
+        Compact (MY10): see mapwrite.decode_segments; mp0 records carry "shape" and
+        "names" too."""
         off, cnt = self.offs["seg"]
         r = self.r
+        if self.compact:
+            from .mapwrite import decode_segments
+            end = self.offs["attr"][0]
+            try:
+                segs = decode_segments(r[off:end], cnt, self.shape_size != 0, compact=True)
+                self._seg_end = end
+            except (ValueError, IndexError):
+                segs, self._seg_end = [], -1       # framing check fails
+            out = [{"seginfoID": s["seginfo"] & 7,
+                    "ext": [(s["seginfo"] >> (3 + 8 * j)) & 0xFF for j in range(s["ext_count"])],
+                    "restr": s["restr"], "left_node": s["left_node"], "right_node": s["right_node"],
+                    "length_ft": s["length_ft"], "shape": s.get("shape"), "names": s.get("names")}
+                   for s in segs]
+            self._segs = out
+            return out
         out = []
         for _ in range(cnt):
             b = r[off]
@@ -198,6 +234,9 @@ class Parcel:
         off, cnt = self.offs["shape"]
         if not cnt:
             return []
+        if self.compact:
+            segs = self._segs if self._segs is not None else self.segments()
+            return [s["shape"] for s in segs[:cnt]]
         offs = struct.unpack_from(f"<{cnt + 1}H", self.r, off)
         return [[struct.unpack_from("<hh", self.r, off + a + 4 * j) for j in range((b - a) // 4)]
                 for a, b in zip(offs, offs[1:])]
@@ -206,8 +245,16 @@ class Parcel:
         """abs_addr {u16 seg, u8 nameinfo, u32 roadID} (7 bytes),
         short_addr  + {u8 addrinfo, u8 delta, u16 base} (11 bytes),
         long_addr   + {u8 addrinfo, u8 msb_base, u16 lsw_base, u16 delta} (13 bytes).
-        roadID = byte offset into auz.rd, relative to the end of its 0x5E header."""
+        roadID = byte offset into auz.rd, relative to the end of its 0x5E header.
+        Compact (MY10): links live in the mp0 segment records and have no nameinfo."""
         out = []
+        if self.compact:
+            segs = self._segs if self._segs is not None else self.segments()
+            for i, s in enumerate(segs):
+                for kind, road, rng in s["names"] or ():
+                    out.append({"seg": i, "nameinfo": 0, "road_off": road + 0x5E,
+                                "kind": kind, "range": rng})
+            return out
         for name, size in (("abs_addr", 7), ("short_addr", 11), ("long_addr", 13)):
             off, cnt = self.offs[name]
             for i in range(cnt):

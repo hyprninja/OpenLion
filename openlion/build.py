@@ -46,15 +46,17 @@ def build(src, dst, replacements):
     if os.path.abspath(dst).startswith(os.path.abspath(src)):
         raise ValueError("destination must not be inside the source")
     report = {"copied": 0, "replaced": [], "verify_failed": []}
+    # match paths case-insensitively and keep the card's own spelling (MY10: edb/poi)
+    by_lower = {k.lower(): v for k, v in replacements.items()}
     for dp, _, files in os.walk(src):
         for fn in files:
             s = os.path.join(dp, fn)
             rel = os.path.relpath(s, src).replace(os.sep, "/")
             d = os.path.join(dst, rel)
             os.makedirs(os.path.dirname(d), exist_ok=True)
-            if rel in replacements:
+            if rel.lower() in by_lower:
                 with open(d, "wb") as f:
-                    f.write(replacements[rel])
+                    f.write(by_lower[rel.lower()])
                 shutil.copystat(s, d)  # keep factory timestamps
                 report["replaced"].append(rel)
             else:
@@ -62,6 +64,9 @@ def build(src, dst, replacements):
                 report["copied"] += 1
                 if sha256(s) != sha256(d):
                     report["verify_failed"].append(rel)
+    unused = set(by_lower) - {r.lower() for r in report["replaced"]}
+    if unused:
+        raise ValueError(f"no factory file to replace for: {sorted(unused)}")
     return report
 
 
@@ -89,15 +94,8 @@ def identity_replacements(src):
         zipped, sizes = [], []
         for i in range(m.pcl_cnt):
             pc = mapwrite.ParcelContainer.decode(m.parcel(i))
-            for lname, cname, dec, enc in (
-                    ("pos_list", "pos_cnt", lambda b, c: mapwrite.decode_positions(b), mapwrite.encode_positions),
-                    ("exc_pos_list", "exc_pos_cnt", lambda b, c: mapwrite.decode_positions(b), mapwrite.encode_positions),
-                    ("node_list", "node_cnt", mapwrite.decode_nodes, mapwrite.encode_nodes),
-                    ("seg_list", "seg_cnt", mapwrite.decode_segments, mapwrite.encode_segments),
-                    ("shape_list", "shape_cnt", mapwrite.decode_shapes, mapwrite.encode_shapes),
-                    ("adas_list", "adas_cnt", mapwrite.decode_adas, mapwrite.encode_adas),
-                    ("turn_res_list", "turn_res_cnt", lambda b, c: mapwrite.decode_turn_res(b), mapwrite.encode_turn_res)):
-                pc.set(lname, enc(dec(pc.get(lname), pc.fields[pc.idx(cname)])))
+            for lname, cname, dec, enc in mapwrite.LIST_CODECS:
+                pc.set(lname, enc(dec(pc.get(lname), pc.fields[pc.idx(cname)], pc)))
             new = pc.encode()
             zipped.append(mapwrite.compress_parcel(new))
             sizes.append(len(new))
