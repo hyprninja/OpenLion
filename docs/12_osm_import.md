@@ -28,7 +28,9 @@ Date: 2026-11-04. Code: `openlion/osm_import.py`. Test: `tests/osm_region.py`. N
    | busway | 0 | 8 |
    | *_link | one below the road it serves | 6 ramp |
 
-   Ranks are calibrated against the factory data over inner Melbourne. Factory km per rank 4/3/2/1 = 19/49/196/68; OSM motorway/trunk/primary+secondary/tertiary = 35/41/210/145. Also: `restclass = 3` for unsealed surfaces and tracks; `toll_road` from `toll=yes`; `urban`/`detailedcity` for residential/service roads and roads ≤ 60 km/h; `dbldig` for one-way motorway/trunk/primary carriageways.
+   Ranks are calibrated against the factory data over inner Melbourne. Factory km per rank 4/3/2/1 = 19/49/196/68; OSM motorway/trunk/primary+secondary/tertiary = 35/41/210/145. Also: `restclass = 3` for unsealed surfaces and tracks; `toll_road` from `toll=yes`; `urban`/`detailedcity` for residential/service roads and roads ≤ 60 km/h; `dbldig` for one-way motorway/trunk/primary carriageways; `landmark = 2` for `junction=roundabout` (see below).
+
+   **Roundabouts.** The factory data marks roundabout segments with `landmark = 2`. Checked over Canberra: of 1,780 factory segments lying along OSM `junction=roundabout` ways, 77% have `landmark = 2`, against 0% of the other 25,112 segments (the rest of the 1,780 are approach roads caught by the loose position match). Before this was set, OpenLion cards had no roundabouts as far as the unit could tell: going straight through one was announced as "turn left, then turn left".
 5. **Length** in feet along the polyline (haversine).
 6. **Arms** at each node: clockwise by the bearing of the first step away, starting nearest north.
 7. **Masks** (`restr_left/right`): at every node with ≥ 2 arms, forbid the U-turn and any exit onto a one-way against its direction. Same pattern as the factory data.

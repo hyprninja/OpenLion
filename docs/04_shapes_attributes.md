@@ -44,7 +44,7 @@ Index into the table: `seginfoID (3 bits) | ext1 << 3 | ext2 << 11`. That's 2,63
 | 12–13 | tollbooth_direction | |
 | 14 | hwy_complex | |
 | 19–21 | restclass | |
-| 22–24 | landmark | |
+| 22–24 | landmark | 2 = roundabout (77% of segments on Canberra roundabouts, 0% elsewhere); 5 seen on ~6% of other roads, meaning unknown |
 | 25 | dbldig | |
 | 26 | detailedcity | |
 | 27 | urban | CBD 1, rural Victoria 0 |
