@@ -54,6 +54,6 @@ The render (`openlion.render` on the new mp0 + .si) closely matches the factory 
 
 - **Street names** and the address search (`.rd`, `.str`, cities, speller trees) for OSM data: needs suburb polygons and the city model (report 10).
 - Signposts (`destination`, `junction:ref`), lanes (`lanes`, `turn:lanes`), POIs, `.fea` background (water, parks, rail).
-- ~~Speed defaults where OSM has no `maxspeed`~~: decided 2026-11-05 not to add any. Limits come only from OSM tags.
+- ~~Speed defaults where OSM has no `maxspeed`~~: decided 2026-11-05 not to add any. Limits come from OSM tags, plus (optionally) government speed zone registers where OSM has none: see [21](21_gov_speed_zones.md).
 - Long ways crossing many parcels are fine. Nodes with more than 8 arms are counted but not split yet.
 - A full-Australia run (done in report 15).

@@ -36,8 +36,10 @@ public sealed record BuildResult
 /// <param name="WorkFolder">Engine working folder (cached OSM reads, new tables).</param>
 /// <param name="OutputNavigation">navigation/ folder to create.</param>
 /// <param name="Bbox">Optional area (lon0 lat0 lon1 lat1) for quick test builds.</param>
+/// <param name="SpeedZones">Prepared government speed zone files: limits for roads OSM has none for.</param>
 public sealed record BuildRequest(IReadOnlyList<(string Country, string Path)> Extracts, string FactoryNavigation,
-    string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null)
+    string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null,
+    IReadOnlyList<string>? SpeedZones = null)
 {
     /// <summary>One Australian extract (OpenLion 1.0).</summary>
     public BuildRequest(string pbf, string factoryNavigation, string? manifest, string workFolder,
@@ -79,6 +81,8 @@ public static class MapBuild
             args.AddRange(["--manifest", req.Manifest]);
         if (req.Bbox is { Length: 4 } b)
             args.AddRange(["--bbox", .. b.Select(x => x.ToString(CultureInfo.InvariantCulture))]);
+        foreach (var z in req.SpeedZones ?? [])
+            args.AddRange(["--speed-zones", z]);
         return args;
     }
 

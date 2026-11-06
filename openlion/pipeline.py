@@ -23,7 +23,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import (countries, flat, graph, layers, mapfile, memory, osm_fea, osm_import,  # noqa: E402
+from openlion import (countries, flat, gov_speed, graph, layers, mapfile, memory, osm_fea, osm_import,  # noqa: E402
                       osm_names, osm_poi, resources, roads, schema, search, tiler)
 from openlion.common import DamagedTable, build_header  # noqa: E402
 
@@ -116,8 +116,9 @@ def inputs_of(pbf):
     return sorted(out, key=lambda cp: cp[0].catalog)
 
 
-def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None):
+def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed_zones=()):
     """pbf: one Australian extract, or [(Country, path)] (see inputs_of).
+    speed_zones: government speed zone files (gov_speed.py) that fill in limits OSM lacks.
     stage: optional callback, called with a name from STAGES as each stage starts.
     memory_mode: "low", "high" or None (decide from free RAM; see resources.py)."""
     os.makedirs(os.path.join(out, "db"), exist_ok=True)
@@ -137,7 +138,7 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None):
             app_stage(name)
 
     try:
-        return _run(pbf, db, out, bbox, lookups, stage, region, plan)
+        return _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones)
     finally:
         sampler.stop()
         log("peak memory per step: " + ", ".join(f"{k} {memory.gb(v)}" for k, v in sampler.peaks().items()))
@@ -218,8 +219,9 @@ def _remove(path, tries=20):
 class _Ctx:
     """What a stage process needs to know (picklable)."""
 
-    def __init__(self, inputs, db, out, region, plan, lookups):
+    def __init__(self, inputs, db, out, region, plan, lookups, speed_zones=()):
         self.inputs = [(cn.code, p) for cn, p in inputs]
+        self.speed_zones = list(speed_zones)
         self.db, self.out, self.region, self.plan, self.lookups = db, out, region, plan, list(lookups)
         self.poi_box = None      # set from the roads stage's message before the POI stage starts
 
@@ -297,8 +299,17 @@ def _roads_stage(ctx, stage, q):
     stage("roads")
     c = osm_import.merge([(cn.catalog, col) for cn, col in ctx.per_country("roads2")])
     log(f"roads: {len(c.ways):,} ways, {len(c.restrictions):,} restriction relations")
+    fill = None
+    if ctx.speed_zones:
+        stage("speed_zones")
+        zones = [gov_speed.load(p, ctx.out) for p in ctx.speed_zones]
+        log("speed zones: " + ", ".join(f"{os.path.basename(p)} ({len(z.speeds):,} lines)"
+                                        for p, z in zip(ctx.speed_zones, zones)))
+        fill = gov_speed.first_of(zones)
     stage("graph")
-    g, si, st = osm_import.build_graph(c, consume=True)
+    g, si, st = osm_import.build_graph(c, consume=True, speed_fill=fill)
+    del fill
+    zones = None
     del c
     gc.collect()
     # POIs only need the road map's extent: within 10 km of it (card_check's rule), so
@@ -420,11 +431,11 @@ def _pois_stage(ctx, stage, q):
     log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM)")
 
 
-def _run(pbf, db, out, bbox, lookups, stage, region, plan):
+def _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones=()):
     import multiprocessing as mp
     inputs = inputs_of(pbf)
     log("countries: " + ", ".join(f"{c.title} ({os.path.basename(p)})" for c, p in inputs))
-    ctx = _Ctx(inputs, db, out, region, plan, lookups)
+    ctx = _Ctx(inputs, db, out, region, plan, lookups, speed_zones)
 
     q = None
     order = {s: i for i, s in enumerate(STAGES)}
@@ -552,6 +563,8 @@ if __name__ == "__main__":
     ap.add_argument("--lookup", nargs="*", default=[])
     ap.add_argument("--memory", choices=("auto", "low", "high"), default=None,
                     help="memory plan (default: decide from free RAM)")
+    ap.add_argument("--speed-zones", action="append", default=[],
+                    help="government speed zones (.geojson or prepared .bin) for roads OSM has no limit for")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
-    run([a.pbf] + a.extract, a.db, a.out, bb, a.lookup, memory_mode=a.memory)
+    run([a.pbf] + a.extract, a.db, a.out, bb, a.lookup, memory_mode=a.memory, speed_zones=a.speed_zones)
