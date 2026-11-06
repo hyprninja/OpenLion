@@ -36,7 +36,7 @@ public sealed record NavigationCard
     }
 
     /// <summary>Reads navigation/cdrom.txt under <paramref name="root"/>, or, on cards without one
-    /// (MY15, MY17), the db_*/cdrom.toc files. Returns null if there are none.</summary>
+    /// (MY10, MY15, MY17), the db_*/cdrom.toc files. Returns null if there are none.</summary>
     public static NavigationCard? TryRead(string root)
     {
         var nav = Path.Combine(root, Folder);
@@ -73,7 +73,8 @@ public sealed record NavigationCard
     }
 
     /// <summary>Parses db_xxx/cdrom.toc files ("Volume:", "Customer Version:", "db:", "Area:",
-    /// "Version:" lines). The card's volume is the first database's.</summary>
+    /// "Version:" lines). The card's volume is db_aunz's (the database OpenLion rewrites; the MY10
+    /// card also has db_ag with its own volume), otherwise the first database's.</summary>
     public static NavigationCard ParseTocs(IReadOnlyList<(string Folder, string Text)> tocs, string navigationPath)
     {
         string? volume = null, customerVersion = null;
@@ -82,6 +83,8 @@ public sealed record NavigationCard
         {
             var kv = KeyValues(text).GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First().Value, StringComparer.OrdinalIgnoreCase);
+            if (folder.Equals("db_aunz", StringComparison.OrdinalIgnoreCase) && kv.GetValueOrDefault("Volume") is { } v)
+                volume = v;
             volume ??= kv.GetValueOrDefault("Volume");
             customerVersion ??= kv.GetValueOrDefault("Customer Version");
             dbs.Add(new MapDatabase(folder, kv.GetValueOrDefault("db") ?? "", kv.GetValueOrDefault("Area"),

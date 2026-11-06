@@ -16,8 +16,7 @@ import struct
 
 from . import mapwrite, schema
 
-# Factory id order of the 23-entry stats table in the mp0 parcel trailer (id 8 = shapes)
-STATS_IDS = [31, 15, 29, 13, 30, 14, 28, 12, 27, 11, 25, 9, 26, 10, 24, 8, 19, 3, 17, 1, 18, 2, 16]
+# Factory id order of the stats table in the mp0 parcel trailer: schema.STATS_IDS
 
 # Factory envelope: largest parcel 38,880 B raw, 854 segments, 588 node records.
 DEFAULT_LIMITS = {"max_nodes": 450, "max_segs": 650, "max_bytes": 32000}
@@ -134,6 +133,7 @@ def build_parcel(g, cell_nodes, layer, is_node):
             exc.append(g.node_xy[n])
         return exc_idx[n]
 
+    sch = schema.active()
     seg_recs = []
     for s in segs:
         a, b = g.seg_a[s], g.seg_b[s]
@@ -186,6 +186,12 @@ def build_parcel(g, cell_nodes, layer, is_node):
                 a = dict(g.seg_adas[s])
                 a["seg"] = lseg[s]
                 adas.append(a)
+    if sch.compact and layer == 0:
+        # MY10: shape points and road links go into the segment records (no nameinfo);
+        # the shape and address lists stay empty but keep their counts
+        for i, s in enumerate(segs):
+            seg_recs[i]["shape"] = shape_list[i] if i < len(shaped) else []
+            seg_recs[i]["names"] = [(kind, road, bytes(rng)) for kind, _ni, road, rng in g.seg_names[s]]
     # turn restrictions: every parcel holding a copy of the start segment
     turns = []
     for t in g.turns_by_seg.get_all(segs) if hasattr(g, "turns_by_seg") else []:
@@ -194,13 +200,16 @@ def build_parcel(g, cell_nodes, layer, is_node):
                       "hand": 0 if t["via"] == g.seg_a[s] else 1})
 
     # assemble the container
-    sch = schema.active()
     IDX = sch.idx
     fields = [0] * sch.n_fields
-    trailer = [0] * schema.TRAILER_LEN
+    trailer = [0] * sch.trailer_len
     fixed = set()
     if layer != 0:
-        fields[IDX["junction_view_count"]] = 256
+        # factory mg parcels: junction view lists out of order (garbage there is zeroed)
+        if sch.compact:
+            fields[IDX["junction_view_image_name_size"]] = 256
+        else:
+            fields[IDX["junction_view_count"]] = 256
         fixed = {IDX["junction_view_list"], IDX["junction_view_image_name_list"]}
     pc = mapwrite.ParcelContainer(fields, trailer, {}, fixed, sch)
     pc.set("pos_list", mapwrite.encode_positions(mapwrite.blocks_from_points(positions)), len(positions))
@@ -208,19 +217,20 @@ def build_parcel(g, cell_nodes, layer, is_node):
     pc.set("node_list", mapwrite.encode_nodes(node_recs), len(positions))
     pc.set("seg_list", mapwrite.encode_segments(seg_recs), len(segs))
     for kind, recs in names.items():
-        pc.set(kind + "_list", b"".join(recs), len(recs))
+        pc.set(kind + "_list", b"" if sch.compact else b"".join(recs), len(recs))
     pc.set("adas_list", mapwrite.encode_adas(adas), len(adas))
     if shape_list is not None:
         blob = mapwrite.encode_shapes(shape_list)
-        pc.set("shape_list", blob, len(shape_list))
-        pc.fields[IDX["shape_size"]] = len(blob)
-        # trailer stats table: (id, a, b) x 23, then flags, no_of_segments, ...
-        for k, sid in enumerate(STATS_IDS):
+        pc.set("shape_list", b"" if sch.compact else blob, len(shape_list))
+        pc.fields[IDX["shape_size"]] = len(blob)    # compact: the size MY12 would store
+        # trailer stats table: (id, a, b) per stats id, then flags, no_of_segments, ...
+        n_stats = len(sch.stats_ids)
+        for k, sid in enumerate(sch.stats_ids):
             pc.trailer[2 + 3 * k] = sid
             if sid == 8:
                 pc.trailer[3 + 3 * k] = len(shape_list)
                 pc.trailer[4 + 3 * k] = n_shape_pts
-        pc.trailer[2 + 3 * 23 + 1] = len(segs) - len(shape_list)
+        pc.trailer[2 + 3 * n_stats + 1] = len(segs) - len(shape_list)
     pc.set("turn_res_list", mapwrite.encode_turn_res(turns), len(turns))
     raw = pc.encode()
     if len(raw) > 0xFFFF:

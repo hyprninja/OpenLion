@@ -14,15 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from openlion import flat, roads, mapfile, mapwrite, features, feawrite, schema  # noqa: E402
 from openlion.common import build_header  # noqa: E402
 
-LIST_CODECS = {
-    "pos_list": ("pos_cnt", lambda b, c: mapwrite.decode_positions(b), lambda o: mapwrite.encode_positions(o)),
-    "exc_pos_list": ("exc_pos_cnt", lambda b, c: mapwrite.decode_positions(b), lambda o: mapwrite.encode_positions(o)),
-    "node_list": ("node_cnt", mapwrite.decode_nodes, mapwrite.encode_nodes),
-    "seg_list": ("seg_cnt", mapwrite.decode_segments, mapwrite.encode_segments),
-    "shape_list": ("shape_cnt", mapwrite.decode_shapes, mapwrite.encode_shapes),
-    "adas_list": ("adas_cnt", mapwrite.decode_adas, mapwrite.encode_adas),
-    "turn_res_list": ("turn_res_cnt", lambda b, c: mapwrite.decode_turn_res(b), mapwrite.encode_turn_res),
-}
+LIST_CODECS = {lname: (cname, dec, enc) for lname, cname, dec, enc in mapwrite.LIST_CODECS}
 
 
 def check_flat(db):
@@ -56,7 +48,7 @@ def check_map(path):
         for lname, (cname, dec, enc) in LIST_CODECS.items():
             blob = pc.get(lname)
             cnt = pc.fields[pc.idx(cname)]
-            if enc(dec(blob, cnt)) == blob:
+            if enc(dec(blob, cnt, pc)) == blob:
                 st[lname + " ok"] += 1
             else:
                 st[lname + " DIFF"] += 1

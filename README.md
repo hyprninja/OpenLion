@@ -30,7 +30,7 @@ Same spot, same car. The factory map stops at Worland Road. The OpenLion card sh
 
 ## Will it work in my car?
 
-OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11–MY16)**, the unit that reads its maps from a full-size SD card in the dash. It supports the MY12 (CD_7597), MY15 (CD_8217) and MY17 (CD_8418) factory cards. Other iQ card versions are checked before anything is built. If yours isn't supported yet, OpenLion says so, saves a report with no map data in it, and helps you send it in so support can be added.
+OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11–MY16)**, the unit that reads its maps from a full-size SD card in the dash. It supports the MY10 (CD_7172), MY12 (CD_7597), MY15 (CD_8217) and MY17 (CD_8418) factory cards. Other iQ card versions are checked before anything is built. If yours isn't supported yet, OpenLion says so, saves a report with no map data in it, and helps you send it in so support can be added.
 
 ## What you need
 
@@ -116,6 +116,7 @@ The iQ reads its maps from a full-size SD card. The map data turns out to be an 
 | Points of interest from OSM (270k POIs, factory schema and compiled queries kept); CANBERRA as a municipality over its suburbs | Done | [17](docs/17_poi_canberra.md) |
 | MY17 card (CD_8418, datamodel Arriba 5.3): newer road records, parcel header and speed limits; every table round-trips byte-identical | Done | [19](docs/19_my17_card.md) |
 | MY15 card (CD_8217, AUNZ 2014Q1): 5.2.1 road records with the 5.3 map-file layout, detected from auz.mp0; every table round-trips byte-identical | Done | [schema.py](openlion/schema.py) |
+| MY10 card (CD_7172, AUNZ 2009Q4): compact map parcels (varint positions, nodes and lengths; shapes and road links inside mp0 segments), detected from auz.mp0; every table round-trips byte-identical | Done | [21](docs/21_my10_card.md) |
 | Builds on an 8 GB PC (about 3.6 GB peak) and in parallel on big ones (Australia + New Zealand in 25 min on 44 threads); output unchanged | Done | [20](docs/20_memory.md) |
 | `.fea` size reduction, road-sense alerts (speed cameras, school zones) | Not started | |
 | In-car test: unit accepts the OSM card, shows post-2010 streets, address search works, routes 200 km in demo mode, live guidance and voice instructions work on a real drive | Passed (2026-11-05) | [16](docs/16_test_card.md) |
