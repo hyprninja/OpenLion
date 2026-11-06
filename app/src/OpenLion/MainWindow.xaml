@@ -107,6 +107,8 @@
                     </Border>
                     <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="Waiting for a factory card…"
                                Visibility="{Binding NoneFound, Converter={StaticResource BoolToVis}}"/>
+                    <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="{Binding OpenLionCardsNote}"
+                               Visibility="{Binding HasOpenLionCards, Converter={StaticResource BoolToVis}}"/>
                 </StackPanel>
                 <ListBox ItemsSource="{Binding Candidates}" SelectedItem="{Binding Selected}" BorderThickness="0"
                          Background="Transparent" HorizontalContentAlignment="Stretch"

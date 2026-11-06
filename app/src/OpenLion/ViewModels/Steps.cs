@@ -59,7 +59,15 @@ public sealed class Session
     /// <summary>The finished map build to write (set by the Build maps step).</summary>
     public BuildRecord? Build { get; set; }
 
-    public Session() => FactoryRecord = State.Factory;
+    public Session() => FactoryRecord = State.UsableFactoryCopy();
+
+    /// <summary>Back to the factory card copied in an earlier run (null if there's no usable copy):
+    /// for "Use this copy", and after a copy that was stopped or failed.</summary>
+    public void UseSavedFactoryCopy()
+    {
+        FactoryRecord = State.UsableFactoryCopy();
+        FactoryCopy = null;
+    }
 
     public GuardOptions GuardOptions => new() { WrittenByOpenLion = State.WrittenVolumeSerials.ToHashSet() };
 
@@ -113,11 +121,20 @@ public sealed class FactoryCardStep : StepViewModel
     public bool NoneFound => Candidates.Count == 0;
     public override bool CanGoNext => Selected is not null;
 
+    /// <summary>Cards OpenLion wrote are left out of the list; this says so ("" when there are none).</summary>
+    public string OpenLionCardsNote { get => _openLionNote; private set { if (Set(ref _openLionNote, value)) Raise(nameof(HasOpenLionCards)); } }
+    public bool HasOpenLionCards => OpenLionCardsNote.Length > 0;
+    string _openLionNote = "";
+
     public FactoryCardStep(Session session) : base("Factory card")
     {
         _session = session;
         _poller.Updated += Refresh;
-        UseSavedCopyCommand = new RelayCommand(() => SkipCopyRequested?.Invoke(), () => HasSavedCopy);
+        UseSavedCopyCommand = new RelayCommand(() =>
+        {
+            _session.UseSavedFactoryCopy();
+            SkipCopyRequested?.Invoke();
+        }, () => HasSavedCopy);
     }
 
     /// <summary>Raised when the user picks the copy made in an earlier run: go straight to the OSM step.</summary>
@@ -126,17 +143,16 @@ public sealed class FactoryCardStep : StepViewModel
 
     /// <summary>A verified copy of a factory card from an earlier run is still on this PC, made by
     /// OpenLion 1.3 or later (older copies left out the card's config/ and other root folders).</summary>
-    public bool HasSavedCopy => _session.State.Factory is { CopyVerified: true } &&
-                                _session.State.FactoryCopyPath is { } p && Directory.Exists(Path.Combine(p, "navigation")) &&
-                                CardCopier.CardRootOf(p) is not null;
+    public bool HasSavedCopy => _session.State.UsableFactoryCopy() is not null;
     public string SavedCopyText => _session.State.Factory is { } f
         ? $"{CardNames.Display(f.CardVersion) ?? "Factory card"}{(f.Label.Length > 0 ? $" (label {f.Label})" : "")}, {f.TotalBytes / 1e9:N1} GB card, copied and checked."
         : "";
 
     void Refresh(IReadOnlyList<DriveSnapshot> drives)
     {
-        var found = drives.Where(d => d.HasNavigationFolder)
-            .Select(d => new FactoryCandidate(d, SafeRead(d.Root))).ToList();
+        var (factory, openLion) = FactoryCards.Split(drives, _session.State.WrittenVolumeSerials.ToHashSet());
+        var found = factory.Select(d => new FactoryCandidate(d, SafeRead(d.Root))).ToList();
+        OpenLionCardsNote = FactoryCards.OpenLionNote(openLion);
         var keep = Selected?.Drive.VolumeGuidPath;
         Candidates.Clear();
         foreach (var c in found)

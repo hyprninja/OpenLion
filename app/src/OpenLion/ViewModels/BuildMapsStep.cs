@@ -214,6 +214,14 @@ public sealed class BuildMapsStep : StepViewModel
         var nav = FactoryNavigation;
         if (IsBusy || osm is null || nav is null)
             return;
+        if (_session.FactoryRecord is null)
+        {
+            // A build is tied to the factory card it came from; without one the write step would refuse it.
+            Warning = "There's no checked copy of your factory card in this session. Go back to Factory card and " +
+                      "copy it, or choose the copy already on this PC.";
+            AppLog.Write("build: not started, no factory card record");
+            return;
+        }
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         ReportPath = null;
