@@ -126,7 +126,7 @@ for cat, queries in LOOKUPS.items():
         problems += not isinstance(r, tuple) and not ARGS.skip_lookups   # printed, not counted, for small areas
 if poi_rel:
     con = sqlite3.connect(f"file:{os.path.join(CARD, poi_rel)}?mode=ro", uri=True)
-    q = lambda sql: con.execute(sql).fetchall()
+    q = lambda sql, args=(): con.execute(sql, args).fetchall()
     integ = q("pragma integrity_check")[0][0]
     n = q("select count(*) from Poi_BaseAttributes")[0][0]
     orphans = q("select count(*) from Poi_BaseAttributes where PoiPartition_ID not in "
@@ -138,10 +138,17 @@ if poi_rel:
         dangling += q(f"select count(*) from Poi_AddressAttributes where {c} is not null and "
                       f"{c} not in (select String_ID from String_BaseAttributes)")[0][0]
     no_alert = q("select count(*) from Poi_BaseAttributes where Poi_ID not in (select Poi_ID from Poi_AlertAttributes)")[0][0]
-    # OSM builds leave the road-sense alert categories empty (looked up by name: IDs differ per card)
-    alert_ids = [cid for name, cid in osm_poi.card_categories(con).items() if name in osm_poi.ROAD_SENSE]
+    # OSM builds leave the road-sense alert categories empty (looked up by name: IDs differ per card),
+    # except "camera": speed cameras (cameras.py) go there, each with a camera type and a direction.
+    # Anything else in that category is a POI filed under the wrong ID.
+    cats = osm_poi.card_categories(con)
+    alert_ids = [cid for name, cid in cats.items() if name in osm_poi.ROAD_SENSE and name != "camera"]
     in_alert = q("select count(*) from Poi_BaseAttributes where PoiPartition_ID in "
                  f"({','.join(map(str, alert_ids)) or 'NULL'})")[0][0]
+    if "camera" in cats:
+        in_alert += q("select count(*) from Poi_BaseAttributes b left join Poi_AlertAttributes a using (Poi_ID) "
+                      "where b.PoiPartition_ID = ? and (a.CameraType is null or a.Direction is null)",
+                      (cats["camera"],))[0][0]
     mp0 = mapfile.MapFile(open(os.path.join(DB, "auz.mp0"), "rb").read())
     outside = 0
     for (v,) in con.execute("select Coordinate from Poi_BaseAttributes"):

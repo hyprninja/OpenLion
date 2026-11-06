@@ -125,7 +125,7 @@ CATEGORY_NAMES = {
 CAMERA_CAT = 55
 
 
-# road-sense alert categories (left empty by OSM builds)
+# road-sense alert categories (left empty by OSM builds, except "camera": cameras.py)
 ROAD_SENSE = ("school zone", "camera", "blackspot", "railway", "check speed", "school point")
 
 
