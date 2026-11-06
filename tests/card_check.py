@@ -139,15 +139,16 @@ if poi_rel:
                       f"{c} not in (select String_ID from String_BaseAttributes)")[0][0]
     no_alert = q("select count(*) from Poi_BaseAttributes where Poi_ID not in (select Poi_ID from Poi_AlertAttributes)")[0][0]
     # OSM builds leave the road-sense alert categories empty (looked up by name: IDs differ per card),
-    # except "camera": speed cameras (cameras.py) go there, each with a camera type and a direction.
-    # Anything else in that category is a POI filed under the wrong ID.
+    # except "camera": speed cameras (cameras.py) go there, each with a camera type. Direction and
+    # speed limit can be empty, as on the factory cards (MY12: 16 of 1,037 cameras have no direction,
+    # 88 no speed limit). A POI there without a camera type is one filed under the wrong ID.
     cats = osm_poi.card_categories(con)
     alert_ids = [cid for name, cid in cats.items() if name in osm_poi.ROAD_SENSE and name != "camera"]
     in_alert = q("select count(*) from Poi_BaseAttributes where PoiPartition_ID in "
                  f"({','.join(map(str, alert_ids)) or 'NULL'})")[0][0]
     if "camera" in cats:
         in_alert += q("select count(*) from Poi_BaseAttributes b left join Poi_AlertAttributes a using (Poi_ID) "
-                      "where b.PoiPartition_ID = ? and (a.CameraType is null or a.Direction is null)",
+                      "where b.PoiPartition_ID = ? and a.CameraType is null",
                       (cats["camera"],))[0][0]
     mp0 = mapfile.MapFile(open(os.path.join(DB, "auz.mp0"), "rb").read())
     outside = 0
