@@ -18,7 +18,7 @@
 import argparse, csv, os, sqlite3, struct, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
-from openlion import flat, mapfile, features, osm_poi, roads, schema, search
+from openlion import flat, mapfile, mapwrite, features, osm_poi, roads, schema, search
 from openlion.build import POI_DB, REPLACEABLE, sha256
 from osm_names_region import lookup
 
@@ -53,7 +53,8 @@ def raw(fn):
     return flat.unpack(d) if d[:4] == bytes([0x7A, 0x69, 0x70, 0x01]) else d
 
 problems = len(protected)
-rd = raw("auz.rd"); starts = {r["offset"] for r in roads.iter_roads(rd)}
+rd = raw("auz.rd"); road_by_off = {r["offset"]: r for r in roads.iter_roads(rd)}; starts = set(road_by_off)
+numbered = badnum = oddcode = outside = 0
 print(f"road records: {len(starts):,}")
 for layer in ("mp0", "mg1", "mg2", "mg3", "mg4"):
     m = mapfile.MapFile(open(os.path.join(DB, f"auz.{layer}"), "rb").read())
@@ -71,9 +72,23 @@ for layer in ("mp0", "mg1", "mg2", "mg3", "mg4"):
         if layer == "mp0":
             for nl in p.name_links():
                 names += 1; badname += nl["road_off"] not in starts
+                hn = mapwrite.decode_range(nl["kind"], nl["range"])
+                if hn and nl["road_off"] in starts:
+                    # a house-number range. Negative numbers mean a broken encoding; rare side
+                    # codes and ranges past the street's max are info only (the factory has both)
+                    numbered += 1
+                    code, base, delta = hn
+                    r = road_by_off[nl["road_off"]]
+                    lo, hi = min(base, base + delta), max(base, base + delta)
+                    inside = (r["minNumber"] <= lo and hi <= r["maxNumber"]) if "maxNumber" in r else r["hasNumbers"] == 1
+                    badnum += lo < 0
+                    oddcode += code not in mapwrite.HN_SIDE
+                    outside += not inside
     kd_ok = sorted(leaves) == list(range(m.pcl_cnt))
-    problems += (not kd_ok) + bad + badname
-    extra = f", {names:,} name links ({badname} not at a road record)" if layer == "mp0" else ""
+    problems += (not kd_ok) + bad + badname + badnum
+    extra = (f", {names:,} name links ({badname} not at a road record), {numbered:,} with house numbers "
+             f"({badnum} negative; info: {oddcode} other side codes, {outside} past the street's numbers)"
+             ) if layer == "mp0" else ""
     print(f"{layer}: {m.pcl_cnt:,} parcels, kd tree reaches each once: {kd_ok}, framing bad: {bad}, segments {segs:,}{extra}")
 
 ff = features.FeatureFile(open(os.path.join(DB, "auz.fea"), "rb").read())

@@ -52,5 +52,5 @@ The same build against the 2011 card (5.2.1) also passes with 0 problems.
 
 ## Not done
 
-- `hasNumbers` is written as 0 for OSM roads, matching the 0 house numbers the 5.2.1 writer stores.
+- `hasNumbers` is written as 0 for OSM roads, matching the 0 house numbers the 5.2.1 writer stores. *Report 22 adds house numbers; streets with them get `hasNumbers` = 1.*
 - Directional (rl/lr) speed limits and truck limits are read and kept, but not filled from OSM yet. OSM `maxspeed:forward/backward` and `maxspeed:hgv` would map onto them.

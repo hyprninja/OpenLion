@@ -260,6 +260,41 @@ def encode_addr(seg, road_id_rel, nameinfo=0, rng=b""):
     return struct.pack("<HBI", seg, nameinfo, road_id_rel) + rng
 
 
+# House-number range on one side of a segment (report 22). addrinfo low 4 bits: the
+# side, seen from the segment's left end (seg_a) towards its right end, and the parity.
+# The top 2 bits are the high bits of a signed delta: 10 bits in short_addr, 18 in
+# long_addr. base is the number at the left end, base + delta the one at the right end.
+HN_CODE = {("right", "even"): 3, ("right", "odd"): 7, ("right", "mixed"): 11,
+           ("left", "even"): 12, ("left", "odd"): 13, ("left", "mixed"): 14}
+HN_SIDE = {v: k for k, v in HN_CODE.items()}
+
+
+def encode_range(code, base, delta):
+    """-> (kind, range bytes): short_addr when it fits, else long_addr."""
+    if 0 <= base <= 0xFFFF and -512 <= delta <= 511:
+        v = delta & 0x3FF
+        return "short_addr", struct.pack("<BBH", code | (v >> 8) << 6, v & 0xFF, base)
+    if not (0 <= base <= 0xFFFFFF and -(1 << 17) <= delta < (1 << 17)):
+        raise ValueError(f"house numbers out of range: {base} {delta:+}")
+    v = delta & 0x3FFFF
+    return "long_addr", struct.pack("<BBHH", code | (v >> 16) << 6, base >> 16, base & 0xFFFF, v & 0xFFFF)
+
+
+def decode_range(kind, rng):
+    """(code, base, delta) of a short_addr / long_addr range, None for abs_addr."""
+    if kind == "short_addr":
+        ai, d, base = struct.unpack("<BBH", rng)
+        v, bits = (ai >> 6) << 8 | d, 10
+    elif kind == "long_addr":
+        ai, msb, lsw, d = struct.unpack("<BBHH", rng)
+        base, v, bits = msb << 16 | lsw, (ai >> 6) << 16 | d, 18
+    else:
+        return None
+    if v >> (bits - 1):
+        v -= 1 << bits
+    return ai & 15, base, v
+
+
 def decode_adas(blob: bytes, cnt: int):
     """u16 seg, u8 content, then optional bytes:
     content bit1 speed_restricted -> u8 speed (km/h), bits2-3 no_of_lanes_present -> u8 lanes,

@@ -23,7 +23,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import (countries, flat, graph, layers, mapfile, memory, osm_fea, osm_import,  # noqa: E402
+from openlion import (countries, flat, gov_addr, graph, layers, mapfile, memory, osm_addr, osm_fea, osm_import,  # noqa: E402
                       osm_names, osm_poi, resources, roads, schema, search, tiler)
 from openlion.common import DamagedTable, build_header  # noqa: E402
 
@@ -116,8 +116,9 @@ def inputs_of(pbf):
     return sorted(out, key=lambda cp: cp[0].catalog)
 
 
-def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None):
+def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, addresses=None):
     """pbf: one Australian extract, or [(Country, path)] (see inputs_of).
+    addresses: a G-NAF zip (gov_addr.py); its house numbers fill streets OSM has none on.
     stage: optional callback, called with a name from STAGES as each stage starts.
     memory_mode: "low", "high" or None (decide from free RAM; see resources.py)."""
     os.makedirs(os.path.join(out, "db"), exist_ok=True)
@@ -137,7 +138,7 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None):
             app_stage(name)
 
     try:
-        return _run(pbf, db, out, bbox, lookups, stage, region, plan)
+        return _run(pbf, db, out, bbox, lookups, stage, region, plan, addresses)
     finally:
         sampler.stop()
         log("peak memory per step: " + ", ".join(f"{k} {memory.gb(v)}" for k, v in sampler.peaks().items()))
@@ -146,8 +147,9 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None):
 
 # OSM reads, each cached per country as <name>_<CODE>.pickle. Bump a name when the
 # reader's output format changes so stale caches are never loaded.
-READS = ("roads2", "boundaries3", "places3", "fea2", "pois2")
-CACHES = READS + ("overview2",)      # overview2: written alongside roads2
+READS = ("roads2", "boundaries3", "places3", "fea2", "pois2", "addr1")
+GNAF = "gnaf1"                       # the G-NAF read (Australia only), when asked for
+CACHES = READS + ("overview2", GNAF)  # overview2: written alongside roads2
 
 
 def _read(name, code, path, region, node_index):
@@ -165,6 +167,10 @@ def _read(name, code, path, region, node_index):
         return osm_fea.read(path, region, node_index=node_index)
     if name == "pois2":
         return osm_poi.read(path, region, node_index=node_index)
+    if name == "addr1":
+        return osm_addr.read(path, region, node_index=node_index)
+    if name == GNAF:
+        return gov_addr.read(path, region)
     raise ValueError(name)
 
 
@@ -218,13 +224,18 @@ def _remove(path, tries=20):
 class _Ctx:
     """What a stage process needs to know (picklable)."""
 
-    def __init__(self, inputs, db, out, region, plan, lookups):
+    def __init__(self, inputs, db, out, region, plan, lookups, addresses=None):
         self.inputs = [(cn.code, p) for cn, p in inputs]
+        self.addresses = addresses
         self.db, self.out, self.region, self.plan, self.lookups = db, out, region, plan, list(lookups)
         self.poi_box = None      # set from the roads stage's message before the POI stage starts
 
     def countries(self):
         return [(countries.BY_CODE[code], p) for code, p in self.inputs]
+
+    def gnaf_wanted(self):
+        """G-NAF given, and Australia is on the card (G-NAF has only Australian addresses)."""
+        return bool(self.addresses) and any(code == "AU" for code, _ in self.inputs)
 
     def cache(self, name, cn):
         return os.path.join(self.out, f"{name}_{cn.code}.pickle")
@@ -330,8 +341,18 @@ def _roads_stage(ctx, stage, q):
                   ("rt_header", "auz.rt"), ("rl_header", "auz.rl"), ("cl_header", "auz.cl"),
                   ("ct_header", "auz.ct")):
         factory[k] = ctx.raw(fn)[:0x5E]
+    addr = osm_addr.merge(a for _, a in ctx.per_country("addr1"))
+    log(f"addresses: {len(addr):,} house numbers on {len(addr.names):,} street names")
+    if ctx.gnaf_wanted():
+        gn = load_cache(ctx.cache(GNAF, countries.AU))
+        cst = collections.Counter()
+        addr = gov_addr.combine(addr, gn, cst)
+        log(f"G-NAF: {len(gn):,} house numbers; {cst['g-naf: added']:,} added, "
+            f"{cst['g-naf: already in OSM']:,} already in OSM")
+        del gn
     stage("names")
-    tables, nst = osm_names.build(g, g.seg_label, areas, factory, places=places)
+    tables, nst = osm_names.build(g, g.seg_label, areas, factory, places=places, addresses=addr)
+    del addr
     log(f"names/search: {dict(nst)}")
     g.seg_label = None
     del areas, places
@@ -420,11 +441,11 @@ def _pois_stage(ctx, stage, q):
     log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM)")
 
 
-def _run(pbf, db, out, bbox, lookups, stage, region, plan):
+def _run(pbf, db, out, bbox, lookups, stage, region, plan, addresses=None):
     import multiprocessing as mp
     inputs = inputs_of(pbf)
     log("countries: " + ", ".join(f"{c.title} ({os.path.basename(p)})" for c, p in inputs))
-    ctx = _Ctx(inputs, db, out, region, plan, lookups)
+    ctx = _Ctx(inputs, db, out, region, plan, lookups, addresses)
 
     q = None
     order = {s: i for i, s in enumerate(STAGES)}
@@ -444,10 +465,12 @@ def _run(pbf, db, out, bbox, lookups, stage, region, plan):
     forward("roads")
     jobs = [(name, cn.code, p, region, ctx.cache(name, cn), plan.node_index(out, f"nodes_{name}_{cn.code}"))
             for name in READS for cn, p in inputs if not cache_ok(ctx.cache(name, cn))]
+    if ctx.gnaf_wanted() and not cache_ok(ctx.cache(GNAF, countries.AU)):
+        jobs.append((GNAF, "AU", addresses, region, ctx.cache(GNAF, countries.AU), "flex_mem"))
     if jobs:
         import concurrent.futures as cf
         # biggest first: Australia before New Zealand, roads and background before the rest
-        jobs.sort(key=lambda j: (j[1] != "AU", READS.index(j[0]) not in (0, 3)))
+        jobs.sort(key=lambda j: (j[1] != "AU", j[0] not in ("roads2", "fea2")))
         n = min(plan.read_workers, len(jobs))
         log(f"reading OSM: {len(jobs)} reads, {n} at a time")
         try:
@@ -552,6 +575,7 @@ if __name__ == "__main__":
     ap.add_argument("--lookup", nargs="*", default=[])
     ap.add_argument("--memory", choices=("auto", "low", "high"), default=None,
                     help="memory plan (default: decide from free RAM)")
+    ap.add_argument("--addresses", help="G-NAF zip: house numbers for streets OSM has none on")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
-    run([a.pbf] + a.extract, a.db, a.out, bb, a.lookup, memory_mode=a.memory)
+    run([a.pbf] + a.extract, a.db, a.out, bb, a.lookup, memory_mode=a.memory, addresses=a.addresses)

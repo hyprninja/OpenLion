@@ -42,7 +42,7 @@ Before assembly, every untouched table was checked for links into the road netwo
 
 - **Canberra**: the factory data has one city, CANBERRA, covering the ACT. OSM has the ACT suburbs (CITY, BRADDON, …), and the old name finds only CANBERRA AIRPORT. *Fixed in report 17.* Larger place names such as GOLD COAST don't exist as cities in either data set.
 - **POIs** are still the 2010 factory set. *Rebuilt from OSM in report 17.*
-- **No house numbers**, so address search goes to the street.
+- **No house numbers**, so address search goes to the street. *Fixed in report 22* (where OSM has them).
 - **No New Zealand**: the NZ catalog is empty.
 - **No signposts, lanes or junction-view images** in the OSM build.
 - **Speed limits** come from OSM only: 34% of segments. Roads without an OSM limit show none.
