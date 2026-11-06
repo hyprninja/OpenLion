@@ -38,11 +38,22 @@ def sha256(path):
     return h.hexdigest()
 
 
-def build(src, dst, replacements):
-    """replacements: {relative path: bytes}. Returns a report dict."""
+VOICE_FOLDER = "voices/en_gb/"   # a voice pack may replace and add files here only
+
+
+def build(src, dst, replacements, voice=None):
+    """replacements: {relative path: bytes}. voice: (replacements, additions) from
+    voicepack.install, or None for the factory voice. Returns a report dict."""
     bad = set(replacements) - REPLACEABLE
     if bad:
         raise ValueError(f"refusing to replace protected files: {sorted(bad)}")
+    additions = {}
+    if voice is not None:
+        v_rep, additions = voice
+        outside = [p for p in list(v_rep) + list(additions) if not p.lower().startswith(VOICE_FOLDER)]
+        if outside:
+            raise ValueError(f"a voice pack may only change voices/en_GB: {sorted(outside)[:5]}")
+        replacements = {**replacements, **v_rep}
     if os.path.abspath(dst).startswith(os.path.abspath(src)):
         raise ValueError("destination must not be inside the source")
     report = {"copied": 0, "replaced": [], "verify_failed": []}
@@ -67,6 +78,15 @@ def build(src, dst, replacements):
     unused = set(by_lower) - {r.lower() for r in report["replaced"]}
     if unused:
         raise ValueError(f"no factory file to replace for: {sorted(unused)}")
+    report["added"] = []
+    for rel, data in additions.items():
+        d = os.path.join(dst, rel)
+        if os.path.exists(d):
+            raise ValueError(f"voice pack file already on the card: {rel}")
+        os.makedirs(os.path.dirname(d), exist_ok=True)
+        with open(d, "wb") as f:
+            f.write(data)
+        report["added"].append(rel)
     return report
 
 

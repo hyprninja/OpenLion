@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -149,6 +149,8 @@ public sealed class BuildMapsStep : StepViewModel
                 parts.Add("extra speed limits from " + _session.DescribeSpeedZones());
             if (_session.Gnaf is not null)
                 parts.Add("house numbers from " + _session.DescribeGnaf());
+            if (_session.Voice is not null)
+                parts.Add(_session.DescribeVoice());
             return parts.Count == 0 ? "" : ", with " + string.Join(" and ", parts);
         }
     }
@@ -258,12 +260,14 @@ public sealed class BuildMapsStep : StepViewModel
             var extracts = _session.Countries.Zip(osm, (c, e) => (c.Code, e.Path)).ToList();
             var zones = _session.SpeedZones.Select(z => z.Path).ToList();
             var req = new BuildRequest(extracts, nav, FactoryManifest is { } m && File.Exists(m) ? m : null,
-                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, zones, AppPaths.CamerasFolder, _session.Gnaf?.Path);
+                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, zones, AppPaths.CamerasFolder, _session.Gnaf?.Path,
+                _session.Voice?.Path);
             AppLog.Write($"build: engine {engine.Python} ({(engine.Bundled ? "bundled" : "dev")}), " +
                          $"extracts {string.Join(", ", extracts.Select(x => $"{x.Code}={x.Path}"))}, " +
                          $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}" +
                          (zones.Count == 0 ? "" : ", speed zones " + string.Join(", ", zones)) +
-                         (_session.Gnaf is { } g ? ", G-NAF " + g.Path : ""));
+                         (_session.Gnaf is { } g ? ", G-NAF " + g.Path : "") +
+                         (_session.Voice is { } v ? ", voice " + v.Path : ""));
             var progress = new Progress<BuildProgress>(p =>
             {
                 _progress = p;
@@ -288,7 +292,7 @@ public sealed class BuildMapsStep : StepViewModel
                 return;
             }
             var record = new BuildRecord(result.CardPath ?? AppPaths.BuildOutput, _session.FactoryRecord?.VolumeSerial ?? 0,
-                BuildRecord.Key(osm, _session.SpeedZones, _session.Gnaf), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null,
+                BuildRecord.Key(osm, _session.SpeedZones, _session.Gnaf, _session.Voice?.Pack.Id), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null,
                 result.Cameras.Count > 0 ? SpeedCameras.Describe(result.Cameras) : null);
             CameraNote = record.CameraNote ?? "";
             _session.State.Build = record;

@@ -16,6 +16,7 @@
   <ItemGroup>
     <Resource Include="Assets\OpenLion.ico" />
     <Resource Include="Assets\logo-256.png" />
+    <Resource Include="Assets\Voices\*.wav" />
   </ItemGroup>
 
 </Project>

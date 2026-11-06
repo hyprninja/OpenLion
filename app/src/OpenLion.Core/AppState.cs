@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using OpenLion.Core.Drives;
 using OpenLion.Core.Osm;
 
@@ -39,6 +39,8 @@ public static class AppPaths
     public static string CamerasFolder => Path.Combine(Root, "cameras");
     /// <summary>The G-NAF release (house numbers), one zip at a time.</summary>
     public static string GnafFolder => Path.Combine(Root, "gnaf");
+    /// <summary>Downloaded voice packs, one zip each.</summary>
+    public static string VoicesFolder => Path.Combine(Root, "voices");
     /// <summary>Engine working folder: cached OSM reads and the new map tables.</summary>
     public static string BuildWorkFolder => Path.Combine(Root, "build", "work");
     /// <summary>The finished navigation/ folder that gets written to the new card.</summary>
@@ -64,11 +66,11 @@ public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial
     /// Australian extract gives its plain file name, as OpenLion 1.0 stored it.</summary>
     public static string OsmKey(IEnumerable<OsmExtract> extracts) => string.Join("+", extracts.Select(e => e.FileName));
 
-    /// <summary><see cref="OsmKey"/> plus the speed zone data and G-NAF release used, if any
-    /// ("...|speed:VIC=Speed Zones September 2026|gnaf:g-naf_aug26_....zip"), so a build is redone when
-    /// either changes. Without them it's the plain OSM key, as earlier versions stored it.</summary>
+    /// <summary><see cref="OsmKey"/> plus the speed zone data, G-NAF release and voice pack used, if any
+    /// ("...|speed:VIC=Speed Zones September 2026|gnaf:g-naf_aug26_....zip|voice:elodie-v1"), so a build
+    /// is redone when any changes. Without them it's the plain OSM key, as earlier versions stored it.</summary>
     public static string Key(IEnumerable<OsmExtract> extracts, IEnumerable<Speed.SpeedZoneData>? speedZones,
-        Addresses.GnafData? gnaf = null)
+        Addresses.GnafData? gnaf = null, string? voicePack = null)
     {
         var key = OsmKey(extracts);
         var z = (speedZones ?? []).OrderBy(d => d.Code, StringComparer.Ordinal).ToList();
@@ -76,6 +78,8 @@ public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial
             key += "|speed:" + string.Join(",", z.Select(d => $"{d.Code}={d.SourceFile}"));
         if (gnaf is not null)
             key += "|gnaf:" + gnaf.FileName;
+        if (voicePack is not null)
+            key += "|voice:" + voicePack;
         return key;
     }
 
@@ -109,6 +113,8 @@ public sealed class AppState
     public List<string>? SpeedZones { get; set; }
     /// <summary>Add house numbers from G-NAF (Australia); null means yes, the default.</summary>
     public bool? HouseNumbers { get; set; }
+    /// <summary>The voice pack to install (Voices.VoicePack id); null means the factory voice.</summary>
+    public string? VoicePack { get; set; }
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

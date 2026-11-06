@@ -4,6 +4,7 @@ The one command the Windows app runs to build maps:
 
   python -m openlion.make_card <extract.osm.pbf> <factory navigation/> <work dir> <out navigation/>
          [--extract NZ=<extract.osm.pbf> ...] [--addresses <G-NAF zip>] [--manifest <manifest.tsv>]
+         [--voice-pack <pack.zip>]
          [--bbox lon0 lat0 lon1 lat1] [--json]
 
 The first extract may name its country (AU=..., NZ=...); a bare path is Australia.
@@ -12,7 +13,8 @@ Add --extract for each further country. Countries left out get no cities on the 
 1. openlion.pipeline builds every map table and the POI database in <work dir>
    (slow OSM reads are cached there and reused while the extract is unchanged).
 2. openlion.build copies the factory folder with the new tables into <out>.partial,
-   verifying every untouched file.
+   verifying every untouched file. With --voice-pack, the pack's clips and longer
+   phrases go into voices/en_GB (openlion.voicepack, docs/26_voice_packs.md).
 3. tests/card_check.py checks the result (against --manifest: the user's own copy).
 4. <out>.partial is renamed to <out>. <out> must not exist yet.
 
@@ -36,7 +38,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import build, cameras, gov_cameras, pipeline  # noqa: E402
+from openlion import build, cameras, gov_cameras, pipeline, voicepack  # noqa: E402
 from openlion.common import DamagedTable  # noqa: E402
 from openlion.compat import error_name, safe_traceback  # noqa: E402
 
@@ -159,12 +161,13 @@ def camera_states(inputs, files, fetched):
 
 
 def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory_mode=None, speed_zones=(),
-        camera_dir=None, camera_download=True, addresses=None):
+        camera_dir=None, camera_download=True, addresses=None, voice_pack=None):
     """pbf: one Australian extract, or a list of "NZ=path" / (Country, path) (pipeline.inputs_of).
     memory_mode: "low" / "high" / None (decide from free RAM, see resources.py).
     camera_dir: folder for the government camera lists (gov_cameras.py); they're downloaded
     there first unless camera_download is False, and the last good copy is used when a
-    download fails. None: OSM cameras everywhere."""
+    download fails. None: OSM cameras everywhere.
+    voice_pack: a voice pack zip to install into voices/en_GB, or None for the factory voice."""
     o = Out(as_json)
     inputs = pipeline.inputs_of(pbf)
     total = sum(os.path.getsize(p) for _, p in inputs if os.path.isfile(p))
@@ -184,6 +187,13 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
         os.makedirs(work, exist_ok=True)
         if addresses and not os.path.isfile(addresses):
             raise Failed(f"G-NAF file not found: {addresses}")
+        voice = None
+        if voice_pack:      # check it now, not after an hour of map building
+            pack = voicepack.load(voice_pack)
+            v_rep, v_add, v_sum = voicepack.install(factory, pack)
+            voice = (v_rep, v_add)
+            print(f"voice pack {pack.name}: {v_sum['replaced_clips']} clips replaced, {v_sum['new_clips']} added, "
+                  f"{v_sum['new_phrases']} longer phrases", flush=True)
         if reset_cache(inputs, work, bbox, addresses):
             print("reusing cached OSM reads from an earlier run", flush=True)
 
@@ -210,8 +220,9 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
             shutil.rmtree(partial)
         poi = os.path.join(work, "edb", "POI", "aunz_sql.db3")
         reps = build.table_replacements(factory, os.path.join(work, "db"), poi if os.path.isfile(poi) else None)
-        rep = build.build(factory, partial, reps)
-        print(f"copied {rep['copied']} files unchanged, replaced {len(rep['replaced'])}", flush=True)
+        rep = build.build(factory, partial, reps, voice)
+        print(f"copied {rep['copied']} files unchanged, replaced {len(rep['replaced'])}"
+              f"{', added ' + str(len(rep['added'])) if rep['added'] else ''}", flush=True)
         if rep["verify_failed"]:
             raise Failed(f"{len(rep['verify_failed'])} copied files don't match the factory copy: "
                          f"{rep['verify_failed'][:5]}")
@@ -225,6 +236,8 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
             cmd += ["--manifest", manifest]
         if bbox:
             cmd.append("--skip-lookups")
+        if voice_pack:
+            cmd += ["--voice-pack", voice_pack]
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              encoding="utf-8", errors="replace")
         last = ""
@@ -244,9 +257,11 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
     except Exception as e:  # report every failure as a result line, the app shows it
         if os.path.exists(partial):
             shutil.rmtree(partial, ignore_errors=True)
-        friendly = isinstance(e, (Failed, DamagedTable))
+        friendly = isinstance(e, (Failed, DamagedTable, voicepack.VoicePackError))
         if isinstance(e, DamagedTable):
             msg = f"a map table in the factory card copy looks damaged ({e}). Copy the factory card again."
+        elif isinstance(e, voicepack.VoicePackError):
+            msg = "voice pack: " + str(e)
         elif isinstance(e, Failed):
             msg = str(e)
         else:
@@ -280,11 +295,13 @@ if __name__ == "__main__":
                          "(OSM cameras for every other state). Without it: OSM cameras everywhere")
     ap.add_argument("--no-camera-download", action="store_true",
                     help="use the camera lists already in --cameras without downloading")
+    ap.add_argument("--voice-pack", metavar="ZIP",
+                    help="install this voice pack into voices/en_GB (default: keep the factory voice)")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
     t0 = time.time()
     code = run([a.pbf] + a.extract, a.factory, a.work, a.out, a.manifest, bb, a.json, a.memory,
-               a.speed_zones, a.cameras, not a.no_camera_download, a.addresses)
+               a.speed_zones, a.cameras, not a.no_camera_download, a.addresses, a.voice_pack)
     if not a.json:
         print(f"{time.time() - t0:.0f}s")
     sys.exit(code)

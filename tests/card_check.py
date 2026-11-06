@@ -1,7 +1,7 @@
 """Check an assembled card folder before it goes in the car.
 
   python tests/card_check.py <card navigation/> [<factory navigation/>]
-         [--manifest <manifest.tsv>] [--skip-lookups]
+         [--manifest <manifest.tsv>] [--skip-lookups] [--voice-pack <pack.zip>]
 
 1. Every file is compared against docs/reference/manifest_sha256.tsv (the MY12
    CD_7606 card), or the manifest given with --manifest (the app passes the one it
@@ -14,11 +14,15 @@
 3. A replaced POI database passes SQLite's integrity check, every row points at a
    real category and string, and every POI lies on the road map. With the factory
    folder given, its schema, compiled statements and categories must be unchanged.
+4. With --voice-pack, voices/en_GB may differ from the factory files, but only as the
+   pack says: every changed or added file must be what openlion.voicepack makes from
+   the factory folder (or, without it, a pack clip), and the grammar's phrase table
+   must read back with a valid WAV for every clip it names.
 """
 import argparse, csv, os, sqlite3, struct, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
-from openlion import flat, mapfile, mapwrite, features, osm_poi, roads, schema, search
+from openlion import flat, mapfile, mapwrite, features, osm_poi, roads, schema, search, voice_grammar, voicepack
 from openlion.build import POI_DB, REPLACEABLE, sha256
 from osm_names_region import lookup
 
@@ -27,6 +31,7 @@ ap.add_argument("card")
 ap.add_argument("factory", nargs="?")
 ap.add_argument("--manifest", default=os.path.join(os.path.dirname(HERE), "docs", "reference", "manifest_sha256.tsv"))
 ap.add_argument("--skip-lookups", action="store_true")
+ap.add_argument("--voice-pack")
 ARGS = ap.parse_args()
 CARD = ARGS.card
 FACTORY = ARGS.factory
@@ -42,7 +47,8 @@ for dp, _, fs in os.walk(CARD):
         files.add(os.path.relpath(os.path.join(dp, f), CARD).replace(os.sep, "/"))
 changed = {p for p in files & set(man) if sha256(os.path.join(CARD, p)) != man[p]}
 replaceable = {r.lower() for r in REPLACEABLE}      # card folders differ in case (MY10: edb/poi)
-protected = sorted(p for p in changed if p.lower() not in replaceable)
+voice_changed = {p for p in changed if ARGS.voice_pack and p.lower().startswith("voices/en_gb/")}
+protected = sorted(p for p in changed - voice_changed if p.lower() not in replaceable)
 poi_rel = next((p for p in changed if p.lower() == POI_DB.lower()), None)
 size = sum(os.path.getsize(os.path.join(CARD, p)) for p in files)
 print(f"files: {len(files)} ({size / 1e6:.0f} MB), missing {len(set(man) - files)}, extra {len(files - set(man))}")
@@ -50,11 +56,49 @@ print(f"untouched and identical to factory: {len(files & set(man)) - len(changed
 print(f"protected files changed: {protected or 'none'}")
 
 
+def check_voice():
+    """Problems with an installed voice pack (section 4 of the docstring)."""
+    out = []
+    pack = voicepack.load(ARGS.voice_pack)
+    added = {p for p in files - set(man) if p.lower().startswith("voices/en_gb/")}
+    if FACTORY:
+        rep, add, _ = voicepack.install(FACTORY, pack)
+        want = {**rep, **add}
+        for p in sorted(voice_changed | added):
+            if p not in want:
+                out.append(f"{p}: changed, but not by the voice pack")
+            elif open(os.path.join(CARD, p), "rb").read() != want[p]:
+                out.append(f"{p}: differs from what the voice pack makes")
+        out += [f"{p}: missing" for p in sorted(set(want) - files)]
+    else:
+        digests = set(pack.meta["clips"].values())
+        out += [f"{p}: not a voice pack clip" for p in sorted(voice_changed | added)
+                if p.lower().endswith(".wav") and sha256(os.path.join(CARD, p)) not in digests]
+    rel, folder = voicepack.voices_folder(CARD)
+    grammar = next(n for n in os.listdir(folder) if n.lower() == voicepack.GRAMMAR.lower())
+    _, table, _ = voice_grammar.read_table(open(os.path.join(folder, grammar), "rb").read())
+    names = {n.lower(): n for n in os.listdir(folder)}
+    for _, clip, _ in table:
+        n = names.get(clip.lower() + ".wav")
+        if n is None:
+            out.append(f"{rel}/{clip}.wav: named by the grammar but missing")
+            continue
+        try:
+            voicepack.check_wav(clip, open(os.path.join(folder, n), "rb").read())
+        except voicepack.VoicePackError as e:
+            out.append(str(e))
+    print(f"voice pack {pack.name}: {len(voice_changed)} factory voice files replaced, {len(added)} added, "
+          f"{len(table)} phrases, problems {len(out)}")
+    for line in out[:10]:
+        print("  - " + line)
+    return len(out)
+
+
 def raw(fn):
     d = open(os.path.join(DB, fn), "rb").read()
     return flat.unpack(d) if d[:4] == bytes([0x7A, 0x69, 0x70, 0x01]) else d
 
-problems = len(protected)
+problems = len(protected) + (check_voice() if ARGS.voice_pack else 0)
 rd = raw("auz.rd"); road_by_off = {r["offset"]: r for r in roads.iter_roads(rd)}; starts = set(road_by_off)
 numbered = badnum = oddcode = outside = 0
 print(f"road records: {len(starts):,}")
