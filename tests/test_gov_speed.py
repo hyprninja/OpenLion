@@ -117,6 +117,13 @@ class FeatureSpeedTest(unittest.TestCase):
         p = {"sz_type": "Ordinary Permanent", "sz_status": "Proposed", "sz_speed": "60 km/h"}
         self.assertIsNone(gov_speed.feature_speed(p)[0])
 
+    def test_act_values(self):
+        self.assertEqual(gov_speed.feature_speed({"SPEED_ZONE": "60", "CARRIAGEWAY": "ASCENDING"}), (60, None))
+        speed, why = gov_speed.feature_speed({"SPEED_ZONE": "SCHOOL ZONE", "CARRIAGEWAY": "DESCENDING"})
+        self.assertIsNone(speed)
+        self.assertIn("part-time", why)
+        self.assertIsNone(gov_speed.feature_speed({"SPEED_ZONE": "", "CARRIAGEWAY": "ASCENDING"})[0])
+
     def test_victoria_still_reads(self):
         self.assertEqual(gov_speed.feature_speed({"speed_limit": "80", "zone_conditions": ["Normal Operation"]}), (80, None))
         self.assertIsNone(gov_speed.feature_speed({"speed_limit": "40", "zone_conditions": ["School"]})[0])

@@ -1,10 +1,11 @@
-# 22. Speed limits from government open data (Victoria, WA, NSW, New Zealand)
+# 22. Speed limits from government open data (Victoria, WA, NSW, ACT, New Zealand)
 
 OSM has a `maxspeed` tag on about a third of Australian road segments. Some
 governments publish their whole speed limit register as open data. This report adds
-four of them as optional sources for roads OSM has no limit for: Victoria, Western
+five of them as optional sources for roads OSM has no limit for: Victoria, Western
 Australia (see [Western Australia](#western-australia)), New South Wales (see
-[New South Wales](#new-south-wales)) and New Zealand (see [New Zealand](#new-zealand)).
+[New South Wales](#new-south-wales)), the ACT (see [ACT](#act)) and New Zealand (see
+[New Zealand](#new-zealand)).
 
 ## Source
 
@@ -244,6 +245,55 @@ a source with `DataName` gets the catalogue date in its file name and title
 seen as new. Download and prepare take ~40 s in the app (22 MB kept). With all four
 sources on an Australia + New Zealand card, the page still fits without scrolling.
 
+## ACT
+
+The ACT open data portal's "ACT Speed Zones" (`hy95-2hum`) wasn't used: its rows were
+last updated on 13 November 2020. The ACT Government's ArcGIS service has a newer one,
+**Road Network Speed Zones**: `ACTGOV_Road_Network_2025_Speed_Zones_view`. It's a
+"static view of the road network speed zones in 2025", last edited 16 October 2025,
+licence **CC BY 4.0** (Australian Capital Territory). It's marked "indicative only".
+
+| | |
+|---|---|
+| Sections | 45,447, one per direction (`CARRIAGEWAY` ASCENDING / DESCENDING); ~3,700 km of road |
+| `SPEED_ZONE` | 50 (34,756), 60 (4,907), 40 (1,887), **SCHOOL ZONE (1,703, left out)**, 80, 100, 70, 20, 90, 10, 15, 25, 110 |
+| Roads | Municipal and Territory roads, plus private, university, hospital and defence roads |
+
+Each year is a new service, so `latest_act()` picks the newest year from the service
+list. It retries, because the list now and then comes back empty for a moment; the
+app's first check hit that once. `fetch_act()` pages the layer without the school
+zones: 43,744 sections, about 2.5 min (the server is slow). `prepare()` merges each
+road's two directions into 22,936 lines (18 pairs disagree on speed) in 3 s, 0.9 MB.
+
+### Results: ACT bbox
+
+OSM graph of 148.76,-35.92 to 149.40,-35.12 (41k ways); lookups 3 s.
+
+| | segments | km |
+|---|---:|---:|
+| OSM and ACT agree | 15,700 | 1,361 |
+| OSM and ACT disagree | 1,745 | 141 |
+| OSM only | 6,852 | 817 |
+| **Filled from the ACT (OSM had nothing)** | **23,894** | **2,347** |
+| Neither | 16,092 | 3,780 |
+
+**Agreement where both have a limit: 90.0 %** (freeway 94 %, highway 93 %, arterial
+90 %, street 88 %). Filled km: 50 → 1,804, 100 → 345, 60 → 128, 40 → 48. Largest
+disagreements, OSM → ACT: 60 → 50 (550), 50 → 60 (165), 60 → 80 (148), 80 → 60 (132).
+
+**Canberra card** (`make_card --bbox 148.76 -35.92 149.40 -35.12 --speed-zones
+act_speed.bin`): 64,481 segments, 47,158 with a limit (**73.1 %**), of which 22,815
+come from the ACT, against 37.8 % from OSM alone. `card_check`: 0 problems.
+
+### App
+
+The Australian Capital Territory is a checkbox on the Speed data step. The engine
+downloads it (`fetch-act`). The app reads its version from the service list
+(`SpeedZoneSource.YearlyService`: the newest year, "Road Network Speed Zones 2025"),
+retrying an empty list twice. Only Queensland and Tasmania are still in the
+coming-soon box. With all five sources on an Australia + New Zealand card, the page
+still fits without scrolling.
+
 ## New Zealand
 
 NZ Transport Agency Waka Kotahi, **National Speed Limit Register** (NSLR), licence
@@ -330,5 +380,5 @@ scrolling.
 
 ## Not done
 
-- Queensland, Tasmania and the ACT (their open data is stale or partial).
-- Car tests of cards with WA, NSW or NZ limits.
+- Queensland and Tasmania (their open data is stale or partial).
+- Car tests of cards with WA, NSW, ACT or NZ limits.

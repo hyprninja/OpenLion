@@ -67,12 +67,14 @@ public class SpeedZoneTests
     public void VictoriaAndWaAreAvailable_SaAndNtNotListed()
     {
         Assert.Equal(["VIC", "WA", "NSW", "QLD", "TAS", "ACT", "NZ"], SpeedZoneSource.All.Select(s => s.Code));
+        Assert.Same(SpeedZoneSource.AustralianCapitalTerritory, SpeedZoneSource.ByCode("act"));
         Assert.Same(SpeedZoneSource.NewSouthWales, SpeedZoneSource.ByCode("nsw"));
         Assert.Null(SpeedZoneSource.NewSouthWales.EngineFetch);
         Assert.Null(SpeedZoneSource.ByCode("SA"));
         Assert.Null(SpeedZoneSource.ByCode("NT"));
         Assert.Equal(["South Australia", "the Northern Territory"], SpeedZoneSource.NotOpen);
-        Assert.Equal(["VIC", "WA", "NSW", "NZ"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.Equal(["VIC", "WA", "NSW", "ACT", "NZ"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.Equal("fetch-act", SpeedZoneSource.AustralianCapitalTerritory.EngineFetch);
         Assert.All(SpeedZoneSource.All.Where(s => s.Code != "NZ"), s => Assert.Equal(MapCountry.Australia, s.Country));
         Assert.Equal(MapCountry.NewZealand, SpeedZoneSource.NewZealand.Country);
         Assert.Equal("fetch-nz", SpeedZoneSource.NewZealand.EngineFetch);
@@ -102,6 +104,22 @@ public class SpeedZoneTests
         Assert.Equal("nz-2026-11-06", r.FileName);
         Assert.Equal("National Speed Limit Register 6 November 2026", r.Name);
         Assert.Equal("services.arcgis.com", r.Url.Host);
+    }
+
+    [Fact]
+    public void Dated_YearlyService_TakesTheNewestYear()
+    {
+        var reply = JsonDocument.Parse("""
+            {"services": [{"name": "ACTGOV_Road_Network_2024_view", "type": "FeatureServer"},
+                          {"name": "ACTGOV_Road_Network_2025_Speed_Zones_view", "type": "FeatureServer"},
+                          {"name": "ACTGOV_Road_Network_2023_Speed_Zones_view", "type": "FeatureServer"},
+                          {"name": "ACTGOV_Speed_Hump_Assets", "type": "FeatureServer"}]}
+            """).RootElement;
+        var r = SpeedZoneDownloader.Dated(reply, SpeedZoneSource.AustralianCapitalTerritory);
+        Assert.Equal("act-2025", r.FileName);
+        Assert.Equal("Road Network Speed Zones 2025", r.Name);
+        var none = JsonDocument.Parse("""{"services": [{"name": "ACTGOV_Speed_Hump_Assets"}]}""").RootElement;
+        Assert.Throws<SpeedZoneException>(() => SpeedZoneDownloader.Dated(none, SpeedZoneSource.AustralianCapitalTerritory));
     }
 
     [Fact]

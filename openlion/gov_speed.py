@@ -16,6 +16,10 @@ carry the default limit Transport for NSW applies to that road (50 or 100), so u
 they're a definite value. School, School Bus, Variable, Wet Weather and Toll Plaza zones are
 part-time or conditional and left out.
 
+ACT (Transport Canberra and City Services, "Road Network Speed Zones", CC BY 4.0, a
+yearly static view; "indicative only"): every road as lines, one per direction, with
+SPEED_ZONE ("50", or "SCHOOL ZONE", which is left out).
+
 Western Australia (Main Roads WA, "Legal Speed Limits", CC BY 4.0, refreshed weekly):
 every public road as lines with SPEED_LIMIT ("60km/h") and CWY (Single, or Left/Right
 for each side of a divided road). About three quarters of the sections only say "50km/h
@@ -44,7 +48,8 @@ MAGIC_AREAS = b"OLGSPA1\0"
 SOURCES = {"VIC": "Victoria Department of Transport and Planning, Speed Zones (CC BY 4.0)",
            "WA": "Main Roads Western Australia, Legal Speed Limits (CC BY 4.0)",
            "NZ": "NZ Transport Agency Waka Kotahi, National Speed Limit Register (CC BY 4.0)",
-           "NSW": "Transport for NSW, Speed Zones (CC BY)"}
+           "NSW": "Transport for NSW, Speed Zones (CC BY)",
+           "ACT": "ACT Government (Transport Canberra and City Services), Road Network Speed Zones (CC BY 4.0)"}
 NORMAL = "Normal Operation"
 # NSW zone types that always apply. Left out: School, School Bus, Variable, Wet Weather and
 # Toll Plaza (part-time or conditional), and Truck & bus (not for cars).
@@ -110,6 +115,12 @@ def feature_speed(p):
         if not m:
             return None, "skipped (no speed)"
         speed = int(m.group(1))
+        return (speed, None) if 5 <= speed <= 130 else (None, "skipped (no speed)")
+    if "SPEED_ZONE" in p and "CARRIAGEWAY" in p:   # Australian Capital Territory
+        v = (p.get("SPEED_ZONE") or "").strip()
+        if not v.isdigit():
+            return None, "skipped (part-time or conditional zone)" if "SCHOOL" in v.upper() else "skipped (no speed)"
+        speed = int(v)
         return (speed, None) if 5 <= speed <= 130 else (None, "skipped (no speed)")
     if "speedLimitZoneValue" in p:                  # New Zealand
         if p.get("speedCategoryName") not in (None, "Permanent"):
@@ -744,16 +755,51 @@ def fetch_nz(folder, progress=None):
     return name, dest
 
 
+ACT_SERVICES = "https://services1.arcgis.com/E5n4f1VY84i0xSjy/ArcGIS/rest/services"
+ACT_SERVICE = re.compile(r"^ACTGOV_Road_Network_(\d{4})_Speed_Zones_view$")
+
+
+def latest_act():
+    """(name, file name, layer URL) of the newest yearly ACT speed zone view. Each year is a
+    new service ("ACTGOV_Road_Network_2025_Speed_Zones_view"), so the newest year is found
+    in the service list."""
+    import time
+    years = []
+    for attempt in range(3):    # the service list now and then comes back empty for a moment
+        services = _get_json(ACT_SERVICES + "?f=json", 60).get("services") or []
+        years = sorted(int(m.group(1)) for s in services if (m := ACT_SERVICE.match(s.get("name") or "")))
+        if years:
+            break
+        time.sleep(2 * (attempt + 1))
+    if not years:
+        raise RuntimeError("the ACT map service lists no road network speed zones")
+    y = years[-1]
+    url = f"{ACT_SERVICES}/ACTGOV_Road_Network_{y}_Speed_Zones_view/FeatureServer/0"
+    return f"Road Network Speed Zones {y}", f"act_speed_zones_{y}.geojson", url
+
+
+def fetch_act(folder, progress=None):
+    """Download the newest ACT speed zones, school zones left out. Returns (name, path)."""
+    name, fname, url = latest_act()
+    dest = os.path.join(folder, fname)
+    if not os.path.exists(dest):
+        os.makedirs(folder, exist_ok=True)
+        _fetch_pages(url + "/query", "SPEED_ZONE <> 'SCHOOL ZONE'", "SPEED_ZONE,CARRIAGEWAY,ROAD_NAME", dest, progress)
+    return name, dest
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) == 3 and sys.argv[1] == "fetch-vic":
         print(*fetch_vic(sys.argv[2]), sep="\n")
     elif len(sys.argv) == 3 and sys.argv[1] == "fetch-wa":
         print(*fetch_wa(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep="\n")
+    elif len(sys.argv) == 3 and sys.argv[1] == "fetch-act":
+        print(*fetch_act(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep=chr(10))
     elif len(sys.argv) == 3 and sys.argv[1] == "fetch-nz":
         print(*fetch_nz(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep=chr(10))
     elif len(sys.argv) == 4 and sys.argv[1] == "prepare":
         print(prepare(sys.argv[2], sys.argv[3]))
     else:
-        sys.exit("usage: python -m openlion.gov_speed fetch-vic | fetch-wa | fetch-nz <folder> | "
+        sys.exit("usage: python -m openlion.gov_speed fetch-vic | fetch-wa | fetch-act | fetch-nz <folder> | "
                  "prepare <in.geojson> <out.bin>")

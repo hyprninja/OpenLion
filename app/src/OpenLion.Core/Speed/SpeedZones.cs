@@ -21,9 +21,12 @@ namespace OpenLion.Core.Speed;
 /// only offered when that country is on the card.</param>
 /// <param name="DataName">The data's name in its version ("Legal Speed Limits 5 November 2026"), for
 /// sources whose catalogue has no file names; null takes the catalogue's own title.</param>
+/// <param name="YearlyService">For data published as one ArcGIS service per year: a pattern for the
+/// service name with the year as its first group. <see cref="PackageApi"/> is then the service list,
+/// and the newest year is the version.</param>
 public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi, IReadOnlyList<string> AllowedHosts,
     string Credit, int ApproxMb, string Blurb = "", string? EngineFetch = null, string CountryCode = "AU",
-    string? DataName = null)
+    string? DataName = null, string? YearlyService = null)
 {
     public static readonly SpeedZoneSource Victoria = new("VIC", "Victoria",
         new Uri("https://discover.data.vic.gov.au/api/3/action/package_show?id=speed-zones"),
@@ -56,6 +59,15 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
         "Every road in the state, from Transport for NSW's speed zone register.",
         DataName: "Speed Zones");
 
+    /// <summary>The ACT's road network speed zones: a static view each year, as a new ArcGIS service.</summary>
+    public static readonly SpeedZoneSource AustralianCapitalTerritory = new("ACT", "Australian Capital Territory",
+        new Uri("https://services1.arcgis.com/E5n4f1VY84i0xSjy/ArcGIS/rest/services?f=json"),
+        ["services1.arcgis.com"],
+        "Speed zone data © ACT Government (Transport Canberra and City Services), CC BY 4.0", 15,
+        "Every road in the territory, a yearly snapshot from the ACT Government.",
+        "fetch-act", DataName: "Road Network Speed Zones",
+        YearlyService: @"^ACTGOV_Road_Network_(\d{4})_Speed_Zones_view$");
+
     static SpeedZoneSource Later(string code, string title) => new(code, title, null, [], "", 0);
 
     /// <summary>The states and territories that publish (or may soon publish) usable open data, the
@@ -70,7 +82,7 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
         NewSouthWales,
         Later("QLD", "Queensland"),
         Later("TAS", "Tasmania"),
-        Later("ACT", "Australian Capital Territory"),
+        AustralianCapitalTerritory,
         NewZealand,
     ];
 
@@ -142,11 +154,22 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
     {
         if (source.PackageApi is not { } api)
             throw new SpeedZoneException($"There's no speed zone data for {source.Title} yet.");
-        using var r = await http.GetAsync(api, ct);
-        r.EnsureSuccessStatusCode();
-        await using var s = await r.Content.ReadAsStreamAsync(ct);
-        using var doc = await JsonDocument.ParseAsync(s, cancellationToken: ct);
-        return source.EngineFetch is null ? Newest(doc.RootElement, source) : Dated(doc.RootElement, source);
+        // ArcGIS service lists now and then come back empty for a moment: try a few times
+        for (int attempt = 1; ; attempt++)
+        {
+            using var r = await http.GetAsync(api, ct);
+            r.EnsureSuccessStatusCode();
+            await using var s = await r.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(s, cancellationToken: ct);
+            try
+            {
+                return source.EngineFetch is null ? Newest(doc.RootElement, source) : Dated(doc.RootElement, source);
+            }
+            catch (SpeedZoneException) when (source.YearlyService is not null && attempt < 3)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2 * attempt), ct);
+            }
+        }
     }
 
     /// <summary>For data the engine fetches: the catalogue's last-updated date is the version
@@ -155,6 +178,8 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
     {
         DateTime? when = null;
         string? title = null;
+        if (source.YearlyService is { } pattern)
+            return Yearly(reply, source, pattern);
         try
         {
             if (reply.TryGetProperty("result", out var r))        // CKAN package_show
@@ -180,6 +205,22 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         title = source.DataName ?? title;
         var name = $"{(string.IsNullOrWhiteSpace(title) ? "Speed limits" : title)} {when.Value.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}";
         return new SpeedZoneRemote(source.PackageApi!, $"{source.Code.ToLowerInvariant()}-{when.Value:yyyy-MM-dd}", name, when);
+    }
+
+    /// <summary>The newest year in an ArcGIS service list ("act-2025", "Road Network Speed Zones 2025").</summary>
+    static SpeedZoneRemote Yearly(JsonElement reply, SpeedZoneSource source, string pattern)
+    {
+        var re = new System.Text.RegularExpressions.Regex(pattern);
+        int year = 0;
+        if (reply.TryGetProperty("services", out var list) && list.ValueKind == JsonValueKind.Array)
+            foreach (var s in list.EnumerateArray())
+                if (s.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String &&
+                    re.Match(n.GetString()!) is { Success: true } m && int.TryParse(m.Groups[1].Value, out var y))
+                    year = Math.Max(year, y);
+        if (year == 0)
+            throw new SpeedZoneException($"The {source.Title} map service lists no speed zone data.");
+        return new SpeedZoneRemote(source.PackageApi!, $"{source.Code.ToLowerInvariant()}-{year}",
+            $"{source.DataName ?? "Speed zones"} {year}", new DateTime(year, 1, 1, 0, 0, 0, DateTimeKind.Utc));
     }
 
     /// <summary>The newest GeoJSON resource in a CKAN package_show reply. Public for tests.</summary>
