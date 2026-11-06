@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using OpenLion.Core.Speed;
 
 namespace OpenLion.Core.Engine;
 
@@ -23,6 +24,8 @@ public sealed record BuildResult
     public int Files { get; init; }
     public long Bytes { get; init; }
     public int Replaced { get; init; }
+    /// <summary>Where each state's speed cameras came from, if the build reported it.</summary>
+    public IReadOnlyList<CameraState> Cameras { get; init; } = [];
     /// <summary>Stage that failed, if known.</summary>
     public string? FailedStage { get; init; }
     public string? Error { get; init; }
@@ -36,8 +39,12 @@ public sealed record BuildResult
 /// <param name="WorkFolder">Engine working folder (cached OSM reads, new tables).</param>
 /// <param name="OutputNavigation">navigation/ folder to create.</param>
 /// <param name="Bbox">Optional area (lon0 lat0 lon1 lat1) for quick test builds.</param>
+/// <param name="SpeedZones">Prepared government speed zone files: limits for roads OSM has none for.</param>
+/// <param name="CameraFolder">Folder for the official speed camera lists the engine downloads
+/// (other states get OSM's cameras); null: OSM cameras everywhere.</param>
 public sealed record BuildRequest(IReadOnlyList<(string Country, string Path)> Extracts, string FactoryNavigation,
-    string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null)
+    string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null,
+    IReadOnlyList<string>? SpeedZones = null, string? CameraFolder = null)
 {
     /// <summary>One Australian extract (OpenLion 1.0).</summary>
     public BuildRequest(string pbf, string factoryNavigation, string? manifest, string workFolder,
@@ -79,25 +86,34 @@ public static class MapBuild
             args.AddRange(["--manifest", req.Manifest]);
         if (req.Bbox is { Length: 4 } b)
             args.AddRange(["--bbox", .. b.Select(x => x.ToString(CultureInfo.InvariantCulture))]);
+        foreach (var z in req.SpeedZones ?? [])
+            args.AddRange(["--speed-zones", z]);
+        if (req.CameraFolder is not null)
+            args.AddRange(["--cameras", req.CameraFolder]);
         return args;
     }
 
+    /// <param name="cameras">Called with the speed camera sources: once when the build starts
+    /// (no counts yet), once at the end.</param>
     public static async Task<BuildResult> RunAsync(EnginePaths engine, BuildRequest req,
-        IProgress<BuildProgress>? progress = null, CancellationToken ct = default)
+        IProgress<BuildProgress>? progress = null, CancellationToken ct = default,
+        IProgress<IReadOnlyList<CameraState>>? cameras = null)
     {
         var args = Arguments(req);
-        var parser = new Parser(progress);
+        var parser = new Parser(progress, cameras);
         // Below normal priority: the build takes most of an hour and the PC should stay usable.
         int code = await EngineRunner.RunAsync(engine, args, parser.Feed, ct, ProcessPriorityClass.BelowNormal);
         return parser.Finish(code);
     }
 
     /// <summary>Turns make_card's output lines into progress and a result. Public for tests.</summary>
-    public sealed class Parser(IProgress<BuildProgress>? progress = null)
+    public sealed class Parser(IProgress<BuildProgress>? progress = null,
+        IProgress<IReadOnlyList<CameraState>>? cameras = null)
     {
         readonly object _lock = new();
         readonly List<string> _log = [];
         List<BuildStage> _stages = [];
+        IReadOnlyList<CameraState> _cameras = [];
         string? _current;
         JsonElement? _result;
 
@@ -133,6 +149,10 @@ public static class MapBuild
                             progress.Report(new BuildProgress(_stages[i], i, _stages.Count,
                                 total == 0 ? 0 : before / total, total == 0 ? 0 : _stages[i].Weight / total, total));
                         }
+                        break;
+                    case "cameras":
+                        _cameras = e.GetProperty("states").EnumerateArray().Select(CameraState.FromJson).ToList();
+                        cameras?.Report(_cameras);
                         break;
                     case "result":
                         _result = e;
@@ -170,6 +190,7 @@ public static class MapBuild
                     Files = r.TryGetProperty("files", out var f) ? f.GetInt32() : 0,
                     Bytes = r.TryGetProperty("bytes", out var b) ? b.GetInt64() : 0,
                     Replaced = r.TryGetProperty("replaced", out var rp) ? rp.GetInt32() : 0,
+                    Cameras = _cameras,
                     FailedStage = ok ? null : Label(Str("stage") ?? _current),
                     Error = ok ? null : Str("error") ?? $"exit code {exitCode}",
                     ExitCode = exitCode,

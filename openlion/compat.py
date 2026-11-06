@@ -36,15 +36,7 @@ KINDS = ["rd", "str", "si", "mp0", "mg1", "mg2", "mg3", "mg4", "fea",
 FIXED_RECORDS = {"ctr", "stt", "cny", "cl", "rl", "cal", "cat"}
 FLAT_MAGIC = b"zip\x01"
 
-LIST_CODECS = [
-    ("pos_list", "pos_cnt", lambda b, c: mapwrite.decode_positions(b), mapwrite.encode_positions),
-    ("exc_pos_list", "exc_pos_cnt", lambda b, c: mapwrite.decode_positions(b), mapwrite.encode_positions),
-    ("node_list", "node_cnt", mapwrite.decode_nodes, mapwrite.encode_nodes),
-    ("seg_list", "seg_cnt", mapwrite.decode_segments, mapwrite.encode_segments),
-    ("shape_list", "shape_cnt", mapwrite.decode_shapes, mapwrite.encode_shapes),
-    ("adas_list", "adas_cnt", mapwrite.decode_adas, mapwrite.encode_adas),
-    ("turn_res_list", "turn_res_cnt", lambda b, c: mapwrite.decode_turn_res(b), mapwrite.encode_turn_res),
-]
+LIST_CODECS = mapwrite.LIST_CODECS
 
 
 class Out:
@@ -172,7 +164,7 @@ def check_map(kind, d, progress):
         bad_here = []
         for lname, cname, dec, enc in LIST_CODECS:
             blob = pc.get(lname)
-            if enc(dec(blob, pc.fields[pc.idx(cname)])) != blob:
+            if enc(dec(blob, pc.fields[pc.idx(cname)], pc)) != blob:
                 lists_diff[lname] = lists_diff.get(lname, 0) + 1
                 bad_here.append(lname)
         new = pc.encode()

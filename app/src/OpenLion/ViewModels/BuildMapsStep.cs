@@ -7,12 +7,13 @@ using OpenLion.Core;
 using OpenLion.Core.Engine;
 using OpenLion.Core.Osm;
 using OpenLion.Core.Reports;
+using OpenLion.Core.Speed;
 
 namespace OpenLion.ViewModels;
 
 public enum BuildPhase { Ready, Building, Done, Failed, Cancelled, Blocked }
 
-/// <summary>Step 5: run the engine (openlion.make_card) to turn the OSM extract and the factory
+/// <summary>Step 6: run the engine (openlion.make_card) to turn the OSM extract and the factory
 /// copy into a finished, checked navigation/ folder.</summary>
 public sealed class BuildMapsStep : StepViewModel
 {
@@ -34,7 +35,7 @@ public sealed class BuildMapsStep : StepViewModel
     BuildProgress? _progress;
     BuildPhase _phase;
     double _percent;
-    string _status = "", _detail = "", _elapsed = "", _summary = "", _intro = "", _warning = "";
+    string _status = "", _detail = "", _elapsed = "", _summary = "", _intro = "", _warning = "", _cameraNote = "";
     string? _reportPath;
 
     public BuildMapsStep(Session session) : base("Build maps")
@@ -86,6 +87,9 @@ public sealed class BuildMapsStep : StepViewModel
     /// <summary>Low memory / disk space, or a test-area build.</summary>
     public string Warning { get => _warning; private set { if (Set(ref _warning, value)) Raise(nameof(HasWarning)); } }
     public bool HasWarning => Warning.Length > 0;
+    /// <summary>Which states' speed cameras are official and up to date, and which get OSM's guess.</summary>
+    public string CameraNote { get => _cameraNote; private set { if (Set(ref _cameraNote, value)) Raise(nameof(HasCameraNote)); } }
+    public bool HasCameraNote => CameraNote.Length > 0;
     public string? ReportPath { get => _reportPath; private set => Set(ref _reportPath, value); }
 
     public override bool CanGoNext => Phase == BuildPhase.Done;
@@ -102,21 +106,23 @@ public sealed class BuildMapsStep : StepViewModel
             return;
         var osm = _session.Osm;
         var build = _session.State.Build;
-        if (build is not null && osm is not null && build.Matches(_session.FactoryRecord, BuildRecord.OsmKey(osm)))
+        if (build is not null && osm is not null && build.Matches(_session.FactoryRecord, _session.BuildKey()))
         {
             _session.Build = build;
             _session.RequiredBytes = build.Bytes;
-            Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {_session.DescribeOsm()}.";
+            Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {_session.DescribeOsm()}{SpeedNote}.";
             Detail = $"{build.Files:N0} files, {build.Bytes / 1e6:N0} MB, checked.";
             Warning = build.Partial ? $"This is a TEST build of a small area only, not all of {Places}." : "";
+            CameraNote = build.CameraNote ?? "";
             Phase = BuildPhase.Done;
             return;
         }
         _session.Build = null;
         Status = Detail = "";
+        CameraNote = SpeedCameras.Preview(_session.Countries);
         Phase = BuildPhase.Ready;
         Intro = osm is null ? "" :
-            $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}, using your factory card's copy. " +
+            $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}{SpeedNote}, using your factory card's copy. " +
             $"This takes {Duration} on a fast PC (longer on slower ones). You can keep using the PC, " +
             "and OpenLion stops Windows going to sleep until it's done." +
             (_session.Countries.Count == 1
@@ -131,6 +137,9 @@ public sealed class BuildMapsStep : StepViewModel
     }
 
     string Places => MapCountry.Describe(_session.Countries);
+
+    /// <summary>", with speed limits from Victorian speed zones (...)" or "".</summary>
+    string SpeedNote => _session.SpeedZones.Count == 0 ? "" : ", with extra speed limits from " + _session.DescribeSpeedZones();
 
     /// <summary>Rough build time, by extract size and PC (Australia + New Zealand, 1.4 GB of extracts:
     /// 25 minutes on a 44-thread PC with 64 GB, about an hour and a half in the memory-saving plan).</summary>
@@ -202,6 +211,7 @@ public sealed class BuildMapsStep : StepViewModel
         Percent = 0;
         Status = "Starting the map engine…";
         Detail = "";
+        CameraNote = "";
         Warning = CheckResources();
         Phase = BuildPhase.Building;
         _clock.Restart();
@@ -226,11 +236,13 @@ public sealed class BuildMapsStep : StepViewModel
 
             var bbox = MapBuild.BboxFromEnvironment();
             var extracts = _session.Countries.Zip(osm, (c, e) => (c.Code, e.Path)).ToList();
+            var zones = _session.SpeedZones.Select(z => z.Path).ToList();
             var req = new BuildRequest(extracts, nav, FactoryManifest is { } m && File.Exists(m) ? m : null,
-                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox);
+                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, zones, AppPaths.CamerasFolder);
             AppLog.Write($"build: engine {engine.Python} ({(engine.Bundled ? "bundled" : "dev")}), " +
                          $"extracts {string.Join(", ", extracts.Select(x => $"{x.Code}={x.Path}"))}, " +
-                         $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}");
+                         $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}" +
+                         (zones.Count == 0 ? "" : ", speed zones " + string.Join(", ", zones)));
             var progress = new Progress<BuildProgress>(p =>
             {
                 _progress = p;
@@ -240,7 +252,13 @@ public sealed class BuildMapsStep : StepViewModel
                 AppLog.Write($"build: stage {p.Stage.Id} at {_clock.Elapsed:hh\\:mm\\:ss}");
                 Tick();
             });
-            result = await MapBuild.RunAsync(engine, req, progress, ct);
+            var cameras = new Progress<IReadOnlyList<CameraState>>(states =>
+            {
+                CameraNote = SpeedCameras.Describe(states);
+                AppLog.Write("build: speed cameras " + string.Join(", ", states.Select(s =>
+                    $"{s.Code} {s.Source}{(s.Cameras is { } n ? " " + n : "")}{(s.DownloadFailed ? " (download failed)" : "")}")));
+            });
+            result = await MapBuild.RunAsync(engine, req, progress, ct, cameras);
             AppLog.Write($"build: ok={result.Ok}, exit {result.ExitCode}, {result.Files} files, {result.Bytes} bytes, " +
                          $"error {result.Error}");
             if (!result.Ok)
@@ -249,13 +267,15 @@ public sealed class BuildMapsStep : StepViewModel
                 return;
             }
             var record = new BuildRecord(result.CardPath ?? AppPaths.BuildOutput, _session.FactoryRecord?.VolumeSerial ?? 0,
-                BuildRecord.OsmKey(osm), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null);
+                BuildRecord.Key(osm, _session.SpeedZones), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null,
+                result.Cameras.Count > 0 ? SpeedCameras.Describe(result.Cameras) : null);
+            CameraNote = record.CameraNote ?? "";
             _session.State.Build = record;
             _session.State.Save();
             _session.Build = record;
             _session.RequiredBytes = record.Bytes;
             Percent = 100;
-            Status = $"Maps are ready: built in {Format(_clock.Elapsed)} from {_session.DescribeOsm()}.";
+            Status = $"Maps are ready: built in {Format(_clock.Elapsed)} from {_session.DescribeOsm()}{SpeedNote}.";
             Detail = $"{result.Files:N0} files, {result.Bytes / 1e6:N0} MB. {result.Replaced} map files replaced, " +
                      "everything else is identical to your factory card, and the new card passed its checks.";
             Warning = bbox is not null ? $"This is a TEST build of a small area only, not all of {Places}." : "";
@@ -306,6 +326,6 @@ public sealed class BuildMapsStep : StepViewModel
             Detail = "The error report couldn't be saved: " + re.Message;
         }
         _summary = $"OpenLion {ErrorReport.AppVersion}: map build failed{(stage is null ? "" : " during " + stage)}.\n{message}\n" +
-                   $"OSM data: {(_session.Osm is { } o ? BuildRecord.OsmKey(o) : "none")}\nMemory: {GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (double)(1L << 30):N0} GB";
+                   $"OSM data: {_session.BuildKey() ?? "none"}\nMemory: {GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (double)(1L << 30):N0} GB";
     }
 }

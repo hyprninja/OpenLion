@@ -126,15 +126,22 @@ def extract(map_bytes: bytes) -> Graph:
         X = [p for x, y, d in mapwrite.decode_positions(pc.get("exc_pos_list"))
              for p in _expand(x, y, d)]
         nodes = mapwrite.decode_nodes(pc.get("node_list"), f("node_cnt"))
-        segs = mapwrite.decode_segments(pc.get("seg_list"), f("seg_cnt"))
-        shapes = mapwrite.decode_shapes(pc.get("shape_list"), f("shape_cnt")) or []
+        segs = mapwrite.decode_segments(pc.get("seg_list"), f("seg_cnt"), pc.layer0())
         adas = mapwrite.decode_adas(pc.get("adas_list"), f("adas_cnt"))
         turns = mapwrite.decode_turn_res(pc.get("turn_res_list"))
         names = collections.defaultdict(list)
-        for kind, size in (("abs_addr", 7), ("short_addr", 11), ("long_addr", 13)):
-            for rec in mapwrite.decode_fixed(pc.get(kind + "_list"), size):
-                seg = int.from_bytes(rec[0:2], "little")
-                names[seg].append((kind, rec[2], int.from_bytes(rec[3:7], "little"), rec[7:]))
+        if pc.schema.compact:
+            # MY10: shapes and road links sit in the mp0 segment records (no nameinfo)
+            shapes = [s["shape"] for s in segs[:f("shape_cnt")]]
+            for i, s in enumerate(segs):
+                for kind, road, rng in s.get("names") or ():
+                    names[i].append((kind, 0, road, rng))
+        else:
+            shapes = mapwrite.decode_shapes(pc.get("shape_list"), f("shape_cnt")) or []
+            for kind, size in (("abs_addr", 7), ("short_addr", 11), ("long_addr", 13)):
+                for rec in mapwrite.decode_fixed(pc.get(kind + "_list"), size):
+                    seg = int.from_bytes(rec[0:2], "little")
+                    names[seg].append((kind, rec[2], int.from_bytes(rec[3:7], "little"), rec[7:]))
         ids = []
         for i, n in enumerate(nodes):
             if n.get("continuation"):

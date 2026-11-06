@@ -9,7 +9,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import graph, mapfile, tiler  # noqa: E402
+from openlion import graph, mapfile, schema, tiler  # noqa: E402
 
 LAYER = {"mp0": 0, "mg1": 1, "mg2": 2, "mg3": 3, "mg4": 4}
 
@@ -56,5 +56,6 @@ def run(db, layer_name):
 
 if __name__ == "__main__":
     db = sys.argv[1]
+    print("datamodel: Arriba", schema.use_card(db).name)
     for name in sys.argv[2:] or ["mg4", "mg3", "mg2", "mg1", "mp0"]:
         run(db, name)

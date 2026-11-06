@@ -32,6 +32,11 @@ public static class AppPaths
     /// <summary>One extract per country: Australia's stays where OpenLion 1.0 kept it.</summary>
     public static string OsmFolderFor(MapCountry c) =>
         c == MapCountry.Australia ? OsmFolder : Path.Combine(OsmFolder, c.Code.ToLowerInvariant());
+    /// <summary>One folder per state's prepared speed zones (speed/vic, ...).</summary>
+    public static string SpeedZonesFolderFor(Speed.SpeedZoneSource s) =>
+        Path.Combine(Root, "speed", s.Code.ToLowerInvariant());
+    /// <summary>Official speed camera lists, downloaded by the engine at each build (VIC.json, ...).</summary>
+    public static string CamerasFolder => Path.Combine(Root, "cameras");
     /// <summary>Engine working folder: cached OSM reads and the new map tables.</summary>
     public static string BuildWorkFolder => Path.Combine(Root, "build", "work");
     /// <summary>The finished navigation/ folder that gets written to the new card.</summary>
@@ -49,12 +54,23 @@ public static class AppPaths
 /// <summary>A finished build: which factory card and OSM extracts it came from.</summary>
 /// <param name="OsmFileName">The extract's file name; several countries' names joined by "+"
 /// (see <see cref="OsmKey"/>).</param>
+/// <param name="CameraNote">What the build said about its speed camera sources (SpeedCameras.Describe).</param>
 public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial, string OsmFileName, DateOnly? OsmDate,
-    int Files, long Bytes, DateTime BuiltUtc, bool Partial)
+    int Files, long Bytes, DateTime BuiltUtc, bool Partial, string? CameraNote = null)
 {
     /// <summary>What a build is keyed on: the extracts' file names in country order. One
     /// Australian extract gives its plain file name, as OpenLion 1.0 stored it.</summary>
     public static string OsmKey(IEnumerable<OsmExtract> extracts) => string.Join("+", extracts.Select(e => e.FileName));
+
+    /// <summary><see cref="OsmKey"/> plus the speed zone data used, if any ("...|speed:VIC=Speed Zones
+    /// September 2026"), so a build is redone when the speed data changes. Without speed data
+    /// it's the plain OSM key, as earlier versions stored it.</summary>
+    public static string Key(IEnumerable<OsmExtract> extracts, IEnumerable<Speed.SpeedZoneData>? speedZones)
+    {
+        var key = OsmKey(extracts);
+        var z = (speedZones ?? []).OrderBy(d => d.Code, StringComparer.Ordinal).ToList();
+        return z.Count == 0 ? key : key + "|speed:" + string.Join(",", z.Select(d => $"{d.Code}={d.SourceFile}"));
+    }
 
     /// <summary>Still usable: the folder exists and it was built from this card and extract.</summary>
     public bool Matches(FactoryCardRecord? factory, string? osmFileName) =>
@@ -73,6 +89,8 @@ public sealed class AppState
     public BuildRecord? Build { get; set; }
     /// <summary>Countries to put on the card (MapCountry codes); null means Australia, as in 1.0.</summary>
     public List<string>? Countries { get; set; }
+    /// <summary>States whose speed zone data goes on the card (SpeedZoneSource codes); null means none.</summary>
+    public List<string>? SpeedZones { get; set; }
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

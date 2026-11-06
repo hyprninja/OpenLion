@@ -289,10 +289,13 @@ def junction_nodes(ways, buckets=8):
     return out
 
 
-def build_graph(c, max_shape_points=500, consume=False):
+def build_graph(c, max_shape_points=500, consume=False, speed_fill=None):
     """Collected OSM data -> (Graph, seginfo record list, stats).
     consume=True empties c.ways as it goes, so the raw ways and the finished graph are
-    never in memory together (the pipeline takes what else it needs from them first)."""
+    never in memory together (the pipeline takes what else it needs from them first).
+    speed_fill: optional callable(xy) -> km/h or None, asked for road pieces OSM has
+    no maxspeed for (gov_speed.Index.lookup). Service roads and ramps are never asked:
+    they run beside bigger roads and would pick up those roads' limits."""
     junction = junction_nodes(c.ways)
     in_restriction = {w for _, frm, _, to in c.restrictions for w in (frm, to)}
     g = Graph()
@@ -351,14 +354,19 @@ def build_graph(c, max_shape_points=500, consume=False):
             if v not in si_index:
                 si_index[v] = len(si_records)
                 si_records.append(v)
-            adas = shared({"content": 2, "speed_kmh": speed, "lanes": None, "n_limits": 0}) if speed else None
+            piece_speed = speed
+            hw = tags["highway"]
+            if speed is None and speed_fill is not None and hw != "service" and not hw.endswith("_link"):
+                piece_speed = speed_fill(xy)
+                stats["speed limit from government data"] += bool(piece_speed)
+            adas = shared({"content": 2, "speed_kmh": piece_speed, "lanes": None, "n_limits": 0}) if piece_speed else None
             s = g.add_segment(a, b, length_ft(xy), si_index[v], None, Shape(shape) if shape else None, [], adas)
             g.seg_label.append(label)
             g.seg_country.append(tags.get(COUNTRY_TAG, 0))
             if wid in in_restriction:
                 piece_of[wid].append((s, seq[0][0], seq[-1][0]))
             stats["segments"] += 1
-            stats["with speed limit"] += bool(speed)
+            stats["with speed limit"] += bool(piece_speed)
 
     # arms: clockwise from north by the bearing of the first step away from the node
     for s in range(g.n_segs):

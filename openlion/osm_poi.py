@@ -7,21 +7,25 @@ languages, statements and database attributes exactly. Only the POI rows and the
 strings are replaced:
 
   Poi_BaseAttributes     Poi_ID, PoiPartition_ID (= category), Coordinate, Name_String_ID,
-                         Name, PhoneNumber ("61396704506")
+                         Name, PhoneNumber ("61396704506") (MY10: the first four only)
   Poi_AddressAttributes  house number, street, city, region (state), country and phone
                          ("+(61)-3-96704506") as String_BaseAttributes IDs
   Poi_AlertAttributes    one row per POI, all NULL except for the road-sense alerts
-  String_BaseAttributes  IDs 1..421 are category/icon/language strings and are kept
+  String_BaseAttributes  IDs 1..n are category/icon/language strings and are kept
+                         (n = 421, or 537 on MY10)
 
 Coordinate = Morton code: bit 2k is bit k of x, bit 2k+1 is bit k of y, with
 x = (lon + 180) * 2^32 / 360 and y = (lat + 180) * 2^32 / 360.
 
-The road-sense categories (school zone, camera, blackspot, railway crossing, check
-speed, school point) are left empty: their direction and camera fields aren't
-decoded well enough to warn correctly. The factory link/entry points (categories 82,
-83) and POI relations aren't rebuilt either.
+Speed cameras (cameras.py, report 23) go in the "camera" category, found by name since
+its ID differs per card: one POI per enforced direction, with Poi_AlertAttributes
+SpeedLimit, Direction (travel heading), TimeStamp ('06-NOV-26'), CameraType and
+FixtureStatus 1, as on the factory cards. The other road-sense categories (school zone,
+blackspot, railway crossing, check speed, school point) are left empty. The factory
+link/entry points (categories 82, 83) and POI relations aren't rebuilt.
 """
 import collections
+import datetime
 import os
 import re
 import shutil
@@ -99,9 +103,58 @@ RULES = (
     ("highway", {"rest_area", "services"}, 44),
     ("place", {"city", "town", "village", "suburb", "hamlet", "locality"}, 18),
 )
+# The rules use the MY12 card's Category_IDs. Other cards number their categories
+# differently (MY15/MY17 and MY10 each have their own order), so build() writes each POI
+# under the card's ID for the same category name. Partition ID = category ID on every card.
+CATEGORY_NAMES = {
+    1: "home improvement store", 2: "auto service", 3: "place of worship", 4: "restaurant",
+    5: "petrol station", 6: "hotel", 7: "shopping centre", 8: "grocery store", 9: "bank", 10: "atm",
+    11: "library", 12: "school", 13: "parking", 14: "marina", 15: "park/recreation area",
+    16: "sports complex", 17: "golf course", 18: "city centre", 19: "hospital", 20: "auto dealership",
+    21: "city hall", 22: "nightclub", 23: "rental car", 24: "police station", 25: "winery", 26: "airport",
+    27: "higher education", 28: "train station", 29: "coffee shop", 30: "museum", 31: "tourist attraction",
+    32: "performing arts", 33: "historical monument", 35: "bowling centre", 36: "cinema",
+    37: "bus station", 38: "tourist information", 39: "convention centre", 40: "court house",
+    41: "ferry terminal", 42: "post office", 43: "casino", 44: "rest area", 45: "amusement park",
+    46: "ice scating rink", 47: "pharmacy", 48: "medical service", 49: "embassy", 50: "cemetery",
+    53: "consumer electronic store", 60: "public restroom", 61: "convenience store",
+    62: "government office", 65: "department store", 66: "office supply store", 67: "campground",
+    68: "book store", 69: "clothing store", 70: "sporting goods store",
+    55: "camera",                     # speed cameras (cameras.py), not from RULES
+}
+CAMERA_CAT = 55
+
+
+# road-sense alert categories (left empty by OSM builds)
+ROAD_SENSE = ("school zone", "camera", "blackspot", "railway", "check speed", "school point")
+
+
+def card_categories(con):
+    """{category name: Category_ID} from a POI database."""
+    return {v: cid for cid, v in con.execute(
+        "select c.Category_ID, s.Value from Category_BaseAttributes c "
+        "join String_BaseAttributes s on s.String_ID = c.Name_String_ID")}
+
+
 # categories that may be unnamed in OSM; they get this label instead
 DEFAULT_NAME = {10: "ATM", 60: "PUBLIC TOILET", 13: "PARKING", 44: "REST AREA", 5: "PETROL STATION"}
-FACTORY_STRINGS_MAX = 421          # String_IDs 1..421 belong to categories, icons, languages
+# String_IDs 1..n belong to categories, icons and languages; POI names follow.
+# n = 421 on MY12/MY15/MY17, 537 on MY10. factory_strings_max() reads it from the database.
+
+_FACTORY_STRING_REFS = (
+    "select Name_String_ID from Category_BaseAttributes union select Name_String_ID from Icon_BaseAttributes "
+    "union select Path_String_ID from Icon_BaseAttributes union select Language_String_ID from Language_BaseAttributes "
+    "union select String_ID from String_TranslationString_Relation "
+    "union select Translation_String_ID from String_TranslationString_Relation")
+
+
+def factory_strings_max(con):
+    """Last String_ID used by categories, icons and languages; they must be exactly 1..n."""
+    keep = {r[0] for r in con.execute(_FACTORY_STRING_REFS)} - {None}
+    n = max(keep)
+    if keep != set(range(1, n + 1)):
+        raise ValueError("factory POI string layout changed (category/icon/language strings are not 1..n)")
+    return n
 MAXLEN = 69                        # longest factory POI name
 
 
@@ -209,11 +262,15 @@ def read(pbf_path, bbox=None, node_index="flex_mem"):
     return out
 
 
-def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, places=()):
+CAMERA_NAME = "Camera"           # factory POI name of every camera
+
+
+def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, places=(), cameras=(), today=None):
     """Write out_path: the factory POI database with its POIs replaced by `pois`.
     areas / places: osm_names.read_boundaries() / read_places() output, for the city /
     state of each POI. A POI's country is the catalog in tags[COUNTRY_TAG] (default 0).
-    bbox: map extent (deg * 1e5); POIs outside it (e.g. Heard Island) are left out."""
+    bbox: map extent (deg * 1e5); POIs outside it (e.g. Heard Island) are left out.
+    cameras: cameras.place() output, written to the card's camera category."""
     from . import countries, osm_names
     stats = collections.Counter()
     loc_idx = st_idx = None
@@ -239,7 +296,18 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
             continue
         seen.add(key)
         rows.append((morton(x, y), cat, x, y, name, tags))
-    rows.sort()
+    if cameras:
+        from . import countries as _c
+        for cam in cameras:
+            x, y = cam["x"], cam["y"]
+            if bbox and not (bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3]):
+                stats["skipped: camera outside the map"] += 1
+                continue
+            tags = {"addr:street": cam.get("road"), "_camera": cam,
+                    COUNTRY_TAG: _c.NZ.catalog if cam.get("state") == "NZ" else _c.AU.catalog}
+            rows.append((morton(x, y), CAMERA_CAT, x, y, CAMERA_NAME, tags))
+    stamp = (today or datetime.date.today()).strftime("%d-%b-%y").upper()
+    rows.sort(key=lambda r: r[:5])
 
     tmp = out_path + ".tmp"
     if os.path.exists(tmp):
@@ -249,15 +317,14 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
     con = sqlite3.connect(tmp)
     con.execute("PRAGMA journal_mode=DELETE")
     cur = con.cursor()
-    keep = {r[0] for r in cur.execute(
-        "select Name_String_ID from Category_BaseAttributes union select Name_String_ID from Icon_BaseAttributes "
-        "union select Path_String_ID from Icon_BaseAttributes union select Language_String_ID from Language_BaseAttributes "
-        "union select String_ID from String_TranslationString_Relation "
-        "union select Translation_String_ID from String_TranslationString_Relation")}
-    assert max(keep) <= FACTORY_STRINGS_MAX, "factory string layout changed"
+    n_fixed = factory_strings_max(con)
+    on_card = card_categories(con)
+    card_cat = {c: on_card.get(n) for c, n in CATEGORY_NAMES.items()}
+    # MY10 has no Name/PhoneNumber columns in Poi_BaseAttributes (the name is in the strings)
+    base_cols = len(con.execute("pragma table_info(Poi_BaseAttributes)").fetchall())
     for t in ("Poi_Relation", "Poi_VSegAttributes", "Poi_AlertAttributes", "Poi_AddressAttributes", "Poi_BaseAttributes"):
         cur.execute(f"delete from {t}")
-    cur.execute(f"delete from String_BaseAttributes where String_ID > {FACTORY_STRINGS_MAX}")
+    cur.execute(f"delete from String_BaseAttributes where String_ID > {n_fixed}")
 
     strings = {}
 
@@ -265,11 +332,15 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
         if not s:
             return None
         if s not in strings:
-            strings[s] = FACTORY_STRINGS_MAX + 1 + len(strings)
+            strings[s] = n_fixed + 1 + len(strings)
         return strings[s]
 
     city_cache = {}
     base, addr, alert = [], [], []
+    missing = [r for r in rows if card_cat.get(r[1]) is None]
+    if missing:
+        stats["skipped: category not on card"] += len(missing)
+        rows = [r for r in rows if card_cat.get(r[1]) is not None]
     for pid, (code, cat, x, y, name, tags) in enumerate(rows, start=1):
         country = countries.BY_CATALOG.get(tags.get(COUNTRY_TAG, 0), countries.AU)
         city = text(tags.get("addr:suburb") or tags.get("addr:city"))
@@ -285,19 +356,24 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
         if cat == 18:
             city = name
         p_raw, p_pretty = phone(tags.get("phone") or tags.get("contact:phone"), country.phone_cc)
-        base.append((pid, cat, code, sid(name), name, p_raw))
+        base.append((pid, card_cat[cat], code, sid(name), name, p_raw)[:base_cols])
         addr.append((pid, sid(text(tags.get("addr:housenumber"), 20)), sid(text(tags.get("addr:street"))), None,
                      sid(city), sid(region), sid(country.name), None, sid(p_pretty)))
-        alert.append((pid, None, None, None, None, None, None))
+        cam = tags.get("_camera")
+        if cam is not None:
+            alert.append((pid, cam.get("speed"), cam.get("heading"), stamp, cam["type"], 1, None))
+            stats["cameras"] += 1
+        else:
+            alert.append((pid, None, None, None, None, None, None))
         stats[f"category {cat}"] += 1
     cur.executemany("insert into String_BaseAttributes (String_ID, Value) values (?, ?)",
                     [(i, s) for s, i in strings.items()])
-    cur.executemany("insert into Poi_BaseAttributes values (?, ?, ?, ?, ?, ?)", base)
+    cur.executemany(f"insert into Poi_BaseAttributes values ({', '.join('?' * base_cols)})", base)
     cur.executemany("insert into Poi_AddressAttributes values (?, ?, ?, ?, ?, ?, ?, ?, ?)", addr)
     cur.executemany("insert into Poi_AlertAttributes values (?, ?, ?, ?, ?, ?, ?)", alert)
     cur.execute("update sqlite_sequence set seq = ? where name = 'Poi_BaseAttributes'", (len(base),))
     cur.execute("update sqlite_sequence set seq = ? where name = 'String_BaseAttributes'",
-                (FACTORY_STRINGS_MAX + len(strings),))
+                (n_fixed + len(strings),))
     con.commit()
     if progress:
         progress("POI rows written, compacting")
@@ -320,8 +396,8 @@ def compare_schema(factory_db, new_db):
                   "Icon_BaseAttributes", "PoiPartition_BaseAttributes", "PoiPartition_Category_Relation",
                   "Language_BaseAttributes", "String_TranslationString_Relation"):
             d[t] = con.execute(f"select * from {t} order by 1").fetchall()
-        d["strings"] = con.execute(f"select * from String_BaseAttributes where String_ID <= {FACTORY_STRINGS_MAX} "
-                                   "order by 1").fetchall()
+        d["strings"] = con.execute("select * from String_BaseAttributes where String_ID <= ? order by 1",
+                                   (factory_strings_max(con),)).fetchall()
         d["page_size"] = con.execute("pragma page_size").fetchall()
         d["encoding"] = con.execute("pragma encoding").fetchall()
         con.close()
