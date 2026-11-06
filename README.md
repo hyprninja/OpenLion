@@ -80,6 +80,8 @@ Thanks to **Jonny Bee**, who shared a copy of a MY17 card. That card is how Open
 
 Thanks to **Laurie N**, who shared a copy of a MY15 card, so MY15 cars can use OpenLion as well.
 
+Thanks to **cxvabc**, who sent in the report and a copy of a MY10 (CD_7172) card, so MY10 cars can use OpenLion too.
+
 > **Disclaimer.** OpenLion is an unofficial tool, not made by, affiliated with or endorsed by Holden, General Motors or Continental. It is provided as is, with no warranty. You use it at your own risk: the author is not responsible for damaged or erased cards, a navigation unit that stops working, wrong directions, or anything else. Always follow road signs and the road rules over the navigation.
 >
 > Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL. The Australia and New Zealand extracts are provided by [Geofabrik](https://download.geofabrik.de). OpenLion is released under the [MIT License](LICENSE).
@@ -116,7 +118,7 @@ The iQ reads its maps from a full-size SD card. The map data turns out to be an 
 | Points of interest from OSM (270k POIs, factory schema and compiled queries kept); CANBERRA as a municipality over its suburbs | Done | [17](docs/17_poi_canberra.md) |
 | MY17 card (CD_8418, datamodel Arriba 5.3): newer road records, parcel header and speed limits; every table round-trips byte-identical | Done | [19](docs/19_my17_card.md) |
 | MY15 card (CD_8217, AUNZ 2014Q1): 5.2.1 road records with the 5.3 map-file layout, detected from auz.mp0; every table round-trips byte-identical | Done | [schema.py](openlion/schema.py) |
-| MY10 card (CD_7172, AUNZ 2009Q4): compact map parcels (varint positions, nodes and lengths; shapes and road links inside mp0 segments), detected from auz.mp0; every table round-trips byte-identical | Done | [21](docs/21_my10_card.md) |
+| MY10 (CD_7172) card, AUNZ 2009Q4: compact map parcels (varint positions, nodes and lengths; shapes and road links inside mp0 segments), detected from auz.mp0; every table round-trips byte-identical | Done | [21](docs/21_my10_card.md) |
 | Builds on an 8 GB PC (about 3.6 GB peak) and in parallel on big ones (Australia + New Zealand in 25 min on 44 threads); output unchanged | Done | [20](docs/20_memory.md) |
 | `.fea` size reduction, road-sense alerts (speed cameras, school zones) | Not started | |
 | In-car test: unit accepts the OSM card, shows post-2010 streets, address search works, routes 200 km in demo mode, live guidance and voice instructions work on a real drive | Passed (2026-11-05) | [16](docs/16_test_card.md) |
