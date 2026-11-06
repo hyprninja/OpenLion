@@ -21,17 +21,17 @@ ADAS2_LIST = N_FIELDS              # trailer u16[0] is adas2_list: offset of par
 # ---- parcel container ------------------------------------------------------
 
 class ParcelContainer:
-    """pcl_offs (named u16 fields + 76-u16 trailer) + list blobs in field order.
+    """pcl_offs (named u16 fields + trailer) + list blobs in field order.
 
     Lists are contiguous in field order starting right after pcl_offs. A list field
     whose value is out of order (mg layers: junction_view_* = 0) is kept as a fixed
-    value. The field set depends on the datamodel (schema.py): 83 fields in 5.2.1,
-    87 in 5.3."""
+    value. The field set depends on the datamodel (schema.py): 83 fields + 76-u16
+    trailer in 5.2.1, 87 + 76 in 5.3, 77 + 37 in the MY10 compact layout."""
 
     def __init__(self, fields, trailer, blobs, fixed, sch=None):
         self.schema = sch or schema.active()
         self.fields = list(fields)      # n_fields u16
-        self.trailer = list(trailer)    # 76 u16 (trailer[0] recomputed)
+        self.trailer = list(trailer)    # trailer_len u16 (trailer[0] recomputed)
         self.blobs = dict(blobs)        # field index -> bytes
         self.fixed = set(fixed)         # list field indices not laid out
         if len(self.fields) != self.schema.n_fields:
@@ -77,6 +77,10 @@ class ParcelContainer:
     def get(self, name):
         return self.blobs.get(self.idx(name), b"")
 
+    def layer0(self):
+        """True for an mp0 parcel: only mp0 fills shape_size (2 when it has no shapes)."""
+        return self.fields[self.idx("shape_size")] != 0
+
     def set(self, name, blob, count=None, count_field=None):
         self.blobs[self.idx(name)] = blob
         if count is not None:
@@ -84,26 +88,102 @@ class ParcelContainer:
             self.fields[self.idx(cf)] = count
 
 
+# ---- MY10 compact encoding (schema.V521_COMPACT) ---------------------------
+
+def _compact():
+    return schema.active().compact
+
+
+def read_uv(b, off):
+    """Unsigned varint: 7 bits per byte, low bits first, high bit = more bytes."""
+    v = s = 0
+    while True:
+        x = b[off]
+        off += 1
+        v |= (x & 127) << s
+        s += 7
+        if x < 128:
+            return v, off
+
+
+def write_uv(v, out):
+    while v > 127:
+        out.append((v & 127) | 128)
+        v >>= 7
+    out.append(v)
+
+
+def read_pair(b, off):
+    """Signed (dlon, dlat) pair. First byte: bit7 more bytes, bit6 lon < 0, bit5 lat < 0,
+    bits0-4 payload; then 7-bit continuation bytes. Payload bits alternate lat, lon
+    (lat in the even bits), lowest first."""
+    x = b[off]
+    off += 1
+    neg_x, neg_y = x & 64, x & 32
+    v, s = x & 31, 5
+    while x >= 128:
+        x = b[off]
+        off += 1
+        v |= (x & 127) << s
+        s += 7
+    lon = lat = 0
+    for k in range(0, s, 2):
+        lat |= ((v >> k) & 1) << (k >> 1)
+        lon |= ((v >> (k + 1)) & 1) << (k >> 1)
+    return (-lon if neg_x else lon, -lat if neg_y else lat), off
+
+
+def write_pair(dx, dy, out):
+    ax, ay = abs(dx), abs(dy)
+    v, k = 0, 0
+    while ax or ay:
+        v |= ((ay & 1) << (2 * k)) | ((ax & 1) << (2 * k + 1))
+        ax >>= 1
+        ay >>= 1
+        k += 1
+    first = (v & 31) | (64 if dx < 0 else 0) | (32 if dy < 0 else 0)
+    v >>= 5
+    out.append(first | (128 if v else 0))
+    while v:
+        out.append((v & 127) | (128 if v > 127 else 0))
+        v >>= 7
+
+
+ADDR_KINDS = (("abs_addr", 0), ("short_addr", 4), ("long_addr", 6))   # range bytes
+
+
 # ---- list codecs -----------------------------------------------------------
 
 def decode_positions(blob: bytes):
-    """-> list of blocks [(anchor_lon, anchor_lat, [(dlon, dlat), ...])]."""
+    """-> list of blocks [(anchor_lon, anchor_lat, [(dlon, dlat), ...])].
+    A block is u16 n, i32 lon, i32 lat, then n deltas: i16 pairs, or (compact) read_pair."""
+    compact = _compact()
     blocks, off = [], 0
     while off < len(blob):
         n, x, y = struct.unpack_from("<Hii", blob, off)
         off += 10
-        d = [struct.unpack_from("<hh", blob, off + 4 * i) for i in range(n)]
-        off += 4 * n
+        if compact:
+            d = []
+            for _ in range(n):
+                p, off = read_pair(blob, off)
+                d.append(p)
+        else:
+            d = [struct.unpack_from("<hh", blob, off + 4 * i) for i in range(n)]
+            off += 4 * n
         blocks.append((x, y, d))
     return blocks
 
 
 def encode_positions(blocks) -> bytes:
+    compact = _compact()
     out = bytearray()
     for x, y, d in blocks:
         out += struct.pack("<Hii", len(d), x, y)
         for a, b in d:
-            out += struct.pack("<hh", a, b)
+            if compact:
+                write_pair(a, b, out)
+            else:
+                out += struct.pack("<hh", a, b)
     return bytes(out)
 
 
@@ -125,7 +205,10 @@ def blocks_from_points(points):
 
 
 def decode_nodes(blob: bytes, cnt: int):
-    """Node records (10 B; long node = 2 records). Keeps all slots + info bytes."""
+    """Node records (10 B; long node = 2 records). Keeps all slots + info bytes.
+    Compact: u8 b0 + 1 info byte (short) or 3 (long), then count varint slots."""
+    if _compact():
+        return _decode_nodes_compact(blob, cnt)
     out, off = [], 0
     while len(out) < cnt:
         b = blob[off]
@@ -144,8 +227,37 @@ def decode_nodes(blob: bytes, cnt: int):
     return out
 
 
+def _decode_nodes_compact(blob, cnt):
+    out, off = [], 0
+    while len(out) < cnt:
+        b = blob[off]
+        c = b & 15
+        k = 1 if c < 5 else 3
+        info = blob[off + 1:off + 1 + k]
+        off += 1 + k
+        slots = []
+        for _ in range(c):
+            v, off = read_uv(blob, off)
+            slots.append(v)
+        out.append({"long": c >= 5, "b0": b, "info": info, "slots": slots})
+        if c >= 5:
+            out.append({"continuation": True})
+    if off != len(blob):
+        raise ValueError("node framing")
+    return out
+
+
 def encode_nodes(nodes) -> bytes:
     out = bytearray()
+    if _compact():
+        for n in nodes:
+            if n.get("continuation"):
+                continue
+            out.append(n["b0"])
+            out += n["info"]
+            for v in n["slots"][:n["b0"] & 15]:
+                write_uv(v, out)
+        return bytes(out)
     for n in nodes:
         if n.get("continuation"):
             continue
@@ -171,7 +283,14 @@ def make_node(arms, hands_mask, rank=0, depth=0):
 SEG_FMT = None
 
 
-def decode_segments(blob: bytes, cnt: int):
+def decode_segments(blob: bytes, cnt: int, layer0: bool = False, compact=None):
+    """Segment records. Compact: length is a varint, and with layer0 (mp0) each record
+    also carries "shape" [(dlon, dlat)] and "names" [(kind, road_rel, range bytes)]
+    (layer_0_data: varint shape count, read_pair points, big-endian u16 counter
+    long:5 short:5 abs:6, then if any name a varint base roadID = the smallest, and per
+    name (abs, short, long order) a varint roadID - base plus its range bytes).
+    compact defaults to the active schema's."""
+    compact = _compact() if compact is None else compact
     out, off = [], 0
     for _ in range(cnt):
         b = blob[off]
@@ -189,17 +308,65 @@ def decode_segments(blob: bytes, cnt: int):
         if b & 2:
             rn = struct.unpack_from("<H", blob, off)[0]
             off += 2
-        length = struct.unpack_from("<i", blob, off)[0]
-        off += 4
-        out.append({"seginfo": (b >> 5) | sum(e << (3 + 8 * j) for j, e in enumerate(ext)),
-                    "ext_count": ec, "restr": restr, "left_node": ln, "right_node": rn,
-                    "length_ft": length})
+        if compact:
+            length, off = read_uv(blob, off)
+        else:
+            length = struct.unpack_from("<i", blob, off)[0]
+            off += 4
+        s = {"seginfo": (b >> 5) | sum(e << (3 + 8 * j) for j, e in enumerate(ext)),
+             "ext_count": ec, "restr": restr, "left_node": ln, "right_node": rn,
+             "length_ft": length}
+        if compact and layer0:
+            n, off = read_uv(blob, off)
+            shape = []
+            for _ in range(n):
+                p, off = read_pair(blob, off)
+                shape.append(p)
+            counter = (blob[off] << 8) | blob[off + 1]
+            off += 2
+            counts = {"long_addr": counter & 31, "short_addr": (counter >> 5) & 31,
+                      "abs_addr": counter >> 10}
+            names = []
+            if counter:
+                base, off = read_uv(blob, off)
+                for kind, size in ADDR_KINDS:
+                    for _ in range(counts[kind]):
+                        d, off = read_uv(blob, off)
+                        names.append((kind, base + d, bytes(blob[off:off + size])))
+                        off += size
+            s["shape"], s["names"] = shape, names
+        out.append(s)
     if off != len(blob):
         raise ValueError("segment framing")
     return out
 
 
+def _encode_layer0(s, out):
+    shape = s.get("shape") or []
+    write_uv(len(shape), out)
+    for a, b in shape:
+        write_pair(a, b, out)
+    names = s.get("names") or []
+    by_kind = {k: [n for n in names if n[0] == k] for k, _ in ADDR_KINDS}
+    na, ns, nl = (len(by_kind[k]) for k in ("abs_addr", "short_addr", "long_addr"))
+    if na > 63 or ns > 31 or nl > 31:
+        raise ValueError(f"segment has too many road links ({na} abs, {ns} short, {nl} long)")
+    counter = nl | (ns << 5) | (na << 10)
+    out += bytes([counter >> 8, counter & 255])
+    if counter:
+        base = min(n[1] for n in names)
+        write_uv(base, out)
+        for kind, size in ADDR_KINDS:
+            for _, road, rng in by_kind[kind]:
+                if len(rng) != size:
+                    raise ValueError(f"{kind} range is {len(rng)} bytes, not {size}")
+                write_uv(road - base, out)
+                out += rng
+
+
 def encode_segments(segs) -> bytes:
+    """Compact layer0 data is written for segments that carry a "shape" key."""
+    compact = _compact()
     out = bytearray()
     for s in segs:
         si = s["seginfo"]
@@ -219,7 +386,12 @@ def encode_segments(segs) -> bytes:
             out += struct.pack("<H", s["left_node"])
         if s["right_node"] is not None:
             out += struct.pack("<H", s["right_node"])
-        out += struct.pack("<i", s["length_ft"])
+        if compact:
+            write_uv(s["length_ft"], out)
+            if "shape" in s:
+                _encode_layer0(s, out)
+        else:
+            out += struct.pack("<i", s["length_ft"])
     return bytes(out)
 
 
@@ -260,7 +432,7 @@ def encode_addr(seg, road_id_rel, nameinfo=0, rng=b""):
     return struct.pack("<HBI", seg, nameinfo, road_id_rel) + rng
 
 
-# House-number range on one side of a segment (report 22). addrinfo low 4 bits: the
+# House-number range on one side of a segment (report 24). addrinfo low 4 bits: the
 # side, seen from the segment's left end (seg_a) towards its right end, and the parity.
 # The top 2 bits are the high bits of a signed delta: 10 bits in short_addr, 18 in
 # long_addr. base is the number at the left end, base + delta the one at the right end.
@@ -374,6 +546,18 @@ def decode_turn_res(blob: bytes):
                     "arms": [(v >> (16 + 3 * q)) & 7 for q in range(c)], "hand": v >> 31,
                     "unused_arms": [(v >> (16 + 3 * q)) & 7 for q in range(c, 5)], "_raw": v})
     return out
+
+
+# Lists with a codec: (list field, count field, decode(blob, cnt, container), encode(obj))
+LIST_CODECS = (
+    ("pos_list", "pos_cnt", lambda b, c, pc: decode_positions(b), encode_positions),
+    ("exc_pos_list", "exc_pos_cnt", lambda b, c, pc: decode_positions(b), encode_positions),
+    ("node_list", "node_cnt", lambda b, c, pc: decode_nodes(b, c), encode_nodes),
+    ("seg_list", "seg_cnt", lambda b, c, pc: decode_segments(b, c, pc.layer0()), encode_segments),
+    ("shape_list", "shape_cnt", lambda b, c, pc: decode_shapes(b, c), encode_shapes),
+    ("adas_list", "adas_cnt", lambda b, c, pc: decode_adas(b, c), encode_adas),
+    ("turn_res_list", "turn_res_cnt", lambda b, c, pc: decode_turn_res(b), encode_turn_res),
+)
 
 
 # ---- map file --------------------------------------------------------------

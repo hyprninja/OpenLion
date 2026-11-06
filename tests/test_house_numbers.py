@@ -1,4 +1,4 @@
-"""House-number ranges (report 22): encoding, number parsing, fitting, outliers."""
+"""House-number ranges (report 24): encoding, number parsing, fitting, outliers."""
 import os
 import sys
 import unittest

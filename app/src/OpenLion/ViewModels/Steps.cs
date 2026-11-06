@@ -36,16 +36,25 @@ public sealed class Session
         return "OpenStreetMap data for " + OpenLion.Core.Osm.MapCountry.Describe(Countries) + " (" + string.Join("; ", parts) + ")";
     }
 
+    /// <summary>Prepared speed zone data to add (set by the Speed data step; empty when none is chosen,
+    /// or when Australia isn't on the card).</summary>
+    public IReadOnlyList<OpenLion.Core.Speed.SpeedZoneData> SpeedZones { get; set; } = [];
+
     /// <summary>The G-NAF release to add house numbers from (set by the House numbers step; null when
     /// not wanted, or when Australia isn't on the card).</summary>
     public OpenLion.Core.Addresses.GnafData? Gnaf { get; set; }
 
-    /// <summary>What a build is keyed on: the OSM extracts and the G-NAF release.</summary>
-    public string? BuildKey() => Osm is { } osm ? BuildRecord.Key(osm, Gnaf) : null;
+    /// <summary>What a build is keyed on: the OSM extracts, the speed data and the G-NAF release.</summary>
+    public string? BuildKey() => Osm is { } osm ? BuildRecord.Key(osm, SpeedZones, Gnaf) : null;
 
-    /// <summary>", with house numbers from G-NAF August 2026" or "".</summary>
+    /// <summary>"speed zone data for Victoria (Speed Zones September 2026)", or "" when none.</summary>
+    public string DescribeSpeedZones() => SpeedZones.Count == 0 ? "" :
+        "speed zone data for " + string.Join(" and ", SpeedZones.Select(z =>
+            $"{OpenLion.Core.Speed.SpeedZoneSource.ByCode(z.Code)?.Title ?? z.Code} ({z.Name})"));
+
+    /// <summary>"G-NAF August 2026", or "" when not used.</summary>
     public string DescribeGnaf() => Gnaf is null ? "" :
-        $", with house numbers from {OpenLion.Core.Addresses.GnafDownloader.Describe(Gnaf.FileName)}";
+        OpenLion.Core.Addresses.GnafDownloader.Describe(Gnaf.FileName);
 
     /// <summary>The finished map build to write (set by the Build maps step).</summary>
     public BuildRecord? Build { get; set; }

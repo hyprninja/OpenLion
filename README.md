@@ -26,11 +26,12 @@ Same spot, same car. The factory map stops at Worland Road. The OpenLion card sh
 - **Turn-by-turn guidance and voice instructions**, just like the factory maps. The new card uses the same map format, so the car reads it like its own.
 - **Address search** by suburb, street and house number, with suburbs, councils and postcodes from OpenStreetMap. House numbers come from OpenStreetMap and, if you choose, from G-NAF, the Australian government's address file, which adds numbers on most streets OpenStreetMap doesn't cover.
 - **Points of interest**: about 270,000 fuel stations, shops, cafés, hospitals and more.
+- **Speed camera warnings**: fixed, red-light and point-to-point cameras, downloaded fresh from the official lists where a government publishes them openly (Victoria and the ACT so far) and from OpenStreetMap everywhere else. The app tells you which is which when it builds.
 - **Up-to-date data whenever you want it.** OpenStreetMap changes every day. Run OpenLion again any time for a new card.
 
 ## Will it work in my car?
 
-OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11–MY16)**, the unit that reads its maps from a full-size SD card in the dash. It supports the MY12 (CD_7597), MY15 (CD_8217) and MY17 (CD_8418) factory cards. Other iQ card versions are checked before anything is built. If yours isn't supported yet, OpenLion says so, saves a report with no map data in it, and helps you send it in so support can be added.
+OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11–MY16)**, the unit that reads its maps from a full-size SD card in the dash. It supports the MY10 (CD_7172), MY12 (CD_7597), MY15 (CD_8217) and MY17 (CD_8418) factory cards. Other iQ card versions are checked before anything is built. If yours isn't supported yet, OpenLion says so, saves a report with no map data in it, and helps you send it in so support can be added.
 
 ## What you need
 
@@ -81,9 +82,11 @@ Thanks to **Jonny Bee**, who shared a copy of a MY17 card. That card is how Open
 
 Thanks to **Laurie N**, who shared a copy of a MY15 card, so MY15 cars can use OpenLion as well.
 
+Thanks to **cxvabc**, who sent in the report and a copy of a MY10 (CD_7172) card, so MY10 cars can use OpenLion too.
+
 > **Disclaimer.** OpenLion is an unofficial tool, not made by, affiliated with or endorsed by Holden, General Motors or Continental. It is provided as is, with no warranty. You use it at your own risk: the author is not responsible for damaged or erased cards, a navigation unit that stops working, wrong directions, or anything else. Always follow road signs and the road rules over the navigation.
 >
-> Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL. The Australia and New Zealand extracts are provided by [Geofabrik](https://download.geofabrik.de). OpenLion is released under the [MIT License](LICENSE).
+> Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL. The Australia and New Zealand extracts are provided by [Geofabrik](https://download.geofabrik.de). Optional Victorian speed zones: © State of Victoria (Department of Transport and Planning), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Speed camera locations: © State of Victoria (Cameras Save Lives) and © Australian Capital Territory (Access Canberra), both [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); elsewhere © OpenStreetMap contributors. OpenLion is released under the [MIT License](LICENSE).
 
 ---
 
@@ -117,10 +120,13 @@ The iQ reads its maps from a full-size SD card. The map data turns out to be an 
 | Points of interest from OSM (270k POIs, factory schema and compiled queries kept); CANBERRA as a municipality over its suburbs | Done | [17](docs/17_poi_canberra.md) |
 | MY17 card (CD_8418, datamodel Arriba 5.3): newer road records, parcel header and speed limits; every table round-trips byte-identical | Done | [19](docs/19_my17_card.md) |
 | MY15 card (CD_8217, AUNZ 2014Q1): 5.2.1 road records with the 5.3 map-file layout, detected from auz.mp0; every table round-trips byte-identical | Done | [schema.py](openlion/schema.py) |
+| MY10 (CD_7172) card, AUNZ 2009Q4: compact map parcels (varint positions, nodes and lengths; shapes and road links inside mp0 segments), detected from auz.mp0; every table round-trips byte-identical | Done | [21](docs/21_my10_card.md) |
 | Builds on an 8 GB PC (about 3.6 GB peak) and in parallel on big ones (Australia + New Zealand in 25 min on 44 threads); output unchanged | Done | [20](docs/20_memory.md) |
-| House numbers: factory `short_addr`/`long_addr` ranges decoded (side, parity, 10/18-bit signed delta) and filled from OSM `addr:housenumber` | Done | [22](docs/22_house_numbers.md) |
-| House numbers from G-NAF (Australia's national address file) for streets OSM has none on, OSM first (`--addresses`) | Done | [23](docs/23_gnaf_house_numbers.md) |
-| `.fea` size reduction, road-sense alerts (speed cameras, school zones) | Not started | |
+| Speed limits from Victoria's open speed zone register where OSM has none (+132,000 km in Victoria, 86 % agreement with OSM); chosen per state on the app's Speed data step | Done | [22](docs/22_gov_speed_zones.md) |
+| Speed camera alerts: official lists (VIC, ACT) downloaded at each build, OSM cameras elsewhere, snapped onto the carriageway for direction and speed limit | Done | [23](docs/23_speed_cameras.md) |
+| House numbers: factory `short_addr`/`long_addr` ranges decoded (side, parity, 10/18-bit signed delta) and filled from OSM `addr:housenumber` | Done | [24](docs/24_house_numbers.md) |
+| House numbers from G-NAF (Australia's national address file) for streets OSM has none on, OSM first (`--addresses`) | Done | [25](docs/25_gnaf_house_numbers.md) |
+| `.fea` size reduction, other road-sense alerts (school zones, blackspots, railway crossings) | Not started | |
 | In-car test: unit accepts the OSM card, shows post-2010 streets, address search works, routes 200 km in demo mode, live guidance and voice instructions work on a real drive | Passed (2026-11-05) | [16](docs/16_test_card.md) |
 
 Every structural claim in the docs was checked against the full factory dataset (for example, all 11,282 map parcels and 192,282 feature parcels decode and frame exactly).

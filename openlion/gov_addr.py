@@ -1,5 +1,5 @@
 """House numbers from G-NAF, Australia's national address file, for streets OSM has
-no numbers on (report 23).
+no numbers on (report 25).
 
 Source: Geoscape Geocoded National Address File (G-NAF), quarterly, data.gov.au, under
 the Open G-NAF End User Licence Agreement (CC BY 4.0 with one added rule: not for

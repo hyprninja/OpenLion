@@ -45,7 +45,7 @@ A segment's suburb is the one containing its midpoint (middle shape point, else 
 ## Not yet done / differences from the factory data
 
 - **Phonetic names** (`trans` 5 slots, used by the voice) are left empty. The voice may then not announce street names; this needs a car test.
-- No **house-number ranges** (`short_addr`/`long_addr`); only `abs_addr` links. OSM `addr:*` could fill them later. *Done in report 22.*
+- No **house-number ranges** (`short_addr`/`long_addr`); only `abs_addr` links. OSM `addr:*` could fill them later. *Done in report 24.*
 - One link per segment. The factory sometimes has several (e.g. street name + route name); OSM `ref` could add those.
 - The factory's metro catch-all cities (MELBOURNE listing `STREET, SUBURB` names from across the metro) aren't reproduced. Each suburb lists only its own streets.
 - **New Zealand catalog is empty** (AU extract only).

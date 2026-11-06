@@ -19,6 +19,9 @@ Add --extract for each further country. Countries left out get no cities on the 
 With --json, prints one JSON object per line, mixed with plain log lines:
   {"event": "start", "stages": [{"id": ..., "label": ..., "weight": seconds}, ...]}
   {"event": "stage", "stage": id}
+  {"event": "cameras", "final": bool, "states": [{"code", "name", "source": "gov"/"osm", "provider",
+   "fetched", "cameras", "download": "ok"/"failed"/null}]}   (with --cameras: once before the build
+   with the sources, once after it with the counts)
   {"event": "result", "ok": bool, "card": path, "bytes": n, "files": n, "replaced": n,
    "stage": failed stage, "error": ..., "error_type": ..., "traceback": ...}
 """
@@ -33,7 +36,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import build, pipeline  # noqa: E402
+from openlion import build, cameras, gov_cameras, pipeline  # noqa: E402
 from openlion.common import DamagedTable  # noqa: E402
 from openlion.compat import error_name, safe_traceback  # noqa: E402
 
@@ -137,9 +140,31 @@ def folder_size(path):
     return n, b
 
 
-def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory_mode=None, addresses=None):
+def camera_states(inputs, files, fetched):
+    """Per-state camera sources for the app, before the build has counted anything."""
+    gov = {}
+    for p in files:
+        d = gov_cameras.load(p)
+        gov[d["state"]] = d
+    codes = [c.code for c, _ in inputs]
+    out = []
+    for s in [s for s in cameras.AU_STATES if "AU" in codes] + (["NZ"] if "NZ" in codes else []):
+        g = gov.get(s)
+        dl = fetched.get(s)
+        out.append({"code": s, "name": cameras.NAMES[s], "source": "gov" if g else "osm",
+                    "provider": g["provider"] if g else "OpenStreetMap contributors (ODbL)",
+                    "fetched": g["fetched"] if g else None, "cameras": None,
+                    "download": None if dl is None else "ok" if dl["ok"] else "failed"})
+    return out
+
+
+def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory_mode=None, speed_zones=(),
+        camera_dir=None, camera_download=True, addresses=None):
     """pbf: one Australian extract, or a list of "NZ=path" / (Country, path) (pipeline.inputs_of).
-    memory_mode: "low" / "high" / None (decide from free RAM, see resources.py)."""
+    memory_mode: "low" / "high" / None (decide from free RAM, see resources.py).
+    camera_dir: folder for the government camera lists (gov_cameras.py); they're downloaded
+    there first unless camera_download is False, and the last good copy is used when a
+    download fails. None: OSM cameras everywhere."""
     o = Out(as_json)
     inputs = pipeline.inputs_of(pbf)
     total = sum(os.path.getsize(p) for _, p in inputs if os.path.isfile(p))
@@ -162,7 +187,23 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
         if reset_cache(inputs, work, bbox, addresses):
             print("reusing cached OSM reads from an earlier run", flush=True)
 
-        pipeline.run(inputs, db, work, bbox, stage=o.start_stage, memory_mode=memory_mode, addresses=addresses)
+        cam_files, fetched = [], {}
+        if camera_dir:
+            if camera_download:
+                fetched = gov_cameras.fetch(camera_dir, log=lambda m: print(m, flush=True))
+            cam_files = gov_cameras.available(camera_dir)
+            o.emit("cameras", final=False, states=camera_states(inputs, cam_files, fetched))
+
+        pipeline.run(inputs, db, work, bbox, stage=o.start_stage, memory_mode=memory_mode,
+                     speed_zones=speed_zones, gov_cameras=cam_files, addresses=addresses)
+        rp = os.path.join(work, pipeline.CAMERAS_REPORT)
+        if os.path.isfile(rp):
+            with open(rp, encoding="utf-8") as f:
+                states = json.load(f)["states"]
+            for st in states:
+                dl = fetched.get(st["code"])
+                st["download"] = None if dl is None else "ok" if dl["ok"] else "failed"
+            o.emit("cameras", final=True, states=states)
 
         o.start_stage("card")
         if os.path.exists(partial):
@@ -229,13 +270,21 @@ if __name__ == "__main__":
     ap.add_argument("--bbox", nargs=4, type=float, help="build only this area (lon0 lat0 lon1 lat1), for testing")
     ap.add_argument("--extract", action="append", default=[], help="another country: NZ=<extract.osm.pbf>")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--speed-zones", action="append", default=[],
+                    help="government speed zones (.geojson or prepared .bin) for roads OSM has no limit for")
     ap.add_argument("--addresses", help="G-NAF zip (data.gov.au): house numbers for streets OSM has none on")
     ap.add_argument("--memory", choices=("auto", "low", "high"), default=None,
                     help="memory plan (default: decide from free RAM)")
+    ap.add_argument("--cameras", metavar="DIR",
+                    help="folder for government speed camera lists: downloaded there, then used "
+                         "(OSM cameras for every other state). Without it: OSM cameras everywhere")
+    ap.add_argument("--no-camera-download", action="store_true",
+                    help="use the camera lists already in --cameras without downloading")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
     t0 = time.time()
-    code = run([a.pbf] + a.extract, a.factory, a.work, a.out, a.manifest, bb, a.json, a.memory, a.addresses)
+    code = run([a.pbf] + a.extract, a.factory, a.work, a.out, a.manifest, bb, a.json, a.memory,
+               a.speed_zones, a.cameras, not a.no_camera_download, a.addresses)
     if not a.json:
         print(f"{time.time() - t0:.0f}s")
     sys.exit(code)

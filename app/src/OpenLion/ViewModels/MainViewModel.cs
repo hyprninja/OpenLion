@@ -22,6 +22,7 @@ public sealed class MainViewModel : ObservableObject
             new FactoryCardStep(s),
             new CopyCardStep(s),
             new GetOsmStep(s),
+            new SpeedDataStep(s),
             new HouseNumbersStep(s),
             new BuildMapsStep(s),
             new WriteCardStep(s),

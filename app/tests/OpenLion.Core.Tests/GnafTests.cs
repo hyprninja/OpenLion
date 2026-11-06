@@ -100,7 +100,18 @@ public class GnafTests
     {
         var osm = new[] { new OsmExtract("C:/osm/australia-261104.osm.pbf", "australia-261104.osm.pbf", null, 1, null, DateTime.UtcNow, "test") };
         var g = new GnafData("C:/g/x.zip", "g-naf_aug26_allstates_gda2020_psv_110.zip", "G-NAF August 2026", 1, null, DateTime.UtcNow);
-        Assert.Equal(BuildRecord.OsmKey(osm), BuildRecord.Key(osm, null));      // no G-NAF: same key as before
-        Assert.Equal("australia-261104.osm.pbf|gnaf:g-naf_aug26_allstates_gda2020_psv_110.zip", BuildRecord.Key(osm, g));
+        Assert.Equal(BuildRecord.OsmKey(osm), BuildRecord.Key(osm, null, null));      // no G-NAF: same key as before
+        Assert.Equal("australia-261104.osm.pbf|gnaf:g-naf_aug26_allstates_gda2020_psv_110.zip", BuildRecord.Key(osm, null, g));
+    }
+
+    [Fact]
+    public void BuildKey_HasSpeedZonesThenGnaf()
+    {
+        var osm = new[] { new OsmExtract("C:/osm/australia-261104.osm.pbf", "australia-261104.osm.pbf", null, 1, null, DateTime.UtcNow, "test") };
+        var g = new GnafData("C:/g/x.zip", "g-naf_aug26_allstates_gda2020_psv_110.zip", "G-NAF August 2026", 1, null, DateTime.UtcNow);
+        var vic = new OpenLion.Core.Speed.SpeedZoneData("VIC", "C:/s/zones.bin", "zones.bin", "Speed Zones September 2026",
+            "speed_zones_september_2026.geojson", 1, null, DateTime.UtcNow);
+        Assert.Equal("australia-261104.osm.pbf|speed:VIC=speed_zones_september_2026.geojson" +
+                     "|gnaf:g-naf_aug26_allstates_gda2020_psv_110.zip", BuildRecord.Key(osm, [vic], g));
     }
 }

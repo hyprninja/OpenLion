@@ -41,7 +41,9 @@ for dp, _, fs in os.walk(CARD):
     for f in fs:
         files.add(os.path.relpath(os.path.join(dp, f), CARD).replace(os.sep, "/"))
 changed = {p for p in files & set(man) if sha256(os.path.join(CARD, p)) != man[p]}
-protected = sorted(changed - REPLACEABLE)
+replaceable = {r.lower() for r in REPLACEABLE}      # card folders differ in case (MY10: edb/poi)
+protected = sorted(p for p in changed if p.lower() not in replaceable)
+poi_rel = next((p for p in changed if p.lower() == POI_DB.lower()), None)
 size = sum(os.path.getsize(os.path.join(CARD, p)) for p in files)
 print(f"files: {len(files)} ({size / 1e6:.0f} MB), missing {len(set(man) - files)}, extra {len(files - set(man))}")
 print(f"untouched and identical to factory: {len(files & set(man)) - len(changed)}; replaced map tables: {len(changed)}")
@@ -122,8 +124,8 @@ for cat, queries in LOOKUPS.items():
         r = lookup(tables, city, street, cat)
         print("  lookup", r[0] if isinstance(r, tuple) else r)
         problems += not isinstance(r, tuple) and not ARGS.skip_lookups   # printed, not counted, for small areas
-if POI_DB in changed:
-    con = sqlite3.connect(f"file:{os.path.join(CARD, POI_DB)}?mode=ro", uri=True)
+if poi_rel:
+    con = sqlite3.connect(f"file:{os.path.join(CARD, poi_rel)}?mode=ro", uri=True)
     q = lambda sql: con.execute(sql).fetchall()
     integ = q("pragma integrity_check")[0][0]
     n = q("select count(*) from Poi_BaseAttributes")[0][0]
@@ -136,6 +138,10 @@ if POI_DB in changed:
         dangling += q(f"select count(*) from Poi_AddressAttributes where {c} is not null and "
                       f"{c} not in (select String_ID from String_BaseAttributes)")[0][0]
     no_alert = q("select count(*) from Poi_BaseAttributes where Poi_ID not in (select Poi_ID from Poi_AlertAttributes)")[0][0]
+    # OSM builds leave the road-sense alert categories empty (looked up by name: IDs differ per card)
+    alert_ids = [cid for name, cid in osm_poi.card_categories(con).items() if name in osm_poi.ROAD_SENSE]
+    in_alert = q("select count(*) from Poi_BaseAttributes where PoiPartition_ID in "
+                 f"({','.join(map(str, alert_ids)) or 'NULL'})")[0][0]
     mp0 = mapfile.MapFile(open(os.path.join(DB, "auz.mp0"), "rb").read())
     outside = 0
     for (v,) in con.execute("select Coordinate from Poi_BaseAttributes"):
@@ -143,10 +149,10 @@ if POI_DB in changed:
         m = 10000   # 10 km: coastal POIs can lie a little beyond the last road
         outside += not (mp0.min_long - m <= x <= mp0.max_long + m and mp0.min_lat - m <= y <= mp0.max_lat + m)
     con.close()
-    kept = osm_poi.compare_schema(os.path.join(FACTORY, POI_DB), os.path.join(CARD, POI_DB)) if FACTORY else None
+    kept = osm_poi.compare_schema(os.path.join(FACTORY, poi_rel), os.path.join(CARD, poi_rel)) if FACTORY else None
     print(f"POIs: {n:,}, integrity {integ}, bad category {orphans}, dangling strings {dangling}, "
-          f"missing alert rows {no_alert}, beyond the road map {outside}, "
+          f"missing alert rows {no_alert}, in road-sense categories {in_alert}, beyond the road map {outside}, "
           f"factory structure changed: {kept if kept is not None else 'not checked'}")
-    problems += (integ != "ok") + orphans + dangling + no_alert + outside + len(kept or [])
+    problems += (integ != "ok") + orphans + dangling + no_alert + in_alert + outside + len(kept or [])
 print(f"{problems} problems, {time.time() - t0:.0f}s")
 sys.exit(1 if problems else 0)

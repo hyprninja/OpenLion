@@ -80,6 +80,7 @@ public class NavigationCardTests
     }
 
     [Theory]
+    [InlineData("CD_7172", "MY10 (CD_7172)")]
     [InlineData("CD_7597 (= CD_7606 + CD_7335)", "MY12 (CD_7597)")]
     [InlineData("CD_8217", "MY15 (CD_8217)")]
     [InlineData("CD_8418", "MY17 (CD_8418)")]
@@ -114,6 +115,30 @@ public class NavigationCardTests
             Assert.Equal("MY15 (CD_8217)", c.DisplayName);
             Assert.Equal("MY15", c.CustomerVersion);
             Assert.Equal(new MapDatabase("db_aunz", "AUNZ(2014Q1)", "Australia + New Zealand", "505.1", true), Assert.Single(c.Databases));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void VolumeComesFromDbAunzWhenThereAreSeveralDatabases()
+    {
+        // MY10 cards have db_ag (CD_7173, Arabian Gulf) and db_aunz (CD_7172), no cdrom.txt
+        var root = Directory.CreateTempSubdirectory("openlion-test").FullName;
+        try
+        {
+            foreach (var (folder, volume, db) in new[] { ("db_ag", "CD_7173", "AG(2009Q4)"), ("db_aunz", "CD_7172", "AUNZ(2009Q4)") })
+            {
+                var dir = Directory.CreateDirectory(Path.Combine(root, "navigation", folder)).FullName;
+                File.WriteAllText(Path.Combine(dir, "cdrom.toc"), $"Volume:     {volume}\r\ndb:         {db}\r\n");
+            }
+            var c = NavigationCard.TryRead(root);
+            Assert.NotNull(c);
+            Assert.Equal("CD_7172", c.Volume);
+            Assert.Equal("MY10 (CD_7172)", c.DisplayName);
+            Assert.Equal(["db_ag", "db_aunz"], c.Databases.Select(d => d.Folder));
         }
         finally
         {

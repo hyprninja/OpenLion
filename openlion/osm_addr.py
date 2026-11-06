@@ -1,4 +1,4 @@
-"""OSM addresses -> house-number ranges on street segments (report 22).
+"""OSM addresses -> house-number ranges on street segments (report 24).
 
 read():   every node / building with addr:housenumber and addr:street, as compact
           arrays (street name normalised like the road names).

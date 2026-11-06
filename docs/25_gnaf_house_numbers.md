@@ -25,9 +25,9 @@ Units and flats at one street number (a block of 40 units at "12") become one po
 
 ## OSM first
 
-`gov_addr.combine()` starts from the OSM addresses and adds each G-NAF number unless OSM already has **the same number on a street of the same name within ~330 m**. Everything after that is report 22's code unchanged: stray-number filter, matching to the nearest same-named segment, ranges per segment side.
+`gov_addr.combine()` starts from the OSM addresses and adds each G-NAF number unless OSM already has **the same number on a street of the same name within ~330 m**. Everything after that is report 24's code unchanged: stray-number filter, matching to the nearest same-named segment, ranges per segment side.
 
-The extra volume turned up two things report 22's OSM data never hit:
+The extra volume turned up two things report 24's OSM data never hit:
 
 - **Numbers above 65,535.** G-NAF has a few, and the road record stores min/max as u16, so the cap is now 65,535 for both sources.
 - **Ranges far too long for their segment.** One segment side came out as 3 → 132,647, which `long_addr` can't hold. A side's numbers now span at most what its segment could carry: 2 per metre of segment, at least 60. When numbers fall outside that, the biggest group that fits is kept. A range that still can't be stored leaves that side without numbers, and the segment keeps its plain link, instead of failing the build.
@@ -45,7 +45,7 @@ python -m openlion.make_card australia-latest.osm.pbf <factory navigation/> <wor
 
 **ACT** (`--bbox 148.75 -35.95 149.45 -35.10`, MY12):
 
-| | OSM only (report 22) | OSM + G-NAF |
+| | OSM only (report 24) | OSM + G-NAF |
 |---|---|---|
 | house numbers | 33,537 | 168,003 from G-NAF in the box (incl. Queanbeyan, NSW): 139,031 added, 28,972 already in OSM |
 | matched to a street | 32,886 | 166,662 |
@@ -57,7 +57,7 @@ G-NAF's Lonsdale St, Braddon is clean: even 2→36 and odd 3→35, rising northw
 
 **Australia**, full extract (MY12):
 
-| | OSM only (report 22) | OSM + G-NAF |
+| | OSM only (report 24) | OSM + G-NAF |
 |---|---|---|
 | house numbers | 4,453,882 | G-NAF 10,125,621 (one per street number, units merged): 6,418,946 added, 3,706,675 already in OSM |
 | matched to a street | 4,272,420 | 10,120,620; 112,328 dropped as stray, 426,358 with no street of that name nearby, 213,013 too far from it, 509 above 65,535 |
@@ -96,4 +96,4 @@ Tested in the app (developer build, separate data folder): the catalogue check f
 ## Limits
 
 - **Street names:** G-NAF streets match OSM roads by normalised name only. Where the two spell a name differently (`ST GEORGES ROAD` vs `SAINT GEORGES ROAD`), the G-NAF numbers find no street.
-- **In-car behaviour** of search with house numbers is still untested (report 22).
+- **In-car behaviour** of search with house numbers is still untested (report 24).

@@ -11,7 +11,7 @@ Model (matches the factory conventions, report 10 / 13 / 18):
            GLEN MILL ROAD;WARNER, MILL ROAD;WARNER GLEN); city names likewise
            (NORTH MELBOURNE -> MELBOURNE;NORTH) plus "POSTCODE, NAME" when known.
 - every segment links to exactly one road record: abs_addr, or one short_addr / long_addr
-  per side with house numbers (osm_addr, report 22).
+  per side with house numbers (osm_addr, report 24).
 """
 import array
 import collections
