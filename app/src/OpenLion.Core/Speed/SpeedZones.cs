@@ -13,25 +13,37 @@ namespace OpenLion.Core.Speed;
 /// <param name="PackageApi">CKAN package_show URL that lists the dataset's files; null when not available yet.</param>
 /// <param name="AllowedHosts">Hosts a data file may come from (the catalogue's links are only followed to these).</param>
 /// <param name="Credit">Attribution the licence asks for.</param>
+/// <param name="Blurb">What the data covers, shown beside the checkbox.</param>
+/// <param name="EngineFetch">The engine command that downloads the data (gov_speed.py "fetch-wa"),
+/// for data served in pages by a map server rather than as one file; null when the app downloads
+/// the newest file listed in the catalogue itself.</param>
 public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi, IReadOnlyList<string> AllowedHosts,
-    string Credit, int ApproxMb)
+    string Credit, int ApproxMb, string Blurb = "", string? EngineFetch = null)
 {
     public static readonly SpeedZoneSource Victoria = new("VIC", "Victoria",
         new Uri("https://discover.data.vic.gov.au/api/3/action/package_show?id=speed-zones"),
         ["opendata.transport.vic.gov.au", "discover.data.vic.gov.au"],
-        "Speed zone data © State of Victoria (Department of Transport and Planning), CC BY 4.0", 480);
+        "Speed zone data © State of Victoria (Department of Transport and Planning), CC BY 4.0", 480,
+        "Every road in the state, updated monthly by the state government.");
+
+    public static readonly SpeedZoneSource WesternAustralia = new("WA", "Western Australia",
+        new Uri("https://catalogue.data.wa.gov.au/api/3/action/package_show?id=mrwa-legal-speed-limits"),
+        ["catalogue.data.wa.gov.au", "gisservices.mainroads.wa.gov.au"],
+        "Speed limit data © Main Roads Western Australia, CC BY 4.0", 16,
+        "Signposted limits on state roads and many local roads, updated weekly by Main Roads WA.",
+        "fetch-wa");
 
     static SpeedZoneSource Later(string code, string title) => new(code, title, null, [], "", 0);
 
-    /// <summary>Every Australian state and territory, Victoria first; only those with a
-    /// <see cref="PackageApi"/> can be chosen.</summary>
+    /// <summary>Every Australian state and territory, the ones OpenLion can use first; only those
+    /// with a <see cref="PackageApi"/> can be chosen.</summary>
     public static readonly IReadOnlyList<SpeedZoneSource> All =
     [
         Victoria,
+        WesternAustralia,
         Later("NSW", "New South Wales"),
         Later("QLD", "Queensland"),
         Later("SA", "South Australia"),
-        Later("WA", "Western Australia"),
         Later("TAS", "Tasmania"),
         Later("ACT", "Australian Capital Territory"),
         Later("NT", "Northern Territory"),
@@ -106,7 +118,30 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         r.EnsureSuccessStatusCode();
         await using var s = await r.Content.ReadAsStreamAsync(ct);
         using var doc = await JsonDocument.ParseAsync(s, cancellationToken: ct);
-        return Newest(doc.RootElement, source);
+        return source.EngineFetch is null ? Newest(doc.RootElement, source) : Dated(doc.RootElement, source);
+    }
+
+    /// <summary>For data the engine fetches: the catalogue's last-updated date is the version
+    /// ("wa-2026-11-05", "Legal Speed Limits 5 November 2026"). Public for tests.</summary>
+    public static SpeedZoneRemote Dated(JsonElement reply, SpeedZoneSource source)
+    {
+        string? day = null, title = null;
+        try
+        {
+            var r = reply.GetProperty("result");
+            if (r.TryGetProperty("metadata_modified", out var m) && m.ValueKind == JsonValueKind.String)
+                day = m.GetString();
+            if (r.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String)
+                title = t.GetString();
+        }
+        catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException)
+        {
+            throw new SpeedZoneException($"The {source.Title} data catalogue sent an answer OpenLion doesn't understand.", e);
+        }
+        if (Date(day) is not { } when)
+            throw new SpeedZoneException($"The {source.Title} data catalogue gave no date for its speed limits.");
+        var name = $"{(string.IsNullOrWhiteSpace(title) ? "Speed limits" : title)} {when.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}";
+        return new SpeedZoneRemote(source.PackageApi!, $"{source.Code.ToLowerInvariant()}-{when:yyyy-MM-dd}", name, when);
     }
 
     /// <summary>The newest GeoJSON resource in a CKAN package_show reply. Public for tests.</summary>
@@ -151,14 +186,20 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         if (!Allowed(remote.Url, source))
             throw new SpeedZoneException($"Refusing to download from {remote.Url.Host}.");
         Directory.CreateDirectory(folder);
-        var geo = Path.Combine(folder, remote.FileName);
-        var part = geo + ".part";
-        foreach (var stale in Directory.EnumerateFiles(folder, "*.part").Where(p => !p.Equals(part, StringComparison.OrdinalIgnoreCase)))
-            File.Delete(stale);
-        if (!File.Exists(geo))
+        string geo;
+        if (source.EngineFetch is { } cmd)
+            geo = await EngineFetchAsync(engine, cmd, progress, ct);
+        else
         {
-            await FetchAsync(remote.Url, part, progress, ct);
-            File.Move(part, geo, overwrite: true);
+            geo = Path.Combine(folder, remote.FileName);
+            var part = geo + ".part";
+            foreach (var stale in Directory.EnumerateFiles(folder, "*.part").Where(p => !p.Equals(part, StringComparison.OrdinalIgnoreCase)))
+                File.Delete(stale);
+            if (!File.Exists(geo))
+            {
+                await FetchAsync(remote.Url, part, progress, ct);
+                File.Move(part, geo, overwrite: true);
+            }
         }
 
         progress?.Report(new DownloadProgress(DownloadPhase.Verifying, 0, null, 0));
@@ -184,6 +225,37 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         File.WriteAllText(info + ".tmp", JsonSerializer.Serialize(data, Json));
         File.Move(info + ".tmp", info, overwrite: true);
         return data;
+    }
+
+    /// <summary>Has the engine download the data (python -m openlion.gov_speed fetch-wa folder): it
+    /// prints "progress n" while it pages through the map server, then the data's name and the
+    /// file it wrote. Returns that file, which must be in this source's folder.</summary>
+    async Task<string> EngineFetchAsync(EnginePaths engine, string cmd, IProgress<DownloadProgress>? progress,
+        CancellationToken ct)
+    {
+        var lines = new List<string>();
+        int code = await EngineRunner.RunAsync(engine, ["-m", "openlion.gov_speed", cmd, folder], line =>
+        {
+            lock (lines) lines.Add(line);
+            if (line.StartsWith("progress ", StringComparison.Ordinal) && long.TryParse(line[9..], out var n))
+                progress?.Report(new DownloadProgress(DownloadPhase.Downloading, n, null, 0));
+        }, ct);
+        List<string> output;
+        lock (lines) output = [.. lines.Where(l => !l.StartsWith(EngineRunner.StderrPrefix) && !l.StartsWith("progress "))];
+        string? path = output.Count > 0 ? output[^1].Trim() : null;
+        if (code != 0 || path is null)
+        {
+            string tail;
+            lock (lines) tail = string.Join(" ", lines.Where(l => l.StartsWith(EngineRunner.StderrPrefix)).TakeLast(2)
+                .Select(l => l[EngineRunner.StderrPrefix.Length..]));
+            throw new SpeedZoneException($"The {source.Title} speed limits couldn't be downloaded (exit code {code}). " +
+                                         "Check your internet connection and press Download to try again. " + tail);
+        }
+        var full = Path.GetFullPath(path);
+        if (!full.StartsWith(Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+            throw new SpeedZoneException($"The map engine wrote the {source.Title} speed limits somewhere unexpected: {full}");
+        return full;
     }
 
     async Task FetchAsync(Uri url, string part, IProgress<DownloadProgress>? progress, CancellationToken ct)

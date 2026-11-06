@@ -10,18 +10,28 @@ Zones that only apply some of the time (school, shopping strip, seasonal, side-r
 activated) are left out: the dataset records their lowest value, which would be wrong
 most of the day. Such roads keep whatever OSM says, or no limit.
 
-prepare() turns the 480 MB GeoJSON into a small binary file once (deduplicated lines,
+Western Australia (Main Roads WA, "Legal Speed Limits", CC BY 4.0, refreshed weekly):
+every public road as lines with SPEED_LIMIT ("60km/h") and CWY (Single, or Left/Right
+for each side of a divided road). About three quarters of the sections only say "50km/h
+applies in built up areas or 110km/h outside built up areas": that's the default rule,
+not a signed limit, and the data doesn't say which half applies, so those are left out.
+Part-time zones (school, children's crossing) are a separate layer and aren't used.
+
+prepare() turns the downloaded GeoJSON into a small binary file once (deduplicated lines,
 integer coordinates); Index loads that file and answers lookup(xy) for a road piece.
 """
 import array
 import json
 import math
 import os
+import re
 import struct
 
 MAGIC = b"OLGSPD1\0"
-SOURCES = {"VIC": "Victoria Department of Transport and Planning, Speed Zones (CC BY 4.0)"}
+SOURCES = {"VIC": "Victoria Department of Transport and Planning, Speed Zones (CC BY 4.0)",
+           "WA": "Main Roads Western Australia, Legal Speed Limits (CC BY 4.0)"}
 NORMAL = "Normal Operation"
+WA_SIGNED = re.compile(r"^\s*(\d{1,3})\s*km/h\s*$", re.IGNORECASE)
 
 CELL = 7            # grid cell = 2**7 units of 1e-5 degree (~140 m x 110 m in Victoria)
 RADIUS_M = 12.0     # a sample must be this close to a zone line
@@ -69,6 +79,25 @@ def _conditions(p):
     return [zc] if isinstance(zc, str) else zc
 
 
+def feature_speed(p):
+    """(km/h, None) for a feature's properties, or (None, reason it's left out).
+    Knows Victoria's (speed_limit, zone_conditions) and WA's (SPEED_LIMIT) fields."""
+    if "SPEED_LIMIT" in p:                          # Western Australia
+        v = p.get("SPEED_LIMIT") or ""
+        m = WA_SIGNED.match(v)
+        if not m:
+            return None, "skipped (default rule, no signed limit)" if "built up" in v.lower() else "skipped (no speed)"
+        speed = int(m.group(1))
+    else:                                           # Victoria
+        if NORMAL not in _conditions(p) or p.get("zone_conditions_other"):
+            return None, "skipped (not normal operation)"
+        try:
+            speed = int(float(p.get("speed_limit")))
+        except (TypeError, ValueError):
+            return None, "skipped (no speed)"
+    return (speed, None) if 5 <= speed <= 130 else (None, "skipped (no speed)")
+
+
 def _features(path):
     """Yield features from a FeatureCollection one at a time (the file is read as one
     string, but only one feature is a Python object at a time)."""
@@ -87,25 +116,18 @@ def _features(path):
 
 
 def prepare(geojson, out):
-    """Victoria Speed Zones GeoJSON -> compact binary. Returns stats."""
+    """Speed zone GeoJSON (Victoria or WA) -> compact binary. Returns stats."""
     lines = {}      # geometry key -> [speed, xy array]
-    st = {"features": 0, "skipped (not normal operation)": 0, "skipped (no speed)": 0,
-          "skipped (no geometry)": 0, "direction pairs disagree": 0}
+    st = {"features": 0, "skipped (no speed)": 0, "skipped (no geometry)": 0, "direction pairs disagree": 0}
     for f in _features(geojson):
         st["features"] += 1
         p, g = f.get("properties") or {}, f.get("geometry")
         if not g or not g.get("coordinates"):
             st["skipped (no geometry)"] += 1
             continue
-        if NORMAL not in _conditions(p) or p.get("zone_conditions_other"):
-            st["skipped (not normal operation)"] += 1
-            continue
-        try:
-            speed = int(float(p.get("speed_limit")))
-        except (TypeError, ValueError):
-            speed = 0
-        if not 5 <= speed <= 130:
-            st["skipped (no speed)"] += 1
+        speed, why = feature_speed(p)
+        if speed is None:
+            st[why] = st.get(why, 0) + 1
             continue
         parts = g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]]
         xy = array.array("i")
@@ -333,11 +355,73 @@ def fetch_vic(folder):
     return name, dest
 
 
+WA_PACKAGE = "https://catalogue.data.wa.gov.au/api/3/action/package_show?id=mrwa-legal-speed-limits"
+WA_LAYER = ("https://gisservices.mainroads.wa.gov.au/arcgis/rest/services/OpenData/"
+            "RoadAssets_DataPortal/MapServer/8/query")
+WA_PAGE = 2000      # the server's maxRecordCount
+
+
+def _get_json(url, timeout=120):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "OpenLion"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+def latest_wa():
+    """(name, file name) of the current WA data. The catalogue's last-updated date names
+    it, since the map server itself gives no date."""
+    import datetime
+    meta = _get_json(WA_PACKAGE, 60)["result"]
+    day = (meta.get("metadata_modified") or "")[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        raise RuntimeError("the WA data catalogue gave no date for Legal Speed Limits")
+    d = datetime.date.fromisoformat(day)
+    return f"Legal Speed Limits {d.day} {d:%B %Y}", f"wa_legal_speed_limits_{day}.geojson"
+
+
+def fetch_wa(folder, progress=None):
+    """Download WA's signed speed limits into one GeoJSON file in folder, page by page.
+    The default-rule sections are filtered out on the server. Returns (name, path)."""
+    import urllib.parse
+    name, fname = latest_wa()
+    dest = os.path.join(folder, fname)
+    if os.path.exists(dest):
+        return name, dest
+    os.makedirs(folder, exist_ok=True)
+    feats, offset = [], 0
+    while True:
+        q = urllib.parse.urlencode({
+            "where": "SPEED_LIMIT NOT LIKE '%built up%'", "outFields": "SPEED_LIMIT,CWY,ROAD_NAME",
+            "outSR": "4326", "orderByFields": "OBJECTID", "resultOffset": offset,
+            "resultRecordCount": WA_PAGE, "f": "geojson"})
+        page = _get_json(WA_LAYER + "?" + q)
+        if "error" in page:
+            raise RuntimeError(f"WA map server: {page['error'].get('message', page['error'])}")
+        got = page.get("features") or []
+        feats += got
+        offset += len(got)
+        if progress:
+            progress(offset)
+        more = page.get("exceededTransferLimit") or (page.get("properties") or {}).get("exceededTransferLimit")
+        if not got or (not more and len(got) < WA_PAGE):
+            break
+    if not feats:
+        raise RuntimeError("the WA map server sent no speed limits")
+    with open(dest + ".part", "w", encoding="utf-8") as fh:
+        json.dump({"type": "FeatureCollection", "features": feats}, fh)
+    os.replace(dest + ".part", dest)
+    return name, dest
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) == 3 and sys.argv[1] == "fetch-vic":
         print(*fetch_vic(sys.argv[2]), sep="\n")
+    elif len(sys.argv) == 3 and sys.argv[1] == "fetch-wa":
+        print(*fetch_wa(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep="\n")
     elif len(sys.argv) == 4 and sys.argv[1] == "prepare":
         print(prepare(sys.argv[2], sys.argv[3]))
     else:
-        sys.exit("usage: python -m openlion.gov_speed fetch-vic <folder> | prepare <in.geojson> <out.bin>")
+        sys.exit("usage: python -m openlion.gov_speed fetch-vic <folder> | fetch-wa <folder> | "
+                 "prepare <in.geojson> <out.bin>")

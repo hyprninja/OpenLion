@@ -304,8 +304,8 @@
                     <StackPanel Visibility="{Binding AustraliaOnCard, Converter={StaticResource BoolToVis}}">
                         <TextBlock FontWeight="SemiBold" Margin="0,4,0,4" Text="Which states?"/>
                         <TextBlock Style="{StaticResource Body}" Margin="0,0,0,8"
-                                   Text="Victoria is available now. The other states and territories are coming soon, in future versions of OpenLion."/>
-                        <ItemsControl ItemsSource="{Binding Rows}" IsEnabled="{Binding IsIdle}">
+                                   Text="{Binding AvailableNote, Mode=OneWay}"/>
+                        <ItemsControl ItemsSource="{Binding AvailableRows}" IsEnabled="{Binding IsIdle}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Style="{StaticResource Card}" Padding="12,7" Margin="0,0,0,6">
@@ -338,6 +338,22 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        <Border Style="{StaticResource Card}" Padding="12,8">
+                            <StackPanel>
+                                <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,0,6" Text="Coming in a future version:"/>
+                                <ItemsControl ItemsSource="{Binding LaterRows}" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><UniformGrid Columns="3"/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsEnabled="False" Margin="0,2,12,2" Content="{Binding Title}"
+                                                      AutomationProperties.HelpText="Coming in a future version"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
 
                         <StackPanel Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" Margin="0,4,0,10">
                             <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"/>

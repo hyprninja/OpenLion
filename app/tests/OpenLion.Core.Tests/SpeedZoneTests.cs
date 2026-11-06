@@ -50,12 +50,33 @@ public class SpeedZoneTests
     }
 
     [Fact]
-    public void OnlyVictoriaIsAvailable_AllStatesListed()
+    public void VictoriaAndWaAreAvailable_AllStatesListed()
     {
         Assert.Equal(8, SpeedZoneSource.All.Count);
-        Assert.Equal(["VIC"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
-        Assert.Contains("CC BY 4.0", SpeedZoneSource.Victoria.Credit);
+        Assert.Equal(8, SpeedZoneSource.All.Select(s => s.Code).Distinct().Count());
+        Assert.Equal(["VIC", "WA"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.All(SpeedZoneSource.All.Where(s => s.Available), s => Assert.Contains("CC BY 4.0", s.Credit));
         Assert.Same(SpeedZoneSource.Victoria, SpeedZoneSource.ByCode("vic"));
+        Assert.Same(SpeedZoneSource.WesternAustralia, SpeedZoneSource.ByCode("WA"));
+        Assert.Null(SpeedZoneSource.Victoria.EngineFetch);
+        Assert.Equal("fetch-wa", SpeedZoneSource.WesternAustralia.EngineFetch);
+    }
+
+    [Fact]
+    public void Dated_UsesTheCatalogueDateAsVersion()
+    {
+        var reply = JsonDocument.Parse("""{"result": {"title": "Legal Speed Limits", "metadata_modified": "2026-11-05T21:24:27.181655"}}""").RootElement;
+        var r = SpeedZoneDownloader.Dated(reply, SpeedZoneSource.WesternAustralia);
+        Assert.Equal("wa-2026-11-05", r.FileName);
+        Assert.Equal("Legal Speed Limits 5 November 2026", r.Name);
+        Assert.Equal("catalogue.data.wa.gov.au", r.Url.Host);
+    }
+
+    [Fact]
+    public void Dated_NoDate_Throws()
+    {
+        var reply = JsonDocument.Parse("""{"result": {"title": "Legal Speed Limits"}}""").RootElement;
+        Assert.Throws<SpeedZoneException>(() => SpeedZoneDownloader.Dated(reply, SpeedZoneSource.WesternAustralia));
     }
 
     [Fact]

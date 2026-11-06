@@ -86,5 +86,25 @@ class GovSpeedTest(unittest.TestCase):
             gov_speed.Index(bad)
 
 
+class FeatureSpeedTest(unittest.TestCase):
+    def test_wa_signed_limit(self):
+        self.assertEqual(gov_speed.feature_speed({"SPEED_LIMIT": "60km/h", "CWY": "Single"}), (60, None))
+        self.assertEqual(gov_speed.feature_speed({"SPEED_LIMIT": "110km/h"})[0], 110)
+
+    def test_wa_default_rule_is_left_out(self):
+        v = "50km/h applies in built up areas or 110km/h outside built up areas"
+        speed, why = gov_speed.feature_speed({"SPEED_LIMIT": v})
+        self.assertIsNone(speed)
+        self.assertIn("default rule", why)
+
+    def test_wa_odd_values_are_left_out(self):
+        for v in ("", None, "Variable", "0km/h", "200km/h"):
+            self.assertIsNone(gov_speed.feature_speed({"SPEED_LIMIT": v})[0], v)
+
+    def test_victoria_still_reads(self):
+        self.assertEqual(gov_speed.feature_speed({"speed_limit": "80", "zone_conditions": ["Normal Operation"]}), (80, None))
+        self.assertIsNone(gov_speed.feature_speed({"speed_limit": "40", "zone_conditions": ["School"]})[0])
+
+
 if __name__ == "__main__":
     unittest.main()

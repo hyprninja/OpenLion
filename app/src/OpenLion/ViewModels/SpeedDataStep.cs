@@ -71,7 +71,7 @@ public sealed class SpeedZoneRow : ObservableObject
 
     /// <summary>The note beside a state that can't be chosen yet.</summary>
     public string Note => IsAvailable
-        ? $"Every road in the state, updated monthly by the state government. About {Source.ApproxMb} MB to download."
+        ? $"{Source.Blurb} About {Source.ApproxMb} MB to download."
         : "Coming in a future version.";
 }
 
@@ -98,6 +98,10 @@ public sealed class SpeedDataStep : StepViewModel
     }
 
     public ObservableCollection<SpeedZoneRow> Rows { get; }
+    /// <summary>The states that can be ticked, each in its own box.</summary>
+    public IEnumerable<SpeedZoneRow> AvailableRows => Rows.Where(r => r.IsAvailable);
+    /// <summary>The states still to come, listed together in one compact box.</summary>
+    public IEnumerable<SpeedZoneRow> LaterRows => Rows.Where(r => !r.IsAvailable);
     public ICommand DownloadCommand { get; }
     public ICommand CheckCommand { get; }
     public ICommand CancelCommand { get; }
@@ -121,6 +125,18 @@ public sealed class SpeedDataStep : StepViewModel
 
     public bool ShowDownload => Rows.Any(r => r.WantsDownload);
     public string DownloadLabel => Rows.Where(r => r.WantsDownload).All(r => !r.HasCached) ? "Download" : "Download the newer data";
+
+    /// <summary>"Victoria and Western Australia are available now. The other states ..."</summary>
+    public string AvailableNote
+    {
+        get
+        {
+            var t = Rows.Where(r => r.IsAvailable).Select(r => r.Title).ToList();
+            var names = t.Count <= 1 ? string.Concat(t) : string.Join(", ", t.Take(t.Count - 1)) + " and " + t[^1];
+            return $"{names} {(t.Count == 1 ? "is" : "are")} available now. The other states and territories are coming soon, " +
+                   "in future versions of OpenLion.";
+        }
+    }
 
     /// <summary>Credit lines for the chosen states (their licences ask for it).</summary>
     public string Credits => string.Join(Environment.NewLine,
@@ -176,10 +192,13 @@ public sealed class SpeedDataStep : StepViewModel
             return;
         _checking = true;
         Error = "";
+        var done = new HashSet<SpeedZoneRow>();
         try
         {
-            foreach (var row in Rows.Where(r => r.IsChecked && r.Downloader is not null).ToList())
+            // a state ticked while another is being checked joins this pass (CheckAsync was a no-op for it)
+            while (Rows.FirstOrDefault(r => r.IsChecked && r.Downloader is not null && !done.Contains(r)) is { } row)
             {
+                done.Add(row);
                 row.RemoteText = $"Checking the {row.Title} government data catalogue for the latest data…";
                 try
                 {
@@ -225,21 +244,24 @@ public sealed class SpeedDataStep : StepViewModel
             foreach (var row in Rows.Where(r => r.WantsDownload).ToList())
             {
                 var remote = row.Remote!;
-                Status = $"Downloading {row.Title} speed zones: {remote.Name}…";
+                Status = $"Downloading {row.Title} speed data: {remote.Name}…";
                 Detail = "";
                 SetPercent(null);
+                bool sections = row.Source.EngineFetch is not null;   // the engine counts road sections, not bytes
                 var progress = new Progress<DownloadProgress>(p =>
                 {
                     if (p.Phase == DownloadPhase.Verifying)
                     {
-                        Status = $"Preparing the {row.Title} speed zones (about a minute)…";
+                        Status = $"Preparing the {row.Title} speed data{(sections ? "" : " (about a minute)")}…";
                         Detail = "";
                         SetPercent(null);
                         return;
                     }
                     SetPercent(p.Fraction * 100);
-                    Detail = $"{p.Done / 1e6:N0}{(p.Total is { } t ? $" of {t / 1e6:N0}" : "")} MB" +
-                             (p.BytesPerSecond > 0 ? $"  ({p.BytesPerSecond / 1e6:N1} MB/s)" : "");
+                    Detail = sections
+                        ? $"{p.Done:N0} road sections"
+                        : $"{p.Done / 1e6:N0}{(p.Total is { } t ? $" of {t / 1e6:N0}" : "")} MB" +
+                          (p.BytesPerSecond > 0 ? $"  ({p.BytesPerSecond / 1e6:N1} MB/s)" : "");
                 });
                 row.Cached = await row.Downloader!.DownloadAsync(remote, engine, progress, _cts.Token);
                 row.RemoteText = $"This is the latest data ({remote.Name}).";

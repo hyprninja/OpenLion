@@ -1,8 +1,9 @@
-# 22. Speed limits from government open data (Victoria)
+# 22. Speed limits from government open data (Victoria, Western Australia)
 
 OSM has a `maxspeed` tag on about a third of Australian road segments. Some state
 governments publish their whole speed zone register as open data. This report adds
-the first one, Victoria, as an optional source for roads OSM has no limit for.
+two of them, Victoria and Western Australia (see [Western Australia](#western-australia)),
+as optional sources for roads OSM has no limit for.
 
 ## Source
 
@@ -115,10 +116,77 @@ the card, the step just says there's nothing to choose. Tested in the app: the p
 the catalogue check, and the download and prepare (about 1 minute). Not yet tested:
 a full build started from the app.
 
+## Western Australia
+
+Main Roads WA, **Legal Speed Limits** (State and Local Roads), on the
+[WA data catalogue](https://catalogue.data.wa.gov.au/dataset/mrwa-legal-speed-limits),
+licence **CC BY 4.0**, refreshed weekly from Main Roads' road database (IRIS). It is
+served by an ArcGIS map server (`RoadAssets_DataPortal/MapServer/8`), not as one
+file. The catalogue's GeoJSON link goes to a web page.
+
+| | |
+|---|---|
+| Sections | 69,821 (66,054 local roads, 3,767 state roads) |
+| Fields used | `SPEED_LIMIT` ("60km/h"), geometry; `CWY` is Single, or Left/Right for each side of a divided road |
+| Default rule only | **53,728 sections (77 %)**: "50km/h applies in built up areas or 110km/h outside built up areas" |
+| Signposted | 16,093: 50 (6,078), 60 (2,591), 40 (1,800), 70 (1,757), 110 (1,398), 80 (1,355), others fewer |
+
+- The default-rule sections are **left out**. They aren't a signed limit, and the
+  data doesn't say which half of the rule applies (the same reason statutory
+  defaults were declined on 2026-11-05).
+- Part-time zones (school, children's crossing) are a separate layer
+  (`MapServer/9`, "Legal Speed Zones", 6,523 sections) and aren't used.
+- Main Roads notes the layer "may not be current or accurate" and that the road sign
+  is the only enforceable source. The agreement check below is how far it was
+  trusted.
+- The map server gives no last-changed date, so the catalogue's `metadata_modified`
+  date names the version ("Legal Speed Limits 5 November 2026").
+
+`gov_speed.fetch_wa(folder)` asks the server for the signposted sections only
+(`SPEED_LIMIT NOT LIKE '%built up%'`) as GeoJSON in EPSG:4326, page by page, and
+writes them to one file (16 MB, a few seconds). `prepare()` now reads either state's
+fields (`feature_speed()`): 16,093 lines in 2 s, 1.4 MB prepared.
+`python -m openlion.gov_speed fetch-wa <folder>` runs it from the command line.
+
+### Results: WA bbox (`tests/gov_speed_check.py`)
+
+OSM graph of 112.9,-35.2 to 129.0,-13.7 (240k ways); lookups 11 s.
+
+| | segments | km |
+|---|---:|---:|
+| OSM and WA agree | 62,713 | 22,083 |
+| OSM and WA disagree | 7,556 | 1,618 |
+| OSM only | 52,324 | 28,129 |
+| **Filled from WA (OSM had nothing)** | **27,581** | **8,248** |
+| Neither | 326,984 | 205,812 |
+
+**Agreement where both have a limit: 89.2 %** (freeway 98 %, highway 92 %, arterial
+87 %, street 86 %). Filled km by speed: 110 → 3,923, 50 → 1,407, 70 → 731,
+60 → 660, 80 → 469, 90 → 418, 100 → 364, 40 → 265. The check counts ramps, which the
+build skips. Largest disagreements, OSM → WA: 50 → 40 (1,178), 70 → 60 (1,060),
+80 → 70 (854), 50 → 60 (812).
+
+WA adds far less than Victoria (8,200 km against 132,000 km): three quarters of its
+sections only restate the default rule.
+
+**Perth card** (`make_card --bbox 115.6 -32.4 116.2 -31.6` with both the Victorian and
+WA files): 227,624 segments, 74,914 with a limit (32.9 %), of which 4,158 come from
+WA, against 31.1 % from OSM alone. Most of Perth's suburban streets are default-rule
+sections. `card_check`: 0 problems. Passing two `--speed-zones` files works.
+
+### App
+
+Western Australia is a second checkbox on the Speed data step. The app reads the
+catalogue date to tell whether there's newer data, then has the engine download it
+(`SpeedZoneSource.EngineFetch = "fetch-wa"`). Progress counts road sections, not MB.
+The engine's file must land in the state's own folder. Then the file is prepared
+like Victoria's (`%LOCALAPPDATA%\OpenLion\speed\wa\zones.bin`). The states still to
+come are listed together in one compact box, so the page fits without scrolling.
+Fixed along the way: ticking a second state while the first was being checked
+skipped the second check.
+
 ## Not done
 
-- Other states (NSW is the next candidate; WA and NZ are also current, statewide
-  and openly licensed).
-- Attribution: the card and README must credit "Speed zone data © State of
-  Victoria (Department of Transport and Planning), CC BY 4.0" whenever this source
-  is used.
+- Other states. NSW is the next candidate; NZ's National Speed Limit Register is
+  also current and openly licensed.
+- Car test of a card with WA limits.
