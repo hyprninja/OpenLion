@@ -437,7 +437,87 @@
             </ScrollViewer>
         </DataTemplate>
 
-        <!-- Step 7: build -->
+        <!-- Step 7: voice (optional) -->
+        <DataTemplate DataType="{x:Type vm:VoiceStep}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H1}" Text="Voice"/>
+                    <TextBlock Style="{StaticResource Body}">
+                        Keep the voice your unit came with, or give it a new one. Press Play to hear each voice
+                        saying a few instructions, the way the unit would say them.
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding Options}" IsEnabled="{Binding IsIdle}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource Card}" Padding="12,8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <RadioButton IsChecked="{Binding IsSelected}" VerticalContentAlignment="Center"
+                                                         AutomationProperties.Name="{Binding Name}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="Contains swearing" Foreground="{StaticResource Accent}" FontWeight="SemiBold"
+                                                               FontSize="12" Margin="10,1,0,0" VerticalAlignment="Center"
+                                                               Visibility="{Binding IsExplicit, Converter={StaticResource BoolToVis}}"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                            <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Margin="20,4,0,0"/>
+                                            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Margin="20,4,0,0">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsReady}" Value="True">
+                                                                <Setter Property="Foreground" Value="{StaticResource Good}"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsStock}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Credit}" FontSize="12" Foreground="{StaticResource Muted}"
+                                                       TextWrapping="Wrap" Margin="20,4,0,0"
+                                                       Visibility="{Binding HasCredit, Converter={StaticResource BoolToVis}}"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="▶ Play" Command="{Binding PlayCommand}"
+                                                VerticalAlignment="Top" Margin="12,0,0,0"
+                                                AutomationProperties.Name="{Binding Name, StringFormat='Play a sample of {0}'}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Content="Stop playing" Command="{Binding StopCommand}" HorizontalAlignment="Left" Margin="0,2,0,10"/>
+
+                    <Border Style="{StaticResource Card}" Visibility="{Binding CustomChosen, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Body}" Margin="0" FontWeight="SemiBold" Text="{Binding LanguageNote}"/>
+                    </Border>
+
+                    <StackPanel Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" Margin="0,4,0,10">
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"/>
+                        <ProgressBar Height="10" Value="{Binding Percent, Mode=OneWay}" Maximum="100"
+                                     IsIndeterminate="{Binding IsIndeterminate, Mode=OneWay}" Margin="0,0,0,8"/>
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                        <Button Content="Cancel" Command="{Binding CancelCommand}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Error}" Foreground="{StaticResource Accent}"
+                               FontWeight="SemiBold" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"/>
+
+                    <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" HorizontalAlignment="Left"
+                            Visibility="{Binding ShowDownload, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 8: build -->
         <DataTemplate DataType="{x:Type vm:BuildMapsStep}">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel>
@@ -511,7 +591,7 @@
             </ScrollViewer>
         </DataTemplate>
 
-        <!-- Step 8: write card -->
+        <!-- Step 9: write card -->
         <DataTemplate DataType="{x:Type vm:WriteCardStep}">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top">

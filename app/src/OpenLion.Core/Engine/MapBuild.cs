@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using OpenLion.Core.Speed;
@@ -43,9 +43,11 @@ public sealed record BuildResult
 /// <param name="CameraFolder">Folder for the official speed camera lists the engine downloads
 /// (other states get OSM's cameras); null: OSM cameras everywhere.</param>
 /// <param name="Addresses">G-NAF zip: house numbers for Australian streets OSM has none on.</param>
+/// <param name="VoicePack">Voice pack zip to install into voices/en_GB; null keeps the factory voice.</param>
 public sealed record BuildRequest(IReadOnlyList<(string Country, string Path)> Extracts, string FactoryNavigation,
     string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null,
-    IReadOnlyList<string>? SpeedZones = null, string? CameraFolder = null, string? Addresses = null)
+    IReadOnlyList<string>? SpeedZones = null, string? CameraFolder = null, string? Addresses = null,
+    string? VoicePack = null)
 {
     /// <summary>One Australian extract (OpenLion 1.0).</summary>
     public BuildRequest(string pbf, string factoryNavigation, string? manifest, string workFolder,
@@ -93,6 +95,8 @@ public static class MapBuild
             args.AddRange(["--cameras", req.CameraFolder]);
         if (req.Addresses is not null)
             args.AddRange(["--addresses", req.Addresses]);
+        if (req.VoicePack is not null)
+            args.AddRange(["--voice-pack", req.VoicePack]);
         return args;
     }
 

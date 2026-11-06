@@ -22,3 +22,7 @@ __pycache__/
 
 # Release build output (packaging/build-release.ps1)
 dist/
+
+# voice pack work (tools/voice): never commit an API key
+elevenlabs_key.txt
+voice.json

@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows.Input;
 
 namespace OpenLion.ViewModels;
@@ -24,6 +24,7 @@ public sealed class MainViewModel : ObservableObject
             new GetOsmStep(s),
             new SpeedDataStep(s),
             new HouseNumbersStep(s),
+            new VoiceStep(s),
             new BuildMapsStep(s),
             new WriteCardStep(s),
         ];

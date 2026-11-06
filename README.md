@@ -25,6 +25,7 @@ Same spot, same car. The factory map stops at Worland Road. The OpenLion card sh
 - **Every road in OpenStreetMap**, including streets built in the last ten years, with speed limits where OpenStreetMap has them.
 - **Extra speed limits (optional, Victoria)** from the government's official speed zone register, for roads OpenStreetMap has no limit on. That's about 132,000 km more roads with a speed limit in Victoria. OpenStreetMap's limit is kept wherever it has one. Other states will follow as their governments publish open data.
 - **Turn-by-turn guidance and voice instructions**, just like the factory maps. The new card uses the same map format, so the car reads it like its own.
+- **A new voice (optional): Elodie**, a warm, relaxed Australian woman's voice, named as a nod to DankPods' EFM Toledo. She says common instructions in longer phrases ("Turn left" · "300 meters ahead"), so they sound much smoother than the factory voice's word-by-word joins. Or **Jimbo**, an 11/10 bogan who still gets you there but has opinions about it (contains swearing). Listen to a sample of each in the app before you choose. UK English only: set the unit's language to English (UK).
 - **Address search** by suburb, street and house number, with suburbs, councils and postcodes from OpenStreetMap. House numbers come from OpenStreetMap and, if you choose, from G-NAF, the Australian government's address file, which adds numbers on most streets OpenStreetMap doesn't cover.
 - **Points of interest**: about 270,000 fuel stations, shops, cafés, hospitals and more.
 - **Speed camera warnings**: fixed, red-light and point-to-point cameras, downloaded fresh from the official lists where a government publishes them openly (Victoria and the ACT so far) and from OpenStreetMap everywhere else. The app tells you which is which when it builds.
@@ -50,9 +51,10 @@ OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11�
 4. **Get the map data.** Choose Australia, New Zealand, or both (the factory card had both). OpenLion downloads the latest extract for each from OpenStreetMap (via Geofabrik) and checks it.
 5. **Extra speed limits (optional, Victoria).** Tick a state to fill in the speed limits OpenStreetMap is missing from the government's official speed zones. OpenLion downloads Victoria's monthly file from DataVic and keeps a 21 MB prepared copy. Other states will follow as their data allows.
 6. **House numbers (optional, Australia).** Tick the box to add house numbers from G-NAF, the government's national address file. OpenLion downloads the latest quarterly release from data.gov.au (about 1.9 GB) and checks it. OpenStreetMap's numbers always come first.
-7. **Build the maps.** This takes about half an hour on a fast PC with plenty of memory, and up to 1½ hours on one with 8 GB. You can leave the PC to it; OpenLion keeps it awake.
-8. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
-9. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
+7. **Voice (optional).** Keep the factory voice or choose Elodie or Jimbo. Press Play to hear each one. Each voice is an 11-15 MB download from this project's releases. If you choose a new voice, set the unit's language to **English (UK)** in its settings once the new card is in.
+8. **Build the maps.** This takes about half an hour on a fast PC with plenty of memory, and up to 1½ hours on one with 8 GB. You can leave the PC to it; OpenLion keeps it awake.
+9. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
+10. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
 
 If anything isn't right, put your factory card back in. It's exactly as it was.
 
@@ -128,6 +130,7 @@ The iQ reads its maps from a full-size SD card. The map data turns out to be an 
 | Speed camera alerts: official lists (VIC, ACT) downloaded at each build, OSM cameras elsewhere, snapped onto the carriageway for direction and speed limit | Done | [23](docs/23_speed_cameras.md) |
 | House numbers: factory `short_addr`/`long_addr` ranges decoded (side, parity, 10/18-bit signed delta) and filled from OSM `addr:housenumber` | Done | [24](docs/24_house_numbers.md) |
 | House numbers from G-NAF (Australia's national address file) for streets OSM has none on, OSM first (`--addresses`) | Done | [25](docs/25_gnaf_house_numbers.md) |
+| Voice packs: new UK English voices installed into `voices/en_GB`, with longer phrases added to the user's own grammar file (`--voice-pack`); first pack Elodie; car-tested 2026-11-06 | Done | [26](docs/26_voice_packs.md) |
 | `.fea` size reduction, other road-sense alerts (school zones, blackspots, railway crossings) | Not started | |
 | In-car test: unit accepts the OSM card, shows post-2010 streets, address search works, routes 200 km in demo mode, live guidance and voice instructions work on a real drive | Passed (2026-11-05) | [16](docs/16_test_card.md) |
 
@@ -142,6 +145,7 @@ openlion/    pure-Python (3.9+, standard library only) readers, writers and rend
 tests/       round-trip, re-tiling, OSM region and card checks against your own card copy
 app/         Windows app (.NET 10, WPF): wizard that copies a factory card, builds maps and writes a blank card
 packaging/   release build: embedded Python + engine + app → MSI (WiX 6)
+tools/voice/ making voice packs with ElevenLabs (docs/26_voice_packs.md)
 ```
 
 ### The Windows app
@@ -207,6 +211,8 @@ python tests/card_check.py card/navigation navigation
 python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card2/navigation   # all of the above in one
 python -m openlion.make_card AU=australia-latest.osm.pbf navigation osm_work card3/navigation --extract NZ=new-zealand-latest.osm.pbf   # both countries
 python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card4/navigation --addresses g-naf_aug26_allstates_gda2020_psv_110.zip   # + G-NAF house numbers
+python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card5/navigation --voice-pack openlion-voice-elodie-v1.zip   # + the Elodie voice
+python -m openlion.voicepack check openlion-voice-elodie-v1.zip navigation   # what a voice pack would change on this card
 ```
 
 ## Legal and data policy
@@ -215,6 +221,8 @@ python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card4/
 - Format documentation and tools are original work.
 - Maps built from OpenStreetMap are © OpenStreetMap contributors and must be distributed under the **ODbL**, with attribution.
 - Cards built with house numbers from G-NAF (the app's House numbers step, or `--addresses`) contain G-NAF data. Incorporates or developed using G-NAF © Geoscape Australia licensed by the Commonwealth of Australia under the [Open Geo-coded National Address File (G-NAF) End User Licence Agreement](https://data.gov.au/data/dataset/19432f89-dc3a-4ef3-b943-5326ef1dbecc) (CC BY 4.0, plus a rule against using it to compile addresses for sending mail). OpenLion modifies it: house numbers are matched to OSM streets and stored as ranges (report [23](docs/23_gnaf_house_numbers.md)).
+
+- **Voice packs** contain only OpenLion's own audio, never factory clips: the factory beeps, pauses and the other languages stay as they are on your card, and the longer phrases are added to your own card's grammar file when the card is built. The Elodie and Jimbo voices were made with ElevenLabs (on a paid plan, which allows this use) and are licensed **CC BY 4.0**: credit "Elodie voice" or "Jimbo voice, OpenLion, made with ElevenLabs".
 
 ## Safety
 

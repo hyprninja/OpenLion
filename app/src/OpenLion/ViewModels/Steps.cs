@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using OpenLion.Core;
 using OpenLion.Core.Cards;
@@ -44,8 +44,18 @@ public sealed class Session
     /// not wanted, or when Australia isn't on the card).</summary>
     public OpenLion.Core.Addresses.GnafData? Gnaf { get; set; }
 
-    /// <summary>What a build is keyed on: the OSM extracts, the speed data and the G-NAF release.</summary>
-    public string? BuildKey() => Osm is { } osm ? BuildRecord.Key(osm, SpeedZones, Gnaf) : null;
+    /// <summary>The voice pack to install and its zip (set by the Voice step; null keeps the factory voice).</summary>
+    public (OpenLion.Core.Voices.VoicePack Pack, string Path)? Voice { get; set; }
+
+    /// <summary>"the Elodie voice", or "" for the factory voice.</summary>
+    public string DescribeVoice() => Voice is { } v ? $"the {v.Pack.Name} voice" : "";
+
+    /// <summary>The factory card copy's navigation/ folder, if there is one.</summary>
+    public string? FactoryNavigation => FactoryCopy?.NavigationPath ??
+                                        (State.FactoryCopyPath is { } p ? Path.Combine(p, "navigation") : null);
+
+    /// <summary>What a build is keyed on: the OSM extracts, the speed data, the G-NAF release and the voice.</summary>
+    public string? BuildKey() => Osm is { } osm ? BuildRecord.Key(osm, SpeedZones, Gnaf, Voice?.Pack.Id) : null;
 
     /// <summary>"speed zone data for Victoria (Speed Zones September 2026)", or "" when none.</summary>
     public string DescribeSpeedZones() => SpeedZones.Count == 0 ? "" :
