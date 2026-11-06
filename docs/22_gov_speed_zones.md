@@ -1,4 +1,4 @@
-# 21. Speed limits from government open data (Victoria)
+# 22. Speed limits from government open data (Victoria)
 
 OSM has a `maxspeed` tag on about a third of Australian road segments. Some state
 governments publish their whole speed zone register as open data. This report adds

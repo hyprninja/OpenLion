@@ -121,7 +121,7 @@ The iQ reads its maps from a full-size SD card. The map data turns out to be an 
 | MY15 card (CD_8217, AUNZ 2014Q1): 5.2.1 road records with the 5.3 map-file layout, detected from auz.mp0; every table round-trips byte-identical | Done | [schema.py](openlion/schema.py) |
 | MY10 (CD_7172) card, AUNZ 2009Q4: compact map parcels (varint positions, nodes and lengths; shapes and road links inside mp0 segments), detected from auz.mp0; every table round-trips byte-identical | Done | [21](docs/21_my10_card.md) |
 | Builds on an 8 GB PC (about 3.6 GB peak) and in parallel on big ones (Australia + New Zealand in 25 min on 44 threads); output unchanged | Done | [20](docs/20_memory.md) |
-| Speed limits from Victoria's open speed zone register where OSM has none (+132,000 km in Victoria, 86 % agreement with OSM); chosen per state on the app's Speed data step | Done | [21](docs/21_gov_speed_zones.md) |
+| Speed limits from Victoria's open speed zone register where OSM has none (+132,000 km in Victoria, 86 % agreement with OSM); chosen per state on the app's Speed data step | Done | [22](docs/22_gov_speed_zones.md) |
 | Speed camera alerts: official lists (VIC, ACT) downloaded at each build, OSM cameras elsewhere, snapped onto the carriageway for direction and speed limit | Done | [23](docs/23_speed_cameras.md) |
 | `.fea` size reduction, other road-sense alerts (school zones, blackspots, railway crossings) | Not started | |
 | In-car test: unit accepts the OSM card, shows post-2010 streets, address search works, routes 200 km in demo mode, live guidance and voice instructions work on a real drive | Passed (2026-11-05) | [16](docs/16_test_card.md) |
