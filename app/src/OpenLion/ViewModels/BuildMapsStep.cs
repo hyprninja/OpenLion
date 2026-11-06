@@ -102,11 +102,11 @@ public sealed class BuildMapsStep : StepViewModel
             return;
         var osm = _session.Osm;
         var build = _session.State.Build;
-        if (build is not null && osm is not null && build.Matches(_session.FactoryRecord, BuildRecord.OsmKey(osm)))
+        if (build is not null && osm is not null && build.Matches(_session.FactoryRecord, _session.BuildKey()))
         {
             _session.Build = build;
             _session.RequiredBytes = build.Bytes;
-            Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {_session.DescribeOsm()}.";
+            Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {_session.DescribeOsm()}{_session.DescribeGnaf()}.";
             Detail = $"{build.Files:N0} files, {build.Bytes / 1e6:N0} MB, checked.";
             Warning = build.Partial ? $"This is a TEST build of a small area only, not all of {Places}." : "";
             Phase = BuildPhase.Done;
@@ -116,7 +116,7 @@ public sealed class BuildMapsStep : StepViewModel
         Status = Detail = "";
         Phase = BuildPhase.Ready;
         Intro = osm is null ? "" :
-            $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}, using your factory card's copy. " +
+            $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}{_session.DescribeGnaf()}, using your factory card's copy. " +
             $"This takes {Duration} on a fast PC (longer on slower ones). You can keep using the PC, " +
             "and OpenLion stops Windows going to sleep until it's done." +
             (_session.Countries.Count == 1
@@ -227,10 +227,11 @@ public sealed class BuildMapsStep : StepViewModel
             var bbox = MapBuild.BboxFromEnvironment();
             var extracts = _session.Countries.Zip(osm, (c, e) => (c.Code, e.Path)).ToList();
             var req = new BuildRequest(extracts, nav, FactoryManifest is { } m && File.Exists(m) ? m : null,
-                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox);
+                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, _session.Gnaf?.Path);
             AppLog.Write($"build: engine {engine.Python} ({(engine.Bundled ? "bundled" : "dev")}), " +
                          $"extracts {string.Join(", ", extracts.Select(x => $"{x.Code}={x.Path}"))}, " +
-                         $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}");
+                         $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}" +
+                         (_session.Gnaf is { } g ? ", G-NAF " + g.Path : ""));
             var progress = new Progress<BuildProgress>(p =>
             {
                 _progress = p;
@@ -249,13 +250,13 @@ public sealed class BuildMapsStep : StepViewModel
                 return;
             }
             var record = new BuildRecord(result.CardPath ?? AppPaths.BuildOutput, _session.FactoryRecord?.VolumeSerial ?? 0,
-                BuildRecord.OsmKey(osm), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null);
+                BuildRecord.Key(osm, _session.Gnaf), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null);
             _session.State.Build = record;
             _session.State.Save();
             _session.Build = record;
             _session.RequiredBytes = record.Bytes;
             Percent = 100;
-            Status = $"Maps are ready: built in {Format(_clock.Elapsed)} from {_session.DescribeOsm()}.";
+            Status = $"Maps are ready: built in {Format(_clock.Elapsed)} from {_session.DescribeOsm()}{_session.DescribeGnaf()}.";
             Detail = $"{result.Files:N0} files, {result.Bytes / 1e6:N0} MB. {result.Replaced} map files replaced, " +
                      "everything else is identical to your factory card, and the new card passed its checks.";
             Warning = bbox is not null ? $"This is a TEST build of a small area only, not all of {Places}." : "";
@@ -306,6 +307,6 @@ public sealed class BuildMapsStep : StepViewModel
             Detail = "The error report couldn't be saved: " + re.Message;
         }
         _summary = $"OpenLion {ErrorReport.AppVersion}: map build failed{(stage is null ? "" : " during " + stage)}.\n{message}\n" +
-                   $"OSM data: {(_session.Osm is { } o ? BuildRecord.OsmKey(o) : "none")}\nMemory: {GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (double)(1L << 30):N0} GB";
+                   $"OSM data: {_session.BuildKey() ?? "none"}\nMemory:{GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (double)(1L << 30):N0} GB";
     }
 }

@@ -279,7 +279,81 @@
             </ScrollViewer>
         </DataTemplate>
 
-        <!-- Step 5: build -->
+        <!-- Step 5: house numbers from G-NAF (optional) -->
+        <DataTemplate DataType="{x:Type vm:HouseNumbersStep}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource H1}" Text="House numbers"/>
+                    <TextBlock Style="{StaticResource Body}">
+                        OpenStreetMap has house numbers on about a third of Australia's streets. The Australian
+                        government's address file, G-NAF, lists every address in the country. OpenLion uses
+                        OpenStreetMap's numbers first and fills the rest from G-NAF, so address search can take you
+                        to a house number on far more streets (about three quarters of them).
+                    </TextBlock>
+
+                    <TextBlock Style="{StaticResource Body}" Visibility="{Binding NoAustralia, Converter={StaticResource BoolToVis}}">
+                        G-NAF only covers Australia, and Australia isn't on this card, so there's nothing to add here.
+                        Press Next.
+                    </TextBlock>
+
+                    <StackPanel Visibility="{Binding AustraliaOnCard, Converter={StaticResource BoolToVis}}">
+                        <CheckBox IsChecked="{Binding Wanted}" IsEnabled="{Binding IsIdle}" Margin="0,4,0,10"
+                                  VerticalContentAlignment="Center">
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="Add house numbers from G-NAF" FontWeight="SemiBold"/>
+                                <Run Text="  "/>
+                                <Run Text="About 1.9 GB to download, updated every three months. Adds a few minutes to the build."
+                                     Foreground="{StaticResource Muted}"/>
+                            </TextBlock>
+                        </CheckBox>
+
+                        <Border Style="{StaticResource Card}" Visibility="{Binding Wanted, Converter={StaticResource BoolToVis}}">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Margin="0,0,0,4" Text="G-NAF, Australia's national address file"/>
+                                <TextBlock Text="{Binding CachedText}" TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasCached}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource Good}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding RemoteText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                <Button Content="Use a file I already have…" Command="{Binding ImportCommand}"
+                                        HorizontalAlignment="Left" Margin="0,10,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" Margin="0,4,0,10">
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Status}" FontWeight="SemiBold"/>
+                            <ProgressBar Height="10" Value="{Binding Percent, Mode=OneWay}" Maximum="100"
+                                         IsIndeterminate="{Binding IsIndeterminate, Mode=OneWay}" Margin="0,0,0,8"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding Detail}" Foreground="{StaticResource Muted}"/>
+                            <Button Content="Cancel" Command="{Binding CancelCommand}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Error}" Foreground="{StaticResource Accent}"
+                                   FontWeight="SemiBold" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"/>
+
+                        <WrapPanel Visibility="{Binding IsIdle, Converter={StaticResource BoolToVis}}">
+                            <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
+                                    Visibility="{Binding ShowDownload, Converter={StaticResource BoolToVis}}"/>
+                            <Button Content="Check again" Command="{Binding CheckCommand}" Margin="0,0,8,6"
+                                    Visibility="{Binding Wanted, Converter={StaticResource BoolToVis}}"/>
+                        </WrapPanel>
+
+                        <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,10,0,0"
+                                   Text="{Binding Credit}"/>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 6: build -->
         <DataTemplate DataType="{x:Type vm:BuildMapsStep}">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel>

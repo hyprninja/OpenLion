@@ -32,6 +32,8 @@ public static class AppPaths
     /// <summary>One extract per country: Australia's stays where OpenLion 1.0 kept it.</summary>
     public static string OsmFolderFor(MapCountry c) =>
         c == MapCountry.Australia ? OsmFolder : Path.Combine(OsmFolder, c.Code.ToLowerInvariant());
+    /// <summary>The G-NAF release (house numbers), one zip at a time.</summary>
+    public static string GnafFolder => Path.Combine(Root, "gnaf");
     /// <summary>Engine working folder: cached OSM reads and the new map tables.</summary>
     public static string BuildWorkFolder => Path.Combine(Root, "build", "work");
     /// <summary>The finished navigation/ folder that gets written to the new card.</summary>
@@ -56,6 +58,12 @@ public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial
     /// Australian extract gives its plain file name, as OpenLion 1.0 stored it.</summary>
     public static string OsmKey(IEnumerable<OsmExtract> extracts) => string.Join("+", extracts.Select(e => e.FileName));
 
+    /// <summary><see cref="OsmKey"/> plus the G-NAF release used, if any ("...|gnaf:g-naf_aug26_....zip"),
+    /// so a build is redone when house-number data is added, removed or updated. Without G-NAF it's
+    /// the plain OSM key, as earlier versions stored it.</summary>
+    public static string Key(IEnumerable<OsmExtract> extracts, Addresses.GnafData? gnaf) =>
+        gnaf is null ? OsmKey(extracts) : OsmKey(extracts) + "|gnaf:" + gnaf.FileName;
+
     /// <summary>Still usable: the folder exists and it was built from this card and extract.</summary>
     public bool Matches(FactoryCardRecord? factory, string? osmFileName) =>
         factory is not null && factory.VolumeSerial == FactoryVolumeSerial &&
@@ -73,6 +81,8 @@ public sealed class AppState
     public BuildRecord? Build { get; set; }
     /// <summary>Countries to put on the card (MapCountry codes); null means Australia, as in 1.0.</summary>
     public List<string>? Countries { get; set; }
+    /// <summary>Add house numbers from G-NAF (Australia); null means yes, the default.</summary>
+    public bool? HouseNumbers { get; set; }
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

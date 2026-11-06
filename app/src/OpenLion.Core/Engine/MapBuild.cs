@@ -36,8 +36,9 @@ public sealed record BuildResult
 /// <param name="WorkFolder">Engine working folder (cached OSM reads, new tables).</param>
 /// <param name="OutputNavigation">navigation/ folder to create.</param>
 /// <param name="Bbox">Optional area (lon0 lat0 lon1 lat1) for quick test builds.</param>
+/// <param name="Addresses">G-NAF zip: house numbers for Australian streets OSM has none on.</param>
 public sealed record BuildRequest(IReadOnlyList<(string Country, string Path)> Extracts, string FactoryNavigation,
-    string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null)
+    string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null, string? Addresses = null)
 {
     /// <summary>One Australian extract (OpenLion 1.0).</summary>
     public BuildRequest(string pbf, string factoryNavigation, string? manifest, string workFolder,
@@ -79,6 +80,8 @@ public static class MapBuild
             args.AddRange(["--manifest", req.Manifest]);
         if (req.Bbox is { Length: 4 } b)
             args.AddRange(["--bbox", .. b.Select(x => x.ToString(CultureInfo.InvariantCulture))]);
+        if (req.Addresses is not null)
+            args.AddRange(["--addresses", req.Addresses]);
         return args;
     }
 
