@@ -22,7 +22,8 @@ Same spot, same car. The factory map stops at Worland Road. The OpenLion card sh
 
 ## What you get
 
-- **Every road in OpenStreetMap**, including streets built in the last ten years, with speed limits where OpenStreetMap has them and, if you choose, from Victoria's official speed zones where it doesn't.
+- **Every road in OpenStreetMap**, including streets built in the last ten years, with speed limits where OpenStreetMap has them.
+- **Extra speed limits (optional, Victoria)** from the government's official speed zone register, for roads OpenStreetMap has no limit on. That's about 132,000 km more roads with a speed limit in Victoria. OpenStreetMap's limit is kept wherever it has one. Other states will follow as their governments publish open data.
 - **Turn-by-turn guidance and voice instructions**, just like the factory maps. The new card uses the same map format, so the car reads it like its own.
 - **Address search** by suburb, street and house number, with suburbs, councils and postcodes from OpenStreetMap. House numbers come from OpenStreetMap and, if you choose, from G-NAF, the Australian government's address file, which adds numbers on most streets OpenStreetMap doesn't cover.
 - **Points of interest**: about 270,000 fuel stations, shops, cafés, hospitals and more.
