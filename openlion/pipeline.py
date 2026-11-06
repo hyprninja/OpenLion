@@ -321,7 +321,7 @@ def _roads_stage(ctx, stage, q):
     if ctx.speed_zones:
         stage("speed_zones")
         zones = [gov_speed.load(p, ctx.out) for p in ctx.speed_zones]
-        log("speed zones: " + ", ".join(f"{os.path.basename(p)} ({len(z.speeds):,} lines)"
+        log("speed zones: " + ", ".join(f"{os.path.basename(p)} ({len(z.speeds):,} {'zones' if isinstance(z, gov_speed.AreaIndex) else 'lines'})"
                                         for p, z in zip(ctx.speed_zones, zones)))
         fill = gov_speed.first_of(zones)
     _place_cameras(ctx, c)

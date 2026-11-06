@@ -50,11 +50,16 @@ public class SpeedZoneTests
     }
 
     [Fact]
-    public void VictoriaAndWaAreAvailable_AllStatesListed()
+    public void VictoriaAndWaAreAvailable_SaAndNtNotListed()
     {
-        Assert.Equal(8, SpeedZoneSource.All.Count);
-        Assert.Equal(8, SpeedZoneSource.All.Select(s => s.Code).Distinct().Count());
-        Assert.Equal(["VIC", "WA"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.Equal(["VIC", "WA", "NSW", "QLD", "TAS", "ACT", "NZ"], SpeedZoneSource.All.Select(s => s.Code));
+        Assert.Null(SpeedZoneSource.ByCode("SA"));
+        Assert.Null(SpeedZoneSource.ByCode("NT"));
+        Assert.Equal(["South Australia", "the Northern Territory"], SpeedZoneSource.NotOpen);
+        Assert.Equal(["VIC", "WA", "NZ"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.All(SpeedZoneSource.All.Where(s => s.Code != "NZ"), s => Assert.Equal(MapCountry.Australia, s.Country));
+        Assert.Equal(MapCountry.NewZealand, SpeedZoneSource.NewZealand.Country);
+        Assert.Equal("fetch-nz", SpeedZoneSource.NewZealand.EngineFetch);
         Assert.All(SpeedZoneSource.All.Where(s => s.Available), s => Assert.Contains("CC BY 4.0", s.Credit));
         Assert.Same(SpeedZoneSource.Victoria, SpeedZoneSource.ByCode("vic"));
         Assert.Same(SpeedZoneSource.WesternAustralia, SpeedZoneSource.ByCode("WA"));
@@ -70,6 +75,17 @@ public class SpeedZoneTests
         Assert.Equal("wa-2026-11-05", r.FileName);
         Assert.Equal("Legal Speed Limits 5 November 2026", r.Name);
         Assert.Equal("catalogue.data.wa.gov.au", r.Url.Host);
+    }
+
+    [Fact]
+    public void Dated_ReadsAnArcGisLayersLastEdit()
+    {
+        // 1793950037481 ms = 2026-11-06 (UTC)
+        var reply = JsonDocument.Parse("""{"name": "SpeedLimitZoneFull", "editingInfo": {"lastEditDate": 1793950037481, "dataLastEditDate": 1793950037481}}""").RootElement;
+        var r = SpeedZoneDownloader.Dated(reply, SpeedZoneSource.NewZealand);
+        Assert.Equal("nz-2026-11-06", r.FileName);
+        Assert.Equal("National Speed Limit Register 6 November 2026", r.Name);
+        Assert.Equal("services.arcgis.com", r.Url.Host);
     }
 
     [Fact]

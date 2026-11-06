@@ -1,9 +1,10 @@
-# 22. Speed limits from government open data (Victoria, Western Australia)
+# 22. Speed limits from government open data (Victoria, Western Australia, New Zealand)
 
-OSM has a `maxspeed` tag on about a third of Australian road segments. Some state
-governments publish their whole speed zone register as open data. This report adds
-two of them, Victoria and Western Australia (see [Western Australia](#western-australia)),
-as optional sources for roads OSM has no limit for.
+OSM has a `maxspeed` tag on about a third of Australian road segments. Some
+governments publish their whole speed limit register as open data. This report adds
+three of them, Victoria, Western Australia (see [Western Australia](#western-australia))
+and New Zealand (see [New Zealand](#new-zealand)), as optional sources for roads OSM
+has no limit for.
 
 ## Source
 
@@ -181,12 +182,97 @@ catalogue date to tell whether there's newer data, then has the engine download 
 (`SpeedZoneSource.EngineFetch = "fetch-wa"`). Progress counts road sections, not MB.
 The engine's file must land in the state's own folder. Then the file is prepared
 like Victoria's (`%LOCALAPPDATA%\OpenLion\speed\wa\zones.bin`). The states still to
-come are listed together in one compact box, so the page fits without scrolling.
+come (NSW, Queensland, Tasmania, the ACT) are listed together in one compact box, so the
+page fits without scrolling. South Australia and the Northern Territory aren't listed:
+they don't provide their speed limits in an open format, and a note on the page says so.
 Fixed along the way: ticking a second state while the first was being checked
 skipped the second check.
 
+## New Zealand
+
+NZ Transport Agency Waka Kotahi, **National Speed Limit Register** (NSLR), licence
+**CC BY 4.0**: the legal register itself. Since 2022 a limit is in force only once
+it's in the register. It's an ArcGIS feature service
+(`SpeedLimitZoneFull__View/FeatureServer/0`, 71,060 records). Unlike Victoria and
+WA, the zones are **polygons**, not lines:
+
+- About 15,000 specific zones, mostly thin corridors around a road (median width
+  ~23 m), plus town-wide "Urban Traffic Area" zones.
+- 3,465 large **"Default Area"** zones underneath, all 100 km/h. They cover the
+  rural default.
+- The smallest zone holding a point wins.
+
+What's used:
+
+| | records |
+|---|---:|
+| All records (the register keeps its history) | 71,060 |
+| In force now (`whenIneffective` empty or in the future, `whenEffective` past) and **Permanent** | 18,763 |
+| Left out: Variable (school zones), Seasonal, Temporary | |
+| Dropped when prepared: slivers left over from edits (median area 0 m², max 197 m²) and 91 with no geometry | 1,308 |
+| **Zones used** | **17,455** (3,010 of them background) |
+
+`fetch_nz(folder)` pages the service (500 at a time, GeoJSON, EPSG:4326; about
+2.5 min, 181 MB). The version is named from the layer's `editingInfo.dataLastEditDate`
+("National Speed Limit Register 6 November 2026"). `prepare()` sees polygons and
+writes the area file type (`OLGSPA1`; Douglas-Peucker at ~2 m): 1.6 M points,
+13 MB, 34 s.
+
+**AreaIndex** (loaded by `open_index()`, so `load()` and the pipeline take either
+type):
+
+- Zones over ~4.5 km go on a coarse grid (~1.1 km cells), the rest on a fine grid
+  (~140 m). A zone is stored in the cells its boundary passes through (padded 16
+  units), and in the cells wholly inside it.
+- In a boundary cell, a point is tested exactly, by ray casting over just the
+  zone's edges in that cell's row. Cells wholly inside need no test.
+- A point inside only the 100 km/h background, but within **15 m** of a specific
+  zone, is left **unanswered**. A road traced a few metres off its 23 m corridor
+  must not fall through to 100.
+- **Tracks** (`highway=track`) don't take the background: it covers every farm and
+  forestry track, most of them private. Without this, 46,000 track segments got
+  100 and agreement on tracks was 41 %. A specific zone on a track still counts.
+
+Lookups use the same sampling and vote as the lines (`Index.lookup`; `speed_fill`
+now also gets the highway type). Building the index takes 11 s; looking up all of
+NZ's ~490k segments takes ~2.7 min.
+
+### Results: all of NZ (`tests/gov_speed_check.py`)
+
+| | segments | km |
+|---|---:|---:|
+| OSM and register agree | 126,689 | 27,467 |
+| OSM and register disagree | 16,696 | 3,265 |
+| OSM only | 72,863 | 10,497 |
+| **Filled from the register (OSM had nothing)** | **159,498** | **55,097** |
+| Neither | 147,909 | 66,548 |
+
+**Agreement where both have a limit: 88.4 %** (highway 94 %, freeway 93 %, arterial
+89 %, street 85 %, track 75 %). Filled km by speed: 100 → 42,272, 50 → 6,469,
+60 → 2,644, 80 → 2,023, 40 → 715. The two biggest disagreements are opposite
+ways round, 30 → 50 (1,876) and 50 → 30 (1,417). That fits recent changes OSM
+hasn't caught up with, in both directions (many 30 km/h limits were reversed under
+the 2024 speed limit rule). Next come 100 → 80 (1,114) and 50 → 100 (1,023,
+mostly rural roads OSM tags 50).
+
+**Wellington card** (`make_card NZ=... --bbox 174.6 -41.4 175.2 -40.9 --speed-zones
+nz_speed.bin`): 28,092 segments, 17,326 with a limit (61.7 %), of which 2,232 come
+from the register, against 53.7 % from OSM alone. `card_check`: 0 problems.
+
+### App
+
+New Zealand is offered **only when New Zealand is on the card** (New Zealand alone,
+or Australia and New Zealand on the Get OSM data step). The Australian states are
+only offered when Australia is on it. `SpeedZoneSource.CountryCode` ties each source
+to its map country. A source that's ticked but hidden stays remembered, but isn't
+used. With New Zealand on the card the heading reads "Which areas?". The
+coming-soon box and the SA/NT note only show with Australia. The engine downloads NZ
+(`fetch-nz`), like WA. Download plus prepare takes ~3 min in the app and keeps
+13 MB. Each source's status now sits on one line, and the credits are one
+paragraph. The default window is 1040×900, so all three sources fit without
+scrolling.
+
 ## Not done
 
-- Other states. NSW is the next candidate; NZ's National Speed Limit Register is
-  also current and openly licensed.
-- Car test of a card with WA limits.
+- Other states. NSW is the next candidate.
+- Car tests of cards with WA or NZ limits.

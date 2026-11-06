@@ -56,7 +56,7 @@ public sealed class SpeedZoneRow : ObservableObject
         }
     }
     public bool HasCached => Cached is not null;
-    public string CachedText => Cached?.Describe() ?? "Not downloaded yet.";
+    public string CachedText => Cached?.Describe() ?? $"Not downloaded yet (about {Source.ApproxMb} MB).";
 
     public SpeedZoneRemote? Remote
     {
@@ -70,13 +70,12 @@ public sealed class SpeedZoneRow : ObservableObject
     public string RemoteText { get => _remoteText; set => Set(ref _remoteText, value); }
 
     /// <summary>The note beside a state that can't be chosen yet.</summary>
-    public string Note => IsAvailable
-        ? $"{Source.Blurb} About {Source.ApproxMb} MB to download."
-        : "Coming in a future version.";
+    public string Note => IsAvailable ? Source.Blurb : "Coming in a future version.";
 }
 
-/// <summary>Step 5: optional government speed zone data per state, for roads OpenStreetMap has no
-/// speed limit for. Only Victoria publishes data OpenLion can use so far.</summary>
+/// <summary>Step 5: optional government speed limit data, per Australian state and for New Zealand,
+/// for roads OpenStreetMap has no limit for. Only the sources for the countries on the card are
+/// shown: the Australian states with an Australian map, New Zealand with a New Zealand map.</summary>
 public sealed class SpeedDataStep : StepViewModel
 {
     readonly Session _session;
@@ -92,23 +91,29 @@ public sealed class SpeedDataStep : StepViewModel
         _http = OsmDownloader.CreateClient(ErrorReport.AppVersion);
         var saved = (session.State.SpeedZones ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Rows = [.. SpeedZoneSource.All.Select(s => new SpeedZoneRow(this, s, _http, saved.Contains(s.Code)))];
-        DownloadCommand = new RelayCommand(() => _ = DownloadAsync(), () => !IsBusy && Rows.Any(r => r.WantsDownload));
-        CheckCommand = new RelayCommand(() => _ = CheckAsync(), () => !IsBusy && !_checking && Rows.Any(r => r.IsChecked));
+        DownloadCommand = new RelayCommand(() => _ = DownloadAsync(), () => !IsBusy && Shown.Any(r => r.WantsDownload));
+        CheckCommand = new RelayCommand(() => _ = CheckAsync(), () => !IsBusy && !_checking && Shown.Any(r => r.IsChecked));
         CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
     }
 
     public ObservableCollection<SpeedZoneRow> Rows { get; }
-    /// <summary>The states that can be ticked, each in its own box.</summary>
-    public IEnumerable<SpeedZoneRow> AvailableRows => Rows.Where(r => r.IsAvailable);
+    /// <summary>The rows for the countries on the card (a row stays ticked while hidden, but isn't used).</summary>
+    IEnumerable<SpeedZoneRow> Shown => Rows.Where(r => _session.Countries.Contains(r.Source.Country));
+    /// <summary>The sources that can be ticked, each in its own box.</summary>
+    public IEnumerable<SpeedZoneRow> AvailableRows => Shown.Where(r => r.IsAvailable).ToList();
     /// <summary>The states still to come, listed together in one compact box.</summary>
-    public IEnumerable<SpeedZoneRow> LaterRows => Rows.Where(r => !r.IsAvailable);
+    public IEnumerable<SpeedZoneRow> LaterRows => Shown.Where(r => !r.IsAvailable).ToList();
+    public bool ShowLater => AustraliaOnCard && LaterRows.Any();
     public ICommand DownloadCommand { get; }
     public ICommand CheckCommand { get; }
     public ICommand CancelCommand { get; }
 
-    /// <summary>Speed zone data is Australian; with only New Zealand on the card there's nothing to choose.</summary>
     public bool AustraliaOnCard => _session.Countries.Contains(MapCountry.Australia);
-    public bool NoAustralia => !AustraliaOnCard;
+    /// <summary>Something can be ticked for the countries on the card.</summary>
+    public bool HasChoices => AvailableRows.Any();
+    public bool NoChoices => !HasChoices;
+    /// <summary>"Which states?" for Australia, "Which areas?" once New Zealand is on the card.</summary>
+    public string ChoiceHeading => _session.Countries.Contains(MapCountry.NewZealand) ? "Which areas?" : "Which states?";
 
     public bool IsBusy
     {
@@ -123,27 +128,32 @@ public sealed class SpeedDataStep : StepViewModel
     public string Error { get => _error; private set { if (Set(ref _error, value)) Raise(nameof(HasError)); } }
     public bool HasError => Error.Length > 0;
 
-    public bool ShowDownload => Rows.Any(r => r.WantsDownload);
-    public string DownloadLabel => Rows.Where(r => r.WantsDownload).All(r => !r.HasCached) ? "Download" : "Download the newer data";
+    public bool ShowDownload => Shown.Any(r => r.WantsDownload);
+    public string DownloadLabel => Shown.Where(r => r.WantsDownload).All(r => !r.HasCached) ? "Download" : "Download the newer data";
 
     /// <summary>"Victoria and Western Australia are available now. The other states ..."</summary>
     public string AvailableNote
     {
         get
         {
-            var t = Rows.Where(r => r.IsAvailable).Select(r => r.Title).ToList();
+            var t = AvailableRows.Select(r => r.Title).ToList();
+            if (t.Count == 0)
+                return "";
             var names = t.Count <= 1 ? string.Concat(t) : string.Join(", ", t.Take(t.Count - 1)) + " and " + t[^1];
-            return $"{names} {(t.Count == 1 ? "is" : "are")} available now. The other states and territories are coming soon, " +
-                   "in future versions of OpenLion.";
+            return $"{names} {(t.Count == 1 ? "is" : "are")} available now." +
+                   (ShowLater ? " The others listed are coming soon, in future versions of OpenLion." : "");
         }
     }
 
+    /// <summary>Why South Australia and the Northern Territory aren't listed.</summary>
+    public string NotOpenNote =>
+        $"{string.Join(" and ", SpeedZoneSource.NotOpen)} aren't listed: they don't provide their speed limits in an open format.";
+
     /// <summary>Credit lines for the chosen states (their licences ask for it).</summary>
-    public string Credits => string.Join(Environment.NewLine,
-        Rows.Where(r => r.IsAvailable).Select(r => r.Source.Credit));
+    public string Credits => string.Join("  ·  ", AvailableRows.Select(r => r.Source.Credit));
 
     /// <summary>Optional: carry on with nothing ticked, but a ticked state must be downloaded first.</summary>
-    public override bool CanGoNext => !IsBusy && (!AustraliaOnCard || Rows.Where(r => r.IsChecked).All(r => r.HasCached));
+    public override bool CanGoNext => !IsBusy && Shown.Where(r => r.IsChecked).All(r => r.HasCached);
     public override bool IsWorking => IsBusy;
 
     void SetPercent(double? p)
@@ -155,9 +165,7 @@ public sealed class SpeedDataStep : StepViewModel
 
     void Publish()
     {
-        _session.SpeedZones = AustraliaOnCard
-            ? [.. Rows.Where(r => r.IsChecked && r.Cached is not null).Select(r => r.Cached!)]
-            : [];
+        _session.SpeedZones = [.. Shown.Where(r => r.IsChecked && r.Cached is not null).Select(r => r.Cached!)];
         Raise(nameof(CanGoNext)); Raise(nameof(ShowDownload)); Raise(nameof(DownloadLabel));
         CommandManager.InvalidateRequerySuggested();
     }
@@ -176,11 +184,15 @@ public sealed class SpeedDataStep : StepViewModel
 
     public override void OnEnter()
     {
-        Raise(nameof(AustraliaOnCard)); Raise(nameof(NoAustralia));
+        // the countries may have changed on the Get OSM data step
+        foreach (var name in new[] { nameof(AustraliaOnCard), nameof(HasChoices), nameof(NoChoices), nameof(ChoiceHeading),
+                                     nameof(AvailableRows), nameof(LaterRows), nameof(ShowLater), nameof(AvailableNote),
+                                     nameof(NotOpenNote), nameof(Credits) })
+            Raise(name);
         foreach (var r in Rows)
             r.Cached = r.Downloader?.Cached();
         Publish();
-        if (AustraliaOnCard && Rows.Any(r => r.IsChecked && r.Remote is null))
+        if (Shown.Any(r => r.IsChecked && r.Remote is null))
             _ = CheckAsync();
     }
 
@@ -196,7 +208,7 @@ public sealed class SpeedDataStep : StepViewModel
         try
         {
             // a state ticked while another is being checked joins this pass (CheckAsync was a no-op for it)
-            while (Rows.FirstOrDefault(r => r.IsChecked && r.Downloader is not null && !done.Contains(r)) is { } row)
+            while (Shown.FirstOrDefault(r => r.IsChecked && r.Downloader is not null && !done.Contains(r)) is { } row)
             {
                 done.Add(row);
                 row.RemoteText = $"Checking the {row.Title} government data catalogue for the latest data…";
@@ -206,8 +218,8 @@ public sealed class SpeedDataStep : StepViewModel
                     row.Remote = await row.Downloader!.CheckLatestAsync(cts.Token);
                     AppLog.Write($"speed: {row.Source.Code} latest is {row.Remote.FileName} ({row.Remote.Name})");
                     row.RemoteText = row.IsLatest
-                        ? $"This is the latest data ({row.Remote.Name})."
-                        : $"Latest online: {row.Remote.Name}.";
+                        ? "This is the latest data."
+                        : $"Newer online: {row.Remote.Name}.";
                 }
                 catch (Exception e) when (e is HttpRequestException or TaskCanceledException or SpeedZoneException
                                               or System.Text.Json.JsonException)
@@ -241,7 +253,7 @@ public sealed class SpeedDataStep : StepViewModel
         Error = "";
         try
         {
-            foreach (var row in Rows.Where(r => r.WantsDownload).ToList())
+            foreach (var row in Shown.Where(r => r.WantsDownload).ToList())
             {
                 var remote = row.Remote!;
                 Status = $"Downloading {row.Title} speed data: {remote.Name}…";
@@ -264,7 +276,7 @@ public sealed class SpeedDataStep : StepViewModel
                           (p.BytesPerSecond > 0 ? $"  ({p.BytesPerSecond / 1e6:N1} MB/s)" : "");
                 });
                 row.Cached = await row.Downloader!.DownloadAsync(remote, engine, progress, _cts.Token);
-                row.RemoteText = $"This is the latest data ({remote.Name}).";
+                row.RemoteText = "This is the latest data.";
                 AppLog.Write($"speed: {row.Source.Code} ready {row.Cached.Path} ({row.Cached.Bytes} bytes) from {remote.FileName}");
             }
         }

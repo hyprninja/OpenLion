@@ -17,8 +17,13 @@ namespace OpenLion.Core.Speed;
 /// <param name="EngineFetch">The engine command that downloads the data (gov_speed.py "fetch-wa"),
 /// for data served in pages by a map server rather than as one file; null when the app downloads
 /// the newest file listed in the catalogue itself.</param>
+/// <param name="CountryCode">The map country the data belongs to (MapCountry code): the source is
+/// only offered when that country is on the card.</param>
+/// <param name="DataName">The data's name in its version ("Legal Speed Limits 5 November 2026"), for
+/// sources whose catalogue has no file names; null takes the catalogue's own title.</param>
 public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi, IReadOnlyList<string> AllowedHosts,
-    string Credit, int ApproxMb, string Blurb = "", string? EngineFetch = null)
+    string Credit, int ApproxMb, string Blurb = "", string? EngineFetch = null, string CountryCode = "AU",
+    string? DataName = null)
 {
     public static readonly SpeedZoneSource Victoria = new("VIC", "Victoria",
         new Uri("https://discover.data.vic.gov.au/api/3/action/package_show?id=speed-zones"),
@@ -30,28 +35,42 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
         new Uri("https://catalogue.data.wa.gov.au/api/3/action/package_show?id=mrwa-legal-speed-limits"),
         ["catalogue.data.wa.gov.au", "gisservices.mainroads.wa.gov.au"],
         "Speed limit data © Main Roads Western Australia, CC BY 4.0", 16,
-        "Signposted limits on state roads and many local roads, updated weekly by Main Roads WA.",
-        "fetch-wa");
+        "Signposted limits on state and many local roads, updated weekly by Main Roads WA.",
+        "fetch-wa", DataName: "Legal Speed Limits");
+
+    /// <summary>NZ's National Speed Limit Register: the legal register itself, every road in the country.
+    /// Its version is the ArcGIS layer's last edit date (<see cref="PackageApi"/> is the layer's JSON).</summary>
+    public static readonly SpeedZoneSource NewZealand = new("NZ", "New Zealand",
+        new Uri("https://services.arcgis.com/CXBb7LAjgIIdcsPt/ArcGIS/rest/services/SpeedLimitZoneFull__View/FeatureServer/0?f=json"),
+        ["services.arcgis.com"],
+        "Speed limit data © NZ Transport Agency Waka Kotahi (National Speed Limit Register), CC BY 4.0", 180,
+        "The legal speed limit register for every road, kept up to date by NZTA.",
+        "fetch-nz", "NZ", "National Speed Limit Register");
 
     static SpeedZoneSource Later(string code, string title) => new(code, title, null, [], "", 0);
 
-    /// <summary>Every Australian state and territory, the ones OpenLion can use first; only those
-    /// with a <see cref="PackageApi"/> can be chosen.</summary>
+    /// <summary>The states and territories that publish (or may soon publish) usable open data, the
+    /// ones OpenLion can use first, then New Zealand; only those with a <see cref="PackageApi"/> can be
+    /// chosen, and only for the countries on the card. South
+    /// Australia and the Northern Territory are left off: they don't publish their speed limits in
+    /// an open format (see <see cref="NotOpen"/>).</summary>
     public static readonly IReadOnlyList<SpeedZoneSource> All =
     [
         Victoria,
         WesternAustralia,
         Later("NSW", "New South Wales"),
         Later("QLD", "Queensland"),
-        Later("SA", "South Australia"),
         Later("TAS", "Tasmania"),
         Later("ACT", "Australian Capital Territory"),
-        Later("NT", "Northern Territory"),
+        NewZealand,
     ];
 
+    /// <summary>States and territories with no open speed limit data, named in a note on the page.</summary>
+    public static readonly IReadOnlyList<string> NotOpen = ["South Australia", "the Northern Territory"];
+
     public bool Available => PackageApi is not null;
-    /// <summary>Speed zone data only goes on Australian maps.</summary>
-    public MapCountry Country => MapCountry.Australia;
+    /// <summary>The map country this data is for.</summary>
+    public MapCountry Country => MapCountry.ByCode(CountryCode) ?? MapCountry.Australia;
 
     public static SpeedZoneSource? ByCode(string? code) =>
         All.FirstOrDefault(s => string.Equals(s.Code, code, StringComparison.OrdinalIgnoreCase));
@@ -125,23 +144,33 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
     /// ("wa-2026-11-05", "Legal Speed Limits 5 November 2026"). Public for tests.</summary>
     public static SpeedZoneRemote Dated(JsonElement reply, SpeedZoneSource source)
     {
-        string? day = null, title = null;
+        DateTime? when = null;
+        string? title = null;
         try
         {
-            var r = reply.GetProperty("result");
-            if (r.TryGetProperty("metadata_modified", out var m) && m.ValueKind == JsonValueKind.String)
-                day = m.GetString();
-            if (r.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String)
-                title = t.GetString();
+            if (reply.TryGetProperty("result", out var r))        // CKAN package_show
+            {
+                if (r.TryGetProperty("metadata_modified", out var m) && m.ValueKind == JsonValueKind.String)
+                    when = Date(m.GetString());
+                if (r.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String)
+                    title = t.GetString();
+            }
+            else if (reply.TryGetProperty("editingInfo", out var ed) && ed.ValueKind == JsonValueKind.Object)   // ArcGIS layer
+            {
+                foreach (var f in new[] { "dataLastEditDate", "lastEditDate" })
+                    if (when is null && ed.TryGetProperty(f, out var ms) && ms.ValueKind == JsonValueKind.Number)
+                        when = DateTimeOffset.FromUnixTimeMilliseconds(ms.GetInt64()).UtcDateTime;
+            }
         }
-        catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException)
+        catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException or ArgumentOutOfRangeException)
         {
             throw new SpeedZoneException($"The {source.Title} data catalogue sent an answer OpenLion doesn't understand.", e);
         }
-        if (Date(day) is not { } when)
+        if (when is null)
             throw new SpeedZoneException($"The {source.Title} data catalogue gave no date for its speed limits.");
-        var name = $"{(string.IsNullOrWhiteSpace(title) ? "Speed limits" : title)} {when.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}";
-        return new SpeedZoneRemote(source.PackageApi!, $"{source.Code.ToLowerInvariant()}-{when:yyyy-MM-dd}", name, when);
+        title = source.DataName ?? title;
+        var name = $"{(string.IsNullOrWhiteSpace(title) ? "Speed limits" : title)} {when.Value.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}";
+        return new SpeedZoneRemote(source.PackageApi!, $"{source.Code.ToLowerInvariant()}-{when.Value:yyyy-MM-dd}", name, when);
     }
 
     /// <summary>The newest GeoJSON resource in a CKAN package_show reply. Public for tests.</summary>

@@ -27,7 +27,7 @@ def seg_xy(g, s):
 if __name__ == "__main__":
     c = pickle.load(open(sys.argv[1], "rb"))
     t = time.time()
-    ix = gov_speed.Index(sys.argv[2])
+    ix = gov_speed.open_index(sys.argv[2])
     print(f"index: {len(ix.speeds):,} lines ({time.time() - t:.0f}s)")
     g, si, st = osm_import.build_graph(c)
     t = time.time()
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         cls = CLASS.get((si[g.seg_info[s]] >> 3) & 15, "?")
         L = g.seg_len[s] * osm_import.FT / 1000
         osm = (g.seg_adas[s] or {}).get("speed_kmh")
-        gov = ix.lookup(xy)
+        gov = ix.lookup(xy, "track" if cls == "track" else None)
         if osm:
             if gov is None:
                 k = "osm only"

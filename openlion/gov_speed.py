@@ -17,6 +17,12 @@ applies in built up areas or 110km/h outside built up areas": that's the default
 not a signed limit, and the data doesn't say which half applies, so those are left out.
 Part-time zones (school, children's crossing) are a separate layer and aren't used.
 
+New Zealand (NZTA, National Speed Limit Register, CC BY 4.0): the legal register itself,
+as polygons around road corridors (typically ~23 m wide) on top of large "Default Area"
+polygons (all 100 km/h). The smallest zone holding a point wins. The register keeps its
+history, so only zones in force now are fetched, and only permanent ones. Zones are
+areas, not lines, so they get their own file type and AreaIndex.
+
 prepare() turns the downloaded GeoJSON into a small binary file once (deduplicated lines,
 integer coordinates); Index loads that file and answers lookup(xy) for a road piece.
 """
@@ -28,8 +34,10 @@ import re
 import struct
 
 MAGIC = b"OLGSPD1\0"
+MAGIC_AREAS = b"OLGSPA1\0"
 SOURCES = {"VIC": "Victoria Department of Transport and Planning, Speed Zones (CC BY 4.0)",
-           "WA": "Main Roads Western Australia, Legal Speed Limits (CC BY 4.0)"}
+           "WA": "Main Roads Western Australia, Legal Speed Limits (CC BY 4.0)",
+           "NZ": "NZ Transport Agency Waka Kotahi, National Speed Limit Register (CC BY 4.0)"}
 NORMAL = "Normal Operation"
 WA_SIGNED = re.compile(r"^\s*(\d{1,3})\s*km/h\s*$", re.IGNORECASE)
 
@@ -82,6 +90,14 @@ def _conditions(p):
 def feature_speed(p):
     """(km/h, None) for a feature's properties, or (None, reason it's left out).
     Knows Victoria's (speed_limit, zone_conditions) and WA's (SPEED_LIMIT) fields."""
+    if "speedLimitZoneValue" in p:                  # New Zealand
+        if p.get("speedCategoryName") not in (None, "Permanent"):
+            return None, "skipped (not permanent)"
+        try:
+            speed = int(float(p.get("speedLimitZoneValue")))
+        except (TypeError, ValueError):
+            return None, "skipped (no speed)"
+        return (speed, None) if 5 <= speed <= 130 else (None, "skipped (no speed)")
     if "SPEED_LIMIT" in p:                          # Western Australia
         v = p.get("SPEED_LIMIT") or ""
         m = WA_SIGNED.match(v)
@@ -116,7 +132,10 @@ def _features(path):
 
 
 def prepare(geojson, out):
-    """Speed zone GeoJSON (Victoria or WA) -> compact binary. Returns stats."""
+    """Speed zone GeoJSON (Victoria, WA: lines; NZ: polygons) -> compact binary. Returns stats."""
+    first = next(_features(geojson), None)
+    if first and (first.get("geometry") or {}).get("type") in ("Polygon", "MultiPolygon"):
+        return prepare_areas(geojson, out)
     lines = {}      # geometry key -> [speed, xy array]
     st = {"features": 0, "skipped (no speed)": 0, "skipped (no geometry)": 0, "direction pairs disagree": 0}
     for f in _features(geojson):
@@ -256,9 +275,9 @@ class Index:
             best, best_d = k, d
         return None if best is None else self.seg_speed[best]
 
-    def lookup(self, xy):
-        """xy: the piece's points (1e-5 degree units). Returns km/h when most of the
-        piece lies on zone lines that agree, else None."""
+    def lookup(self, xy, highway=None):
+        """xy: the piece's points (1e-5 degree units); highway: its OSM highway=* value, if
+        known. Returns km/h when most of the piece lies on zone lines that agree, else None."""
         kx = M_PER_UNIT * math.cos(math.radians(xy[0][1] / 1e5))
         legs, total = [], 0.0
         for (x1, y1), (x2, y2) in zip(xy, xy[1:]):
@@ -296,25 +315,256 @@ class Index:
         return None
 
 
+def _ring_area(xy):
+    """Area of a closed ring in square units (shoelace, unsigned)."""
+    a = 0
+    n = len(xy) // 2
+    for k in range(n):
+        x1, y1 = xy[2 * k], xy[2 * k + 1]
+        x2, y2 = xy[(2 * k + 2) % (2 * n)], xy[(2 * k + 3) % (2 * n)]
+        a += x1 * y2 - x2 * y1
+    return abs(a) / 2
+
+
+def prepare_areas(geojson, out):
+    """Speed zone polygons (NZ) -> compact binary: per zone its speed, its area (the
+    smallest zone holding a point wins) and its rings. Returns stats."""
+    speeds, areas, background = array.array("B"), array.array("d"), array.array("B")
+    poly_rings, ring_pts = array.array("I", [0]), array.array("I", [0])
+    pts = array.array("i")
+    st = {"features": 0, "skipped (no speed)": 0, "skipped (no geometry)": 0}
+    for f in _features(geojson):
+        st["features"] += 1
+        p, g = f.get("properties") or {}, f.get("geometry")
+        if not g or g.get("type") not in ("Polygon", "MultiPolygon") or not g.get("coordinates"):
+            st["skipped (no geometry)"] += 1
+            continue
+        speed, why = feature_speed(p)
+        if speed is None:
+            st[why] = st.get(why, 0) + 1
+            continue
+        polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+        area, rings = 0.0, []
+        for poly in polys:
+            for k, ring in enumerate(poly):
+                xy = array.array("i")
+                for lon, lat in ring:
+                    x, y = round(lon * 1e5), round(lat * 1e5)
+                    if len(xy) < 2 or (xy[-2], xy[-1]) != (x, y):
+                        xy.append(x)
+                        xy.append(y)
+                if len(xy) >= 2 and (xy[0], xy[1]) == (xy[-2], xy[-1]):
+                    del xy[-2:]          # store rings open; edges close them
+                xy = simplify(xy, SIMPLIFY) if len(xy) > 6 else xy
+                if len(xy) < 6:
+                    continue
+                rings.append(xy)
+                area += _ring_area(xy) * (1 if k == 0 else -1)   # holes come off
+        if not rings:
+            st["skipped (no geometry)"] += 1
+            continue
+        speeds.append(speed)
+        background.append(1 if p.get("speedLimitZoneReasonName") == "Default Area" else 0)
+        areas.append(max(area, 1.0))
+        for xy in rings:
+            pts.extend(xy)
+            ring_pts.append(len(pts) // 2)
+        poly_rings.append(len(ring_pts) - 1)
+    st["zones"] = len(speeds)
+    st["background zones"] = sum(background)
+    st["points"] = len(pts) // 2
+    tmp = out + ".part"
+    with open(tmp, "wb") as fh:
+        fh.write(MAGIC_AREAS + struct.pack("<III", len(speeds), len(ring_pts) - 1, len(pts) // 2))
+        speeds.tofile(fh)
+        background.tofile(fh)
+        areas.tofile(fh)
+        poly_rings.tofile(fh)
+        ring_pts.tofile(fh)
+        pts.tofile(fh)
+    os.replace(tmp, out)
+    return st
+
+
+AREA_FINE, AREA_COARSE = 7, 10   # grid cells ~140 m and ~1.1 km; zones over ~4.5 km use the coarse grid
+NEAR_M = 15.0                    # a point this close to a zone it isn't in is too unsure to call
+
+
+class AreaIndex(Index):
+    """Speed zone polygons in two grids. A point takes the speed of the smallest zone
+    holding it. Each zone is in the cells its boundary passes through (checked exactly,
+    by ray casting over the edges in that cell's row) and in the cells wholly inside it
+    (no check needed). A point outside every specific zone but within NEAR_M of one is
+    left unanswered, so a road traced a few metres off its corridor doesn't fall through
+    to the 100 km/h background."""
+
+    def __init__(self, path):
+        with open(path, "rb") as fh:
+            if fh.read(8) != MAGIC_AREAS:
+                raise ValueError(f"{path}: not a prepared speed zone area file")
+            n, n_rings, n_pts = struct.unpack("<III", fh.read(12))
+            self.speeds = array.array("B")
+            self.speeds.fromfile(fh, n)
+            self.background = array.array("B")
+            self.background.fromfile(fh, n)
+            self.areas = array.array("d")
+            self.areas.fromfile(fh, n)
+            poly_rings = array.array("I")
+            poly_rings.fromfile(fh, n + 1)
+            ring_pts = array.array("I")
+            ring_pts.fromfile(fh, n_rings + 1)
+            xy = array.array("i")
+            xy.fromfile(fh, 2 * n_pts)
+        self.bbox = (min(xy[0::2]), min(xy[1::2]), max(xy[0::2]), max(xy[1::2]))
+        self._allow_background = True
+        self.shift = bytearray(n)
+        self.bands = [None] * n          # zone -> {row: array of x1, y1, x2, y2}
+        self.edge = {AREA_FINE: {}, AREA_COARSE: {}}
+        self.inside = {AREA_FINE: {}, AREA_COARSE: {}}
+        pad = 16
+        for z in range(n):
+            edges = []
+            for r in range(poly_rings[z], poly_rings[z + 1]):
+                a, b = ring_pts[r], ring_pts[r + 1]
+                for k in range(a, b):
+                    j = k + 1 if k + 1 < b else a
+                    edges.append((xy[2 * k], xy[2 * k + 1], xy[2 * j], xy[2 * j + 1]))
+            xs = [e[0] for e in edges]
+            ys = [e[1] for e in edges]
+            sh = AREA_COARSE if max(max(xs) - min(xs), max(ys) - min(ys)) > (1 << 12) else AREA_FINE
+            self.shift[z] = sh
+            size = 1 << sh
+            bands = {}
+            for e in edges:
+                for row in range(min(e[1], e[3]) >> sh, (max(e[1], e[3]) >> sh) + 1):
+                    lst = bands.get(row)
+                    if lst is None:
+                        bands[row] = lst = array.array("i")
+                    lst.extend(e)
+            self.bands[z] = bands
+            # boundary cells: every cell within pad of an edge
+            border = set()
+            for x1, y1, x2, y2 in edges:
+                steps = int(max(abs(x2 - x1), abs(y2 - y1)) // (size // 4)) + 1
+                for s in range(steps + 1):
+                    x = x1 + (x2 - x1) * s // steps
+                    y = y1 + (y2 - y1) * s // steps
+                    for cx in range((x - pad) >> sh, ((x + pad) >> sh) + 1):
+                        for cy in range((y - pad) >> sh, ((y + pad) >> sh) + 1):
+                            border.add((cx, cy))
+            for cx, cy in border:
+                _add(self.edge[sh], _key(cx, cy), z)
+            # interior cells: centre inside (even-odd along the centre row), not on the boundary
+            for row, lst in bands.items():
+                yc = (row << sh) + size // 2
+                cross = []
+                for k in range(0, len(lst), 4):
+                    x1, y1, x2, y2 = lst[k], lst[k + 1], lst[k + 2], lst[k + 3]
+                    if (y1 > yc) != (y2 > yc):
+                        cross.append(x1 + (yc - y1) * (x2 - x1) / (y2 - y1))
+                cross.sort()
+                for i in range(0, len(cross) - 1, 2):
+                    for cx in range(math.ceil((cross[i] - size / 2) / size), math.floor((cross[i + 1] - size / 2) / size) + 1):
+                        if (cx, row) not in border:
+                            _add(self.inside[sh], _key(cx, row), z)
+
+    def _contains(self, z, x, y):
+        lst = self.bands[z].get(y >> self.shift[z])
+        if lst is None:
+            return False
+        inside = False
+        for k in range(0, len(lst), 4):
+            x1, y1, x2, y2 = lst[k], lst[k + 1], lst[k + 2], lst[k + 3]
+            if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                inside = not inside
+        return inside
+
+    def _near(self, z, x, y, kx):
+        """Within NEAR_M of zone z's boundary."""
+        r = int(NEAR_M / M_PER_UNIT) + 1
+        lim = NEAR_M * NEAR_M
+        sh = self.shift[z]
+        seen = set()
+        for row in range((y - r) >> sh, ((y + r) >> sh) + 1):
+            lst = self.bands[z].get(row)
+            if lst is None or row in seen:
+                continue
+            seen.add(row)
+            for k in range(0, len(lst), 4):
+                x1, y1 = lst[k], lst[k + 1]
+                dx, dy = (lst[k + 2] - x1) * kx, (lst[k + 3] - y1) * M_PER_UNIT
+                px, py = (x - x1) * kx, (y - y1) * M_PER_UNIT
+                ll = dx * dx + dy * dy
+                t = 0.0 if ll == 0 else max(0.0, min(1.0, (px * dx + py * dy) / ll))
+                ex, ey = px - t * dx, py - t * dy
+                if ex * ex + ey * ey < lim:
+                    return True
+        return False
+
+    def _sample(self, x, y, ux, uy, kx):
+        best = None
+        unsure = False
+        for sh in (AREA_FINE, AREA_COARSE):
+            key = _key(x >> sh, y >> sh)
+            for z in self.inside[sh].get(key, ()):
+                if best is None or self.areas[z] < self.areas[best]:
+                    best = z
+            for z in self.edge[sh].get(key, ()):
+                if self._contains(z, x, y):
+                    if best is None or self.areas[z] < self.areas[best]:
+                        best = z
+                elif sh == AREA_FINE and not unsure and self._near(z, x, y, kx):
+                    unsure = True
+        if best is None:
+            return None
+        if self.background[best] and (unsure or not self._allow_background):
+            return None      # only the background holds it, and a specific zone is metres away (or it's a track)
+        return self.speeds[best]
+
+    def lookup(self, xy, highway=None):
+        """As Index.lookup. The 100 km/h background isn't used for tracks: it covers every farm
+        and forestry track, most of them private, which the register doesn't really set."""
+        self._allow_background = highway != "track"
+        try:
+            return super().lookup(xy, highway)
+        finally:
+            self._allow_background = True
+
+
+def _add(grid, key, v):
+    lst = grid.get(key)
+    if lst is None:
+        grid[key] = array.array("I", [v])
+    else:
+        lst.append(v)
+
+
+def open_index(path):
+    """Index or AreaIndex, by the prepared file's type."""
+    with open(path, "rb") as fh:
+        magic = fh.read(8)
+    return AreaIndex(path) if magic == MAGIC_AREAS else Index(path)
+
+
 def load(path, work):
     """An Index from a prepared .bin, or from a .geojson (prepared into work/ once,
     keyed on the file's name, size and time)."""
     if not path.lower().endswith((".geojson", ".json")):
-        return Index(path)
+        return open_index(path)
     stat = os.stat(path)
     base = os.path.splitext(os.path.basename(path))[0]
     out = os.path.join(work, f"speedzones_{base}_{stat.st_size}_{int(stat.st_mtime)}.bin")
     if not os.path.exists(out):
         prepare(path, out)
-    return Index(out)
+    return open_index(out)
 
 
 def first_of(indexes):
     """One speed_fill callable over several indexes: the first that answers."""
-    def fill(xy):
+    def fill(xy, highway=None):
         for ix in indexes:
             if ix.covers(xy):
-                v = ix.lookup(xy)
+                v = ix.lookup(xy, highway)
                 if v:
                     return v
         return None
@@ -414,14 +664,75 @@ def fetch_wa(folder, progress=None):
     return name, dest
 
 
+NZ_LAYER = ("https://services.arcgis.com/CXBb7LAjgIIdcsPt/ArcGIS/rest/services/"
+            "SpeedLimitZoneFull__View/FeatureServer/0")
+# The register keeps its history: a zone that was replaced has whenIneffective set. Only
+# zones in force now, and only permanent ones (not variable school zones, seasonal or
+# temporary limits).
+NZ_WHERE = ("speedCategoryName = 'Permanent' AND (whenIneffective IS NULL OR whenIneffective > CURRENT_TIMESTAMP) "
+            "AND (whenEffective IS NULL OR whenEffective <= CURRENT_TIMESTAMP)")
+
+
+def latest_nz():
+    """(name, file name) of the register as it is now, named by its last edit date."""
+    import datetime
+    info = _get_json(NZ_LAYER + "?f=json", 60)
+    ms = ((info.get("editingInfo") or {}).get("dataLastEditDate")
+          or (info.get("editingInfo") or {}).get("lastEditDate"))
+    if not ms:
+        raise RuntimeError("the NZ speed limit register gave no last-edit date")
+    d = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).date()
+    return f"National Speed Limit Register {d.day} {d:%B %Y}", f"nz_speed_limits_{d.isoformat()}.geojson"
+
+
+def _fetch_pages(url, where, fields, dest, progress=None, page_size=2000):
+    """Every feature matching where, as one GeoJSON FeatureCollection in dest."""
+    import urllib.parse
+    feats, offset = [], 0
+    while True:
+        q = urllib.parse.urlencode({
+            "where": where, "outFields": fields, "outSR": "4326", "orderByFields": "OBJECTID",
+            "resultOffset": offset, "resultRecordCount": page_size, "f": "geojson"})
+        page = _get_json(url + "?" + q)
+        if "error" in page:
+            raise RuntimeError(f"map server: {page['error'].get('message', page['error'])}")
+        got = page.get("features") or []
+        feats += got
+        offset += len(got)
+        if progress:
+            progress(offset)
+        more = page.get("exceededTransferLimit") or (page.get("properties") or {}).get("exceededTransferLimit")
+        if not got or (not more and len(got) < page_size):
+            break
+    if not feats:
+        raise RuntimeError("the map server sent no speed limits")
+    with open(dest + ".part", "w", encoding="utf-8") as fh:
+        json.dump({"type": "FeatureCollection", "features": feats}, fh)
+    os.replace(dest + ".part", dest)
+    return len(feats)
+
+
+def fetch_nz(folder, progress=None):
+    """Download the zones in force from NZ's National Speed Limit Register. Returns (name, path)."""
+    name, fname = latest_nz()
+    dest = os.path.join(folder, fname)
+    if not os.path.exists(dest):
+        os.makedirs(folder, exist_ok=True)
+        _fetch_pages(NZ_LAYER + "/query", NZ_WHERE,
+                     "speedLimitZoneValue,speedCategoryName,speedLimitZoneReasonName,Shape__Area", dest, progress, 500)
+    return name, dest
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) == 3 and sys.argv[1] == "fetch-vic":
         print(*fetch_vic(sys.argv[2]), sep="\n")
     elif len(sys.argv) == 3 and sys.argv[1] == "fetch-wa":
         print(*fetch_wa(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep="\n")
+    elif len(sys.argv) == 3 and sys.argv[1] == "fetch-nz":
+        print(*fetch_nz(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep=chr(10))
     elif len(sys.argv) == 4 and sys.argv[1] == "prepare":
         print(prepare(sys.argv[2], sys.argv[3]))
     else:
-        sys.exit("usage: python -m openlion.gov_speed fetch-vic <folder> | fetch-wa <folder> | "
+        sys.exit("usage: python -m openlion.gov_speed fetch-vic | fetch-wa | fetch-nz <folder> | "
                  "prepare <in.geojson> <out.bin>")
