@@ -28,7 +28,7 @@ public static class VoicePacks
         "Voice made with ElevenLabs. CC BY 4.0, OpenLion.");
 
     public static readonly VoicePack Jimbo = new("jimbo-v1", "Jimbo",
-        "An 11/10, over-the-top bogan with the broadest accent in the country. He still tells you exactly " +
+        "ElevenLabs' best attempt at an 11/10, over-the-top bogan with the broadest accent in the country. He still tells you exactly " +
         "where to go (\"Turn left\", \"300 meters ahead\"), then adds his two cents.",
         new Uri("https://github.com/hyprninja/OpenLion/releases/download/voice-jimbo-v1/openlion-voice-jimbo-v1.zip"),
         "d1b5e4d58ebb988ea76720e3bb69a5d64196d1e4e7b6b862283f523a946a81b8", 14_347_012,
