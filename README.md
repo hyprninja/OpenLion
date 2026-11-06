@@ -22,7 +22,7 @@ Same spot, same car. The factory map stops at Worland Road. The OpenLion card sh
 
 ## What you get
 
-- **Every road in OpenStreetMap**, including streets built in the last ten years, with speed limits where OpenStreetMap has them.
+- **Every road in OpenStreetMap**, including streets built in the last ten years, with speed limits where OpenStreetMap has them and, if you choose, from Victoria's official speed zones where it doesn't.
 - **Turn-by-turn guidance and voice instructions**, just like the factory maps. The new card uses the same map format, so the car reads it like its own.
 - **Address search** by suburb, street and house number, with suburbs, councils and postcodes from OpenStreetMap. House numbers come from OpenStreetMap and, if you choose, from G-NAF, the Australian government's address file, which adds numbers on most streets OpenStreetMap doesn't cover.
 - **Points of interest**: about 270,000 fuel stations, shops, cafés, hospitals and more.
@@ -43,14 +43,15 @@ OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11�
 
 ## How it works
 
-1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.2.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
+1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.3.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
 2. **Read and accept the warning.** OpenLion is unofficial, and you use it at your own risk.
 3. **Insert your factory card.** Set its lock switch first if you can. OpenLion copies it to your PC and checks every file, then checks that it understands your card's map format.
 4. **Get the map data.** Choose Australia, New Zealand, or both (the factory card had both). OpenLion downloads the latest extract for each from OpenStreetMap (via Geofabrik) and checks it.
-5. **House numbers (optional, Australia).** Tick the box to add house numbers from G-NAF, the government's national address file. OpenLion downloads the latest quarterly release from data.gov.au (about 1.9 GB) and checks it. OpenStreetMap's numbers always come first.
-6. **Build the maps.** This takes about half an hour on a fast PC with plenty of memory, and up to 1½ hours on one with 8 GB. You can leave the PC to it; OpenLion keeps it awake.
-7. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
-8. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
+5. **Extra speed limits (optional, Victoria).** Tick a state to fill in the speed limits OpenStreetMap is missing from the government's official speed zones. OpenLion downloads Victoria's monthly file from DataVic and keeps a 21 MB prepared copy. Other states will follow as their data allows.
+6. **House numbers (optional, Australia).** Tick the box to add house numbers from G-NAF, the government's national address file. OpenLion downloads the latest quarterly release from data.gov.au (about 1.9 GB) and checks it. OpenStreetMap's numbers always come first.
+7. **Build the maps.** This takes about half an hour on a fast PC with plenty of memory, and up to 1½ hours on one with 8 GB. You can leave the PC to it; OpenLion keeps it awake.
+8. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
+9. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
 
 If anything isn't right, put your factory card back in. It's exactly as it was.
 
@@ -146,7 +147,7 @@ packaging/   release build: embedded Python + engine + app → MSI (WiX 6)
 
 Version 1.0.0 is complete and car-tested. It has the wizard, drive detection, `CardGuard` (the checks that refuse to write to a factory card), and copying the factory card with every file hash-verified, followed by the compatibility check (`openlion.compat`). If a card isn't supported, the app saves a report zip (no map data) and points the user to the [card report issue form](.github/ISSUE_TEMPLATE/card_report.yml). The app downloads the Australia extract from Geofabrik (resumable, MD5-checked; or the user picks a `.osm.pbf` they already have) and builds the maps with `openlion.make_card`, showing progress per stage. It then writes the maps to a blank FAT32 card: `CardGuard` runs again on a fresh drive list right before writing, the files go to `navigation.partial` and are read back from the card and hash-checked before the folder is renamed, and the card gets the factory card's volume label. A full run (fresh download, 1 h 13 min build, peak engine memory 16.6 GB, 3 min write) made a card that works in the car.
 
-Version 1.2.0 adds the MY15 card (CD_8217), shows each card by its model year (MY12, MY15, MY17), and hardens the app after a security review: damaged card tables are caught with a clear message, build caches are hash-checked, bundled Python packages are pinned by SHA-256, error reports hide more of the user's paths, and every change is built and tested by CI. Version 1.1.0 added New Zealand, the MY17 card format, and a build that adapts to the PC: in about 3.6 GB on an 8 GB PC, or with every core and much more memory on a big one, with the same maps either way (report [20](docs/20_memory.md)).
+Version 1.3.0 adds the MY10 card (CD_7172); extra speed limits from Victoria's official speed zones (report [22](docs/22_gov_speed_zones.md)); speed camera warnings, from the official lists in Victoria and the ACT and from OpenStreetMap elsewhere (report [23](docs/23_speed_cameras.md)); and house numbers, from OpenStreetMap and optionally G-NAF (reports [24](docs/24_house_numbers.md) and [25](docs/25_gnaf_house_numbers.md)). It also copies the factory card's other folders, such as `config`, to the new card, and files POIs under each card's own category numbers, which fixes POIs on MY15 and MY17 cards built with 1.1 and 1.2. Version 1.2.0 added the MY15 card (CD_8217), shows each card by its model year (MY12, MY15, MY17), and hardens the app after a security review: damaged card tables are caught with a clear message, build caches are hash-checked, bundled Python packages are pinned by SHA-256, error reports hide more of the user's paths, and every change is built and tested by CI. Version 1.1.0 added New Zealand, the MY17 card format, and a build that adapts to the PC: in about 3.6 GB on an 8 GB PC, or with every core and much more memory on a big one, with the same maps either way (report [20](docs/20_memory.md)).
 
 The installed app is self-contained: the .NET runtime, an embedded Python 3.12 with `osmium`, and the engine (`openlion/`, the `tests/` checks and the reference manifest) all sit in its folder. Nothing else needs to be installed.
 
