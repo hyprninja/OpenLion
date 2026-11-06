@@ -13,33 +13,85 @@ namespace OpenLion.Core.Speed;
 /// <param name="PackageApi">CKAN package_show URL that lists the dataset's files; null when not available yet.</param>
 /// <param name="AllowedHosts">Hosts a data file may come from (the catalogue's links are only followed to these).</param>
 /// <param name="Credit">Attribution the licence asks for.</param>
+/// <param name="Blurb">What the data covers, shown beside the checkbox.</param>
+/// <param name="EngineFetch">The engine command that downloads the data (gov_speed.py "fetch-wa"),
+/// for data served in pages by a map server rather than as one file; null when the app downloads
+/// the newest file listed in the catalogue itself.</param>
+/// <param name="CountryCode">The map country the data belongs to (MapCountry code): the source is
+/// only offered when that country is on the card.</param>
+/// <param name="DataName">The data's name in its version ("Legal Speed Limits 5 November 2026"), for
+/// sources whose catalogue has no file names; null takes the catalogue's own title.</param>
+/// <param name="YearlyService">For data published as one ArcGIS service per year: a pattern for the
+/// service name with the year as its first group. <see cref="PackageApi"/> is then the service list,
+/// and the newest year is the version.</param>
 public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi, IReadOnlyList<string> AllowedHosts,
-    string Credit, int ApproxMb)
+    string Credit, int ApproxMb, string Blurb = "", string? EngineFetch = null, string CountryCode = "AU",
+    string? DataName = null, string? YearlyService = null)
 {
     public static readonly SpeedZoneSource Victoria = new("VIC", "Victoria",
         new Uri("https://discover.data.vic.gov.au/api/3/action/package_show?id=speed-zones"),
         ["opendata.transport.vic.gov.au", "discover.data.vic.gov.au"],
-        "Speed zone data © State of Victoria (Department of Transport and Planning), CC BY 4.0", 480);
+        "Speed zone data © State of Victoria (Department of Transport and Planning), CC BY 4.0", 480,
+        "Every road in the state, updated monthly by the state government.");
+
+    public static readonly SpeedZoneSource WesternAustralia = new("WA", "Western Australia",
+        new Uri("https://catalogue.data.wa.gov.au/api/3/action/package_show?id=mrwa-legal-speed-limits"),
+        ["catalogue.data.wa.gov.au", "gisservices.mainroads.wa.gov.au"],
+        "Speed limit data © Main Roads Western Australia, CC BY 4.0", 16,
+        "Signposted limits on state and many local roads, updated weekly by Main Roads WA.",
+        "fetch-wa", DataName: "Legal Speed Limits");
+
+    /// <summary>NZ's National Speed Limit Register: the legal register itself, every road in the country.
+    /// Its version is the ArcGIS layer's last edit date (<see cref="PackageApi"/> is the layer's JSON).</summary>
+    public static readonly SpeedZoneSource NewZealand = new("NZ", "New Zealand",
+        new Uri("https://services.arcgis.com/CXBb7LAjgIIdcsPt/ArcGIS/rest/services/SpeedLimitZoneFull__View/FeatureServer/0?f=json"),
+        ["services.arcgis.com"],
+        "Speed limit data © NZ Transport Agency Waka Kotahi (National Speed Limit Register), CC BY 4.0", 180,
+        "The legal speed limit register for every road, kept up to date by NZTA.",
+        "fetch-nz", "NZ", "National Speed Limit Register");
+
+    /// <summary>Transport for NSW's speed zone register. The file keeps one name, so its version is
+    /// the catalogue's date for it ("Speed Zones 6 November 2026").</summary>
+    public static readonly SpeedZoneSource NewSouthWales = new("NSW", "New South Wales",
+        new Uri("https://opendata.transport.nsw.gov.au/data/api/3/action/package_show?id=speed-zones"),
+        ["opendata.transport.nsw.gov.au"],
+        "Speed zone data © Transport for NSW, CC BY", 375,
+        "Every road in the state, from Transport for NSW's speed zone register.",
+        DataName: "Speed Zones");
+
+    /// <summary>The ACT's road network speed zones: a static view each year, as a new ArcGIS service.</summary>
+    public static readonly SpeedZoneSource AustralianCapitalTerritory = new("ACT", "Australian Capital Territory",
+        new Uri("https://services1.arcgis.com/E5n4f1VY84i0xSjy/ArcGIS/rest/services?f=json"),
+        ["services1.arcgis.com"],
+        "Speed zone data © ACT Government (Transport Canberra and City Services), CC BY 4.0", 15,
+        "Every road in the territory, a yearly snapshot from the ACT Government.",
+        "fetch-act", DataName: "Road Network Speed Zones",
+        YearlyService: @"^ACTGOV_Road_Network_(\d{4})_Speed_Zones_view$");
 
     static SpeedZoneSource Later(string code, string title) => new(code, title, null, [], "", 0);
 
-    /// <summary>Every Australian state and territory, Victoria first; only those with a
-    /// <see cref="PackageApi"/> can be chosen.</summary>
+    /// <summary>The states and territories that publish (or may soon publish) usable open data, the
+    /// ones OpenLion can use first, then New Zealand; only those with a <see cref="PackageApi"/> can be
+    /// chosen, and only for the countries on the card. South
+    /// Australia and the Northern Territory are left off: they don't publish their speed limits in
+    /// an open format (see <see cref="NotOpen"/>).</summary>
     public static readonly IReadOnlyList<SpeedZoneSource> All =
     [
         Victoria,
-        Later("NSW", "New South Wales"),
+        WesternAustralia,
+        NewSouthWales,
         Later("QLD", "Queensland"),
-        Later("SA", "South Australia"),
-        Later("WA", "Western Australia"),
         Later("TAS", "Tasmania"),
-        Later("ACT", "Australian Capital Territory"),
-        Later("NT", "Northern Territory"),
+        AustralianCapitalTerritory,
+        NewZealand,
     ];
 
+    /// <summary>States and territories with no open speed limit data, named in a note on the page.</summary>
+    public static readonly IReadOnlyList<string> NotOpen = ["South Australia", "the Northern Territory"];
+
     public bool Available => PackageApi is not null;
-    /// <summary>Speed zone data only goes on Australian maps.</summary>
-    public MapCountry Country => MapCountry.Australia;
+    /// <summary>The map country this data is for.</summary>
+    public MapCountry Country => MapCountry.ByCode(CountryCode) ?? MapCountry.Australia;
 
     public static SpeedZoneSource? ByCode(string? code) =>
         All.FirstOrDefault(s => string.Equals(s.Code, code, StringComparison.OrdinalIgnoreCase));
@@ -102,11 +154,73 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
     {
         if (source.PackageApi is not { } api)
             throw new SpeedZoneException($"There's no speed zone data for {source.Title} yet.");
-        using var r = await http.GetAsync(api, ct);
-        r.EnsureSuccessStatusCode();
-        await using var s = await r.Content.ReadAsStreamAsync(ct);
-        using var doc = await JsonDocument.ParseAsync(s, cancellationToken: ct);
-        return Newest(doc.RootElement, source);
+        // ArcGIS service lists now and then come back empty for a moment: try a few times
+        for (int attempt = 1; ; attempt++)
+        {
+            using var r = await http.GetAsync(api, ct);
+            r.EnsureSuccessStatusCode();
+            await using var s = await r.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(s, cancellationToken: ct);
+            try
+            {
+                return source.EngineFetch is null ? Newest(doc.RootElement, source) : Dated(doc.RootElement, source);
+            }
+            catch (SpeedZoneException) when (source.YearlyService is not null && attempt < 3)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2 * attempt), ct);
+            }
+        }
+    }
+
+    /// <summary>For data the engine fetches: the catalogue's last-updated date is the version
+    /// ("wa-2026-11-05", "Legal Speed Limits 5 November 2026"). Public for tests.</summary>
+    public static SpeedZoneRemote Dated(JsonElement reply, SpeedZoneSource source)
+    {
+        DateTime? when = null;
+        string? title = null;
+        if (source.YearlyService is { } pattern)
+            return Yearly(reply, source, pattern);
+        try
+        {
+            if (reply.TryGetProperty("result", out var r))        // CKAN package_show
+            {
+                if (r.TryGetProperty("metadata_modified", out var m) && m.ValueKind == JsonValueKind.String)
+                    when = Date(m.GetString());
+                if (r.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String)
+                    title = t.GetString();
+            }
+            else if (reply.TryGetProperty("editingInfo", out var ed) && ed.ValueKind == JsonValueKind.Object)   // ArcGIS layer
+            {
+                foreach (var f in new[] { "dataLastEditDate", "lastEditDate" })
+                    if (when is null && ed.TryGetProperty(f, out var ms) && ms.ValueKind == JsonValueKind.Number)
+                        when = DateTimeOffset.FromUnixTimeMilliseconds(ms.GetInt64()).UtcDateTime;
+            }
+        }
+        catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException or ArgumentOutOfRangeException)
+        {
+            throw new SpeedZoneException($"The {source.Title} data catalogue sent an answer OpenLion doesn't understand.", e);
+        }
+        if (when is null)
+            throw new SpeedZoneException($"The {source.Title} data catalogue gave no date for its speed limits.");
+        title = source.DataName ?? title;
+        var name = $"{(string.IsNullOrWhiteSpace(title) ? "Speed limits" : title)} {when.Value.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}";
+        return new SpeedZoneRemote(source.PackageApi!, $"{source.Code.ToLowerInvariant()}-{when.Value:yyyy-MM-dd}", name, when);
+    }
+
+    /// <summary>The newest year in an ArcGIS service list ("act-2025", "Road Network Speed Zones 2025").</summary>
+    static SpeedZoneRemote Yearly(JsonElement reply, SpeedZoneSource source, string pattern)
+    {
+        var re = new System.Text.RegularExpressions.Regex(pattern);
+        int year = 0;
+        if (reply.TryGetProperty("services", out var list) && list.ValueKind == JsonValueKind.Array)
+            foreach (var s in list.EnumerateArray())
+                if (s.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String &&
+                    re.Match(n.GetString()!) is { Success: true } m && int.TryParse(m.Groups[1].Value, out var y))
+                    year = Math.Max(year, y);
+        if (year == 0)
+            throw new SpeedZoneException($"The {source.Title} map service lists no speed zone data.");
+        return new SpeedZoneRemote(source.PackageApi!, $"{source.Code.ToLowerInvariant()}-{year}",
+            $"{source.DataName ?? "Speed zones"} {year}", new DateTime(year, 1, 1, 0, 0, 0, DateTimeKind.Utc));
     }
 
     /// <summary>The newest GeoJSON resource in a CKAN package_show reply. Public for tests.</summary>
@@ -118,15 +232,23 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
             foreach (var res in reply.GetProperty("result").GetProperty("resources").EnumerateArray())
             {
                 string? Str(string n) => res.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-                if (!string.Equals(Str("format"), "geojson", StringComparison.OrdinalIgnoreCase) ||
-                    !Uri.TryCreate(Str("url"), UriKind.Absolute, out var url) || !Allowed(url, source))
+                if (!Uri.TryCreate(Str("url"), UriKind.Absolute, out var url) || !Allowed(url, source))
+                    continue;
+                var name = Path.GetFileName(url.AbsolutePath);
+                // NSW labels its GeoJSON "data": go by the file name too
+                if (name.Length == 0 || !(string.Equals(Str("format"), "geojson", StringComparison.OrdinalIgnoreCase) ||
+                                          name.EndsWith(".geojson", StringComparison.OrdinalIgnoreCase)))
                     continue;
                 var when = Date(Str("last_modified")) ?? Date(Str("created"));
-                var name = Path.GetFileName(url.AbsolutePath);
-                if (name.Length == 0)
-                    continue;
+                var title = Str("name") ?? name;
+                if (source.DataName is { } dn && when is { } w)
+                {
+                    // one file name for every version: the catalogue's date tells them apart
+                    name = $"{Path.GetFileNameWithoutExtension(name)}_{w:yyyy-MM-dd}{Path.GetExtension(name)}";
+                    title = $"{dn} {w.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}";
+                }
                 if (best is null || (when ?? DateTime.MinValue) > (best.Modified ?? DateTime.MinValue))
-                    best = new SpeedZoneRemote(url, name, Str("name") ?? name, when);
+                    best = new SpeedZoneRemote(url, name, title, when);
             }
         }
         catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException)
@@ -151,14 +273,20 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         if (!Allowed(remote.Url, source))
             throw new SpeedZoneException($"Refusing to download from {remote.Url.Host}.");
         Directory.CreateDirectory(folder);
-        var geo = Path.Combine(folder, remote.FileName);
-        var part = geo + ".part";
-        foreach (var stale in Directory.EnumerateFiles(folder, "*.part").Where(p => !p.Equals(part, StringComparison.OrdinalIgnoreCase)))
-            File.Delete(stale);
-        if (!File.Exists(geo))
+        string geo;
+        if (source.EngineFetch is { } cmd)
+            geo = await EngineFetchAsync(engine, cmd, progress, ct);
+        else
         {
-            await FetchAsync(remote.Url, part, progress, ct);
-            File.Move(part, geo, overwrite: true);
+            geo = Path.Combine(folder, remote.FileName);
+            var part = geo + ".part";
+            foreach (var stale in Directory.EnumerateFiles(folder, "*.part").Where(p => !p.Equals(part, StringComparison.OrdinalIgnoreCase)))
+                File.Delete(stale);
+            if (!File.Exists(geo))
+            {
+                await FetchAsync(remote.Url, part, progress, ct);
+                File.Move(part, geo, overwrite: true);
+            }
         }
 
         progress?.Report(new DownloadProgress(DownloadPhase.Verifying, 0, null, 0));
@@ -184,6 +312,37 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         File.WriteAllText(info + ".tmp", JsonSerializer.Serialize(data, Json));
         File.Move(info + ".tmp", info, overwrite: true);
         return data;
+    }
+
+    /// <summary>Has the engine download the data (python -m openlion.gov_speed fetch-wa folder): it
+    /// prints "progress n" while it pages through the map server, then the data's name and the
+    /// file it wrote. Returns that file, which must be in this source's folder.</summary>
+    async Task<string> EngineFetchAsync(EnginePaths engine, string cmd, IProgress<DownloadProgress>? progress,
+        CancellationToken ct)
+    {
+        var lines = new List<string>();
+        int code = await EngineRunner.RunAsync(engine, ["-m", "openlion.gov_speed", cmd, folder], line =>
+        {
+            lock (lines) lines.Add(line);
+            if (line.StartsWith("progress ", StringComparison.Ordinal) && long.TryParse(line[9..], out var n))
+                progress?.Report(new DownloadProgress(DownloadPhase.Downloading, n, null, 0));
+        }, ct);
+        List<string> output;
+        lock (lines) output = [.. lines.Where(l => !l.StartsWith(EngineRunner.StderrPrefix) && !l.StartsWith("progress "))];
+        string? path = output.Count > 0 ? output[^1].Trim() : null;
+        if (code != 0 || path is null)
+        {
+            string tail;
+            lock (lines) tail = string.Join(" ", lines.Where(l => l.StartsWith(EngineRunner.StderrPrefix)).TakeLast(2)
+                .Select(l => l[EngineRunner.StderrPrefix.Length..]));
+            throw new SpeedZoneException($"The {source.Title} speed limits couldn't be downloaded (exit code {code}). " +
+                                         "Check your internet connection and press Download to try again. " + tail);
+        }
+        var full = Path.GetFullPath(path);
+        if (!full.StartsWith(Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+            throw new SpeedZoneException($"The map engine wrote the {source.Title} speed limits somewhere unexpected: {full}");
+        return full;
     }
 
     async Task FetchAsync(Uri url, string part, IProgress<DownloadProgress>? progress, CancellationToken ct)

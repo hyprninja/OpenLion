@@ -32,6 +32,20 @@ public class SpeedZoneTests
         Assert.Equal("Speed Zones September 2026", r.Name);
     }
 
+    [Fact]
+    public void Newest_NswGeoJsonLabelledData_GetsADatedName()
+    {
+        const string nsw = "https://opendata.transport.nsw.gov.au/data/dataset/4253/resource/";
+        var r = SpeedZoneDownloader.Newest(Reply(
+            ("ZIP", nsw + "a/download/speedzones.zip", "Speed Zones data", "2026-11-06T18:20:00"),
+            ("data", nsw + "b/download/speed_zones.geojson", "Speed Zones - GeoJSON Format", "2026-11-06T18:20:17"),
+            ("CSV", nsw + "c/download/speed_zones.csv", "Speed Zones - CSV Format", "2026-11-06T18:20:30")),
+            SpeedZoneSource.NewSouthWales);
+        Assert.Equal("speed_zones_2026-11-06.geojson", r.FileName);
+        Assert.Equal("Speed Zones 6 November 2026", r.Name);
+        Assert.EndsWith("/speed_zones.geojson", r.Url.AbsolutePath);
+    }
+
     [Theory]
     [InlineData("https://evil.example.com/speed_zones.geojson")]
     [InlineData("http://opendata.transport.vic.gov.au/x/speed_zones.geojson")]
@@ -50,12 +64,69 @@ public class SpeedZoneTests
     }
 
     [Fact]
-    public void OnlyVictoriaIsAvailable_AllStatesListed()
+    public void VictoriaAndWaAreAvailable_SaAndNtNotListed()
     {
-        Assert.Equal(8, SpeedZoneSource.All.Count);
-        Assert.Equal(["VIC"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
-        Assert.Contains("CC BY 4.0", SpeedZoneSource.Victoria.Credit);
+        Assert.Equal(["VIC", "WA", "NSW", "QLD", "TAS", "ACT", "NZ"], SpeedZoneSource.All.Select(s => s.Code));
+        Assert.Same(SpeedZoneSource.AustralianCapitalTerritory, SpeedZoneSource.ByCode("act"));
+        Assert.Same(SpeedZoneSource.NewSouthWales, SpeedZoneSource.ByCode("nsw"));
+        Assert.Null(SpeedZoneSource.NewSouthWales.EngineFetch);
+        Assert.Null(SpeedZoneSource.ByCode("SA"));
+        Assert.Null(SpeedZoneSource.ByCode("NT"));
+        Assert.Equal(["South Australia", "the Northern Territory"], SpeedZoneSource.NotOpen);
+        Assert.Equal(["VIC", "WA", "NSW", "ACT", "NZ"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.Equal("fetch-act", SpeedZoneSource.AustralianCapitalTerritory.EngineFetch);
+        Assert.All(SpeedZoneSource.All.Where(s => s.Code != "NZ"), s => Assert.Equal(MapCountry.Australia, s.Country));
+        Assert.Equal(MapCountry.NewZealand, SpeedZoneSource.NewZealand.Country);
+        Assert.Equal("fetch-nz", SpeedZoneSource.NewZealand.EngineFetch);
+        Assert.All(SpeedZoneSource.All.Where(s => s.Available), s => Assert.Contains("CC BY", s.Credit));
         Assert.Same(SpeedZoneSource.Victoria, SpeedZoneSource.ByCode("vic"));
+        Assert.Same(SpeedZoneSource.WesternAustralia, SpeedZoneSource.ByCode("WA"));
+        Assert.Null(SpeedZoneSource.Victoria.EngineFetch);
+        Assert.Equal("fetch-wa", SpeedZoneSource.WesternAustralia.EngineFetch);
+    }
+
+    [Fact]
+    public void Dated_UsesTheCatalogueDateAsVersion()
+    {
+        var reply = JsonDocument.Parse("""{"result": {"title": "Legal Speed Limits", "metadata_modified": "2026-11-05T21:24:27.181655"}}""").RootElement;
+        var r = SpeedZoneDownloader.Dated(reply, SpeedZoneSource.WesternAustralia);
+        Assert.Equal("wa-2026-11-05", r.FileName);
+        Assert.Equal("Legal Speed Limits 5 November 2026", r.Name);
+        Assert.Equal("catalogue.data.wa.gov.au", r.Url.Host);
+    }
+
+    [Fact]
+    public void Dated_ReadsAnArcGisLayersLastEdit()
+    {
+        // 1793950037481 ms = 2026-11-06 (UTC)
+        var reply = JsonDocument.Parse("""{"name": "SpeedLimitZoneFull", "editingInfo": {"lastEditDate": 1793950037481, "dataLastEditDate": 1793950037481}}""").RootElement;
+        var r = SpeedZoneDownloader.Dated(reply, SpeedZoneSource.NewZealand);
+        Assert.Equal("nz-2026-11-06", r.FileName);
+        Assert.Equal("National Speed Limit Register 6 November 2026", r.Name);
+        Assert.Equal("services.arcgis.com", r.Url.Host);
+    }
+
+    [Fact]
+    public void Dated_YearlyService_TakesTheNewestYear()
+    {
+        var reply = JsonDocument.Parse("""
+            {"services": [{"name": "ACTGOV_Road_Network_2024_view", "type": "FeatureServer"},
+                          {"name": "ACTGOV_Road_Network_2025_Speed_Zones_view", "type": "FeatureServer"},
+                          {"name": "ACTGOV_Road_Network_2023_Speed_Zones_view", "type": "FeatureServer"},
+                          {"name": "ACTGOV_Speed_Hump_Assets", "type": "FeatureServer"}]}
+            """).RootElement;
+        var r = SpeedZoneDownloader.Dated(reply, SpeedZoneSource.AustralianCapitalTerritory);
+        Assert.Equal("act-2025", r.FileName);
+        Assert.Equal("Road Network Speed Zones 2025", r.Name);
+        var none = JsonDocument.Parse("""{"services": [{"name": "ACTGOV_Speed_Hump_Assets"}]}""").RootElement;
+        Assert.Throws<SpeedZoneException>(() => SpeedZoneDownloader.Dated(none, SpeedZoneSource.AustralianCapitalTerritory));
+    }
+
+    [Fact]
+    public void Dated_NoDate_Throws()
+    {
+        var reply = JsonDocument.Parse("""{"result": {"title": "Legal Speed Limits"}}""").RootElement;
+        Assert.Throws<SpeedZoneException>(() => SpeedZoneDownloader.Dated(reply, SpeedZoneSource.WesternAustralia));
     }
 
     [Fact]

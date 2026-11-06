@@ -86,5 +86,48 @@ class GovSpeedTest(unittest.TestCase):
             gov_speed.Index(bad)
 
 
+class FeatureSpeedTest(unittest.TestCase):
+    def test_wa_signed_limit(self):
+        self.assertEqual(gov_speed.feature_speed({"SPEED_LIMIT": "60km/h", "CWY": "Single"}), (60, None))
+        self.assertEqual(gov_speed.feature_speed({"SPEED_LIMIT": "110km/h"})[0], 110)
+
+    def test_wa_default_rule_is_left_out(self):
+        v = "50km/h applies in built up areas or 110km/h outside built up areas"
+        speed, why = gov_speed.feature_speed({"SPEED_LIMIT": v})
+        self.assertIsNone(speed)
+        self.assertIn("default rule", why)
+
+    def test_wa_odd_values_are_left_out(self):
+        for v in ("", None, "Variable", "0km/h", "200km/h"):
+            self.assertIsNone(gov_speed.feature_speed({"SPEED_LIMIT": v})[0], v)
+
+    def test_nsw_kept_types(self):
+        for kind, v in (("Ordinary Permanent", "80 km/h"), ("Default", "50 km/h"), ("High Pedestrian", "40 km/h"),
+                        ("Shared", "10 km/h"), ("Local Traffic", "40 km/h")):
+            p = {"sz_type": kind, "sz_status": "Existing", "sz_direction": "Both Directions", "sz_speed": v}
+            self.assertEqual(gov_speed.feature_speed(p)[0], int(v.split()[0]), kind)
+
+    def test_nsw_part_time_zones_are_left_out(self):
+        for kind in ("School", "School Bus", "Variable", "Wet Weather", "Toll Plaza", "Truck & bus"):
+            speed, why = gov_speed.feature_speed({"sz_type": kind, "sz_status": "Existing", "sz_speed": "40 km/h"})
+            self.assertIsNone(speed, kind)
+            self.assertIn("part-time", why)
+
+    def test_nsw_proposed_is_left_out(self):
+        p = {"sz_type": "Ordinary Permanent", "sz_status": "Proposed", "sz_speed": "60 km/h"}
+        self.assertIsNone(gov_speed.feature_speed(p)[0])
+
+    def test_act_values(self):
+        self.assertEqual(gov_speed.feature_speed({"SPEED_ZONE": "60", "CARRIAGEWAY": "ASCENDING"}), (60, None))
+        speed, why = gov_speed.feature_speed({"SPEED_ZONE": "SCHOOL ZONE", "CARRIAGEWAY": "DESCENDING"})
+        self.assertIsNone(speed)
+        self.assertIn("part-time", why)
+        self.assertIsNone(gov_speed.feature_speed({"SPEED_ZONE": "", "CARRIAGEWAY": "ASCENDING"})[0])
+
+    def test_victoria_still_reads(self):
+        self.assertEqual(gov_speed.feature_speed({"speed_limit": "80", "zone_conditions": ["Normal Operation"]}), (80, None))
+        self.assertIsNone(gov_speed.feature_speed({"speed_limit": "40", "zone_conditions": ["School"]})[0])
+
+
 if __name__ == "__main__":
     unittest.main()
