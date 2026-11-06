@@ -24,7 +24,7 @@ Same spot, same car. The factory map stops at Worland Road. The OpenLion card sh
 
 - **Every road in OpenStreetMap**, including streets built in the last ten years, with speed limits where OpenStreetMap has them.
 - **Turn-by-turn guidance and voice instructions**, just like the factory maps. The new card uses the same map format, so the car reads it like its own.
-- **Address search** by suburb, street and house number, with suburbs, councils and postcodes from OpenStreetMap.
+- **Address search** by suburb, street and house number, with suburbs, councils and postcodes from OpenStreetMap. House numbers come from OpenStreetMap and, if you choose, from G-NAF, the Australian government's address file, which adds numbers on most streets OpenStreetMap doesn't cover.
 - **Points of interest**: about 270,000 fuel stations, shops, cafés, hospitals and more.
 - **Speed camera warnings**: fixed, red-light and point-to-point cameras, downloaded fresh from the official lists where a government publishes them openly (Victoria and the ACT so far) and from OpenStreetMap everywhere else. The app tells you which is which when it builds.
 - **Up-to-date data whenever you want it.** OpenStreetMap changes every day. Run OpenLion again any time for a new card.
@@ -38,7 +38,7 @@ OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11�
 - A Windows 10 or 11 PC (64-bit) with **8 GB of memory or more** and **about 6 GB of free disk space**. More memory and cores make the build faster.
 - Your **factory map card**. OpenLion only reads it. Instructions for removing the SD card can be found [here](https://www.autoinstruct.com.au/manufacturer/holden/ve-commodore/holden-iq-navigation-upgrade/).
 - A **blank SD card** of 1 to 32 GB, formatted FAT32. A 2 GB card is plenty. Use a full-size card, or a microSD card in a full-size adapter.
-- An internet connection for the map download (about 1 GB).
+- An internet connection for the map download (about 1 GB, plus about 1.9 GB for the optional house-number file), and about 2 GB more disk space if you add house numbers.
 - **About half an hour to 2 hours**, depending on the PC. Most of it is the map build, which runs by itself.
 
 ## How it works
@@ -47,9 +47,10 @@ OpenLion is for the **Holden iQ navigation in the VE Commodore Series II (MY11�
 2. **Read and accept the warning.** OpenLion is unofficial, and you use it at your own risk.
 3. **Insert your factory card.** Set its lock switch first if you can. OpenLion copies it to your PC and checks every file, then checks that it understands your card's map format.
 4. **Get the map data.** Choose Australia, New Zealand, or both (the factory card had both). OpenLion downloads the latest extract for each from OpenStreetMap (via Geofabrik) and checks it.
-5. **Build the maps.** This takes about half an hour on a fast PC with plenty of memory, and up to 1½ hours on one with 8 GB. You can leave the PC to it; OpenLion keeps it awake.
-6. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
-7. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
+5. **House numbers (optional, Australia).** Tick the box to add house numbers from G-NAF, the government's national address file. OpenLion downloads the latest quarterly release from data.gov.au (about 1.9 GB) and checks it. OpenStreetMap's numbers always come first.
+6. **Build the maps.** This takes about half an hour on a fast PC with plenty of memory, and up to 1½ hours on one with 8 GB. You can leave the PC to it; OpenLion keeps it awake.
+7. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
+8. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map.
 
 If anything isn't right, put your factory card back in. It's exactly as it was.
 
@@ -123,6 +124,8 @@ The iQ reads its maps from a full-size SD card. The map data turns out to be an 
 | Builds on an 8 GB PC (about 3.6 GB peak) and in parallel on big ones (Australia + New Zealand in 25 min on 44 threads); output unchanged | Done | [20](docs/20_memory.md) |
 | Speed limits from Victoria's open speed zone register where OSM has none (+132,000 km in Victoria, 86 % agreement with OSM); chosen per state on the app's Speed data step | Done | [22](docs/22_gov_speed_zones.md) |
 | Speed camera alerts: official lists (VIC, ACT) downloaded at each build, OSM cameras elsewhere, snapped onto the carriageway for direction and speed limit | Done | [23](docs/23_speed_cameras.md) |
+| House numbers: factory `short_addr`/`long_addr` ranges decoded (side, parity, 10/18-bit signed delta) and filled from OSM `addr:housenumber` | Done | [24](docs/24_house_numbers.md) |
+| House numbers from G-NAF (Australia's national address file) for streets OSM has none on, OSM first (`--addresses`) | Done | [25](docs/25_gnaf_house_numbers.md) |
 | `.fea` size reduction, other road-sense alerts (school zones, blackspots, railway crossings) | Not started | |
 | In-car test: unit accepts the OSM card, shows post-2010 streets, address search works, routes 200 km in demo mode, live guidance and voice instructions work on a real drive | Passed (2026-11-05) | [16](docs/16_test_card.md) |
 
@@ -201,6 +204,7 @@ python -m openlion.build navigation card/navigation --tables osm_out/db --poi os
 python tests/card_check.py card/navigation navigation
 python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card2/navigation   # all of the above in one
 python -m openlion.make_card AU=australia-latest.osm.pbf navigation osm_work card3/navigation --extract NZ=new-zealand-latest.osm.pbf   # both countries
+python -m openlion.make_card australia-latest.osm.pbf navigation osm_work card4/navigation --addresses g-naf_aug26_allstates_gda2020_psv_110.zip   # + G-NAF house numbers
 ```
 
 ## Legal and data policy
@@ -208,6 +212,7 @@ python -m openlion.make_card AU=australia-latest.osm.pbf navigation osm_work car
 - **No factory map data is in this repo**: no card contents, no decoded tables, no renders made from factory data, no junction-view artwork. (The "before" picture is a photo of the car's own screen.) The Whereis/Navteq/Holden map data and GM/Continental software are proprietary. Work from your own card.
 - Format documentation and tools are original work.
 - Maps built from OpenStreetMap are © OpenStreetMap contributors and must be distributed under the **ODbL**, with attribution.
+- Cards built with house numbers from G-NAF (the app's House numbers step, or `--addresses`) contain G-NAF data. Incorporates or developed using G-NAF © Geoscape Australia licensed by the Commonwealth of Australia under the [Open Geo-coded National Address File (G-NAF) End User Licence Agreement](https://data.gov.au/data/dataset/19432f89-dc3a-4ef3-b943-5326ef1dbecc) (CC BY 4.0, plus a rule against using it to compile addresses for sending mail). OpenLion modifies it: house numbers are matched to OSM streets and stored as ranges (report [23](docs/23_gnaf_house_numbers.md)).
 
 ## Safety
 

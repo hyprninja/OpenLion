@@ -110,7 +110,7 @@ public sealed class BuildMapsStep : StepViewModel
         {
             _session.Build = build;
             _session.RequiredBytes = build.Bytes;
-            Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {_session.DescribeOsm()}{SpeedNote}.";
+            Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {_session.DescribeOsm()}{Extras}.";
             Detail = $"{build.Files:N0} files, {build.Bytes / 1e6:N0} MB, checked.";
             Warning = build.Partial ? $"This is a TEST build of a small area only, not all of {Places}." : "";
             CameraNote = build.CameraNote ?? "";
@@ -122,7 +122,7 @@ public sealed class BuildMapsStep : StepViewModel
         CameraNote = SpeedCameras.Preview(_session.Countries);
         Phase = BuildPhase.Ready;
         Intro = osm is null ? "" :
-            $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}{SpeedNote}, using your factory card's copy. " +
+            $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}{Extras}, using your factory card's copy. " +
             $"This takes {Duration} on a fast PC (longer on slower ones). You can keep using the PC, " +
             "and OpenLion stops Windows going to sleep until it's done." +
             (_session.Countries.Count == 1
@@ -139,7 +139,19 @@ public sealed class BuildMapsStep : StepViewModel
     string Places => MapCountry.Describe(_session.Countries);
 
     /// <summary>", with speed limits from Victorian speed zones (...)" or "".</summary>
-    string SpeedNote => _session.SpeedZones.Count == 0 ? "" : ", with extra speed limits from " + _session.DescribeSpeedZones();
+    /// <summary>", with extra speed limits from ... and house numbers from G-NAF August 2026", or "".</summary>
+    string Extras
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (_session.SpeedZones.Count > 0)
+                parts.Add("extra speed limits from " + _session.DescribeSpeedZones());
+            if (_session.Gnaf is not null)
+                parts.Add("house numbers from " + _session.DescribeGnaf());
+            return parts.Count == 0 ? "" : ", with " + string.Join(" and ", parts);
+        }
+    }
 
     /// <summary>Rough build time, by extract size and PC (Australia + New Zealand, 1.4 GB of extracts:
     /// 25 minutes on a 44-thread PC with 64 GB, about an hour and a half in the memory-saving plan).</summary>
@@ -238,11 +250,12 @@ public sealed class BuildMapsStep : StepViewModel
             var extracts = _session.Countries.Zip(osm, (c, e) => (c.Code, e.Path)).ToList();
             var zones = _session.SpeedZones.Select(z => z.Path).ToList();
             var req = new BuildRequest(extracts, nav, FactoryManifest is { } m && File.Exists(m) ? m : null,
-                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, zones, AppPaths.CamerasFolder);
+                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, zones, AppPaths.CamerasFolder, _session.Gnaf?.Path);
             AppLog.Write($"build: engine {engine.Python} ({(engine.Bundled ? "bundled" : "dev")}), " +
                          $"extracts {string.Join(", ", extracts.Select(x => $"{x.Code}={x.Path}"))}, " +
                          $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}" +
-                         (zones.Count == 0 ? "" : ", speed zones " + string.Join(", ", zones)));
+                         (zones.Count == 0 ? "" : ", speed zones " + string.Join(", ", zones)) +
+                         (_session.Gnaf is { } g ? ", G-NAF " + g.Path : ""));
             var progress = new Progress<BuildProgress>(p =>
             {
                 _progress = p;
@@ -267,7 +280,7 @@ public sealed class BuildMapsStep : StepViewModel
                 return;
             }
             var record = new BuildRecord(result.CardPath ?? AppPaths.BuildOutput, _session.FactoryRecord?.VolumeSerial ?? 0,
-                BuildRecord.Key(osm, _session.SpeedZones), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null,
+                BuildRecord.Key(osm, _session.SpeedZones, _session.Gnaf), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null,
                 result.Cameras.Count > 0 ? SpeedCameras.Describe(result.Cameras) : null);
             CameraNote = record.CameraNote ?? "";
             _session.State.Build = record;
@@ -275,7 +288,7 @@ public sealed class BuildMapsStep : StepViewModel
             _session.Build = record;
             _session.RequiredBytes = record.Bytes;
             Percent = 100;
-            Status = $"Maps are ready: built in {Format(_clock.Elapsed)} from {_session.DescribeOsm()}{SpeedNote}.";
+            Status = $"Maps are ready: built in {Format(_clock.Elapsed)} from {_session.DescribeOsm()}{Extras}.";
             Detail = $"{result.Files:N0} files, {result.Bytes / 1e6:N0} MB. {result.Replaced} map files replaced, " +
                      "everything else is identical to your factory card, and the new card passed its checks.";
             Warning = bbox is not null ? $"This is a TEST build of a small area only, not all of {Places}." : "";

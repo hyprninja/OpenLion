@@ -10,14 +10,15 @@ Model (matches the factory conventions, report 10 / 13 / 18):
 - names  = base + rotations of the leading words (WARNER GLEN MILL ROAD ->
            GLEN MILL ROAD;WARNER, MILL ROAD;WARNER GLEN); city names likewise
            (NORTH MELBOURNE -> MELBOURNE;NORTH) plus "POSTCODE, NAME" when known.
-- every segment links (abs_addr) to exactly one road record.
+- every segment links to exactly one road record: abs_addr, or one short_addr / long_addr
+  per side with house numbers (osm_addr, report 24).
 """
 import array
 import collections
 import struct
 import unicodedata
 
-from . import countries, roads, search
+from . import countries, osm_addr, roads, search
 from .common import HDR
 from .graph import Shape
 
@@ -401,7 +402,7 @@ def segment_point(g, s):
     return ((x1 + x2) // 2, (y1 + y2) // 2)
 
 
-def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
+def build(g, seg_labels, areas, factory, catalog_id=0, places=(), addresses=None):
     """Build road records, cities and search tables for graph g.
 
     seg_labels: per segment (name, ref) from OSM. areas: read_boundaries() output (plus
@@ -409,6 +410,7 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
     points. g.seg_country: catalog per segment (default: all catalog_id).
     factory: dict of factory raw tables used as templates (headers, states, time info).
     Every catalog in the factory list gets a city tree; one without roads gets an empty one.
+    addresses: osm_addr.read() output; numbered segments get house-number links.
     Fills g.seg_names in place. Returns {table name: raw bytes (uncompressed)} and stats."""
     stats = collections.Counter()
     seg_country = getattr(g, "seg_country", None) or [catalog_id] * g.n_segs
@@ -616,6 +618,7 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
         groups[(city_of_seg[s], nm)].append(s)
         stats["named segments" if nm else "unnamed segments"] += 1
     road_keys = sorted(groups, key=lambda k: (city_rec[k[0]], search.collate_key(k[1])))
+    hn_ranges, hn_numbers = osm_addr.assign(g, groups, addresses, stats)
     records, rec_names = [], []
     for key in road_keys:
         segs = groups[key]
@@ -630,7 +633,9 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
         records.append({"countryID": city_country[city_rec[key[0]]], "cityID": key[0],
                         "roadInfo": 0x76 if variants else 0,
                         "min_long": min(xs), "min_lat": min(ys), "delta_long": max(xs) - min(xs),
-                        "delta_lat": max(ys) - min(ys), "maxNumber": 0, "minNumber": 0,
+                        "delta_lat": max(ys) - min(ys),
+                        "maxNumber": min(hn_numbers.get(key, (0, 0))[1], 0xFFFF),
+                        "minNumber": min(hn_numbers.get(key, (0, 0))[0], 0xFFFF),
                         "intersectionCount": min(inter, 0xFFFF), "names": variants})
         rec_names.append(variants)
 
@@ -673,8 +678,9 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=()):
     for k, key in enumerate(road_keys):
         link = (("abs_addr", 0, road_id[k], b""),)
         for s in groups[key]:
-            g.seg_names[s] = link
-    groups = None
+            r = hn_ranges.get(s)
+            g.seg_names[s] = (osm_addr.links(r, road_id[k]) if r else None) or link
+    groups = hn_ranges = None
 
     # road lists + road trees, one tree per city in city-table order
     roads_of_city = collections.defaultdict(list)

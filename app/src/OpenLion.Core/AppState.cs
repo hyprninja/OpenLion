@@ -37,6 +37,8 @@ public static class AppPaths
         Path.Combine(Root, "speed", s.Code.ToLowerInvariant());
     /// <summary>Official speed camera lists, downloaded by the engine at each build (VIC.json, ...).</summary>
     public static string CamerasFolder => Path.Combine(Root, "cameras");
+    /// <summary>The G-NAF release (house numbers), one zip at a time.</summary>
+    public static string GnafFolder => Path.Combine(Root, "gnaf");
     /// <summary>Engine working folder: cached OSM reads and the new map tables.</summary>
     public static string BuildWorkFolder => Path.Combine(Root, "build", "work");
     /// <summary>The finished navigation/ folder that gets written to the new card.</summary>
@@ -62,14 +64,19 @@ public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial
     /// Australian extract gives its plain file name, as OpenLion 1.0 stored it.</summary>
     public static string OsmKey(IEnumerable<OsmExtract> extracts) => string.Join("+", extracts.Select(e => e.FileName));
 
-    /// <summary><see cref="OsmKey"/> plus the speed zone data used, if any ("...|speed:VIC=Speed Zones
-    /// September 2026"), so a build is redone when the speed data changes. Without speed data
-    /// it's the plain OSM key, as earlier versions stored it.</summary>
-    public static string Key(IEnumerable<OsmExtract> extracts, IEnumerable<Speed.SpeedZoneData>? speedZones)
+    /// <summary><see cref="OsmKey"/> plus the speed zone data and G-NAF release used, if any
+    /// ("...|speed:VIC=Speed Zones September 2026|gnaf:g-naf_aug26_....zip"), so a build is redone when
+    /// either changes. Without them it's the plain OSM key, as earlier versions stored it.</summary>
+    public static string Key(IEnumerable<OsmExtract> extracts, IEnumerable<Speed.SpeedZoneData>? speedZones,
+        Addresses.GnafData? gnaf = null)
     {
         var key = OsmKey(extracts);
         var z = (speedZones ?? []).OrderBy(d => d.Code, StringComparer.Ordinal).ToList();
-        return z.Count == 0 ? key : key + "|speed:" + string.Join(",", z.Select(d => $"{d.Code}={d.SourceFile}"));
+        if (z.Count > 0)
+            key += "|speed:" + string.Join(",", z.Select(d => $"{d.Code}={d.SourceFile}"));
+        if (gnaf is not null)
+            key += "|gnaf:" + gnaf.FileName;
+        return key;
     }
 
     /// <summary>Still usable: the folder exists and it was built from this card and extract.</summary>
@@ -91,6 +98,8 @@ public sealed class AppState
     public List<string>? Countries { get; set; }
     /// <summary>States whose speed zone data goes on the card (SpeedZoneSource codes); null means none.</summary>
     public List<string>? SpeedZones { get; set; }
+    /// <summary>Add house numbers from G-NAF (Australia); null means yes, the default.</summary>
+    public bool? HouseNumbers { get; set; }
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

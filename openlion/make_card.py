@@ -3,7 +3,8 @@
 The one command the Windows app runs to build maps:
 
   python -m openlion.make_card <extract.osm.pbf> <factory navigation/> <work dir> <out navigation/>
-         [--extract NZ=<extract.osm.pbf> ...] [--manifest <manifest.tsv>] [--bbox lon0 lat0 lon1 lat1] [--json]
+         [--extract NZ=<extract.osm.pbf> ...] [--addresses <G-NAF zip>] [--manifest <manifest.tsv>]
+         [--bbox lon0 lat0 lon1 lat1] [--json]
 
 The first extract may name its country (AU=..., NZ=...); a bare path is Australia.
 Add --extract for each further country. Countries left out get no cities on the card.
@@ -48,7 +49,7 @@ STAGES = [
     ("roads", "Reading roads", 240),
     ("graph", "Building the road network", 130),
     ("boundaries", "Reading suburbs, towns and postcodes", 150),
-    ("names", "Street names and address search", 300),
+    ("names", "Street names, house numbers and address search", 500),
     ("layers", "Routing layers", 160),
     ("fea_read", "Reading water, parks and land use", 300),
     ("fea0", "Drawing the background map (level 1 of 5)", 760),
@@ -101,10 +102,14 @@ def fingerprint(path, size, span=1 << 20):
     return h.hexdigest()
 
 
-def reset_cache(inputs, work, bbox):
+def reset_cache(inputs, work, bbox, addresses=None):
     """The pipeline caches OSM reads as pickles in work/. Throw them away when an extract,
     the set of countries or the area changes, so a new download is never mixed with an old one."""
     key = {"extracts": [], "bbox": list(bbox) if bbox else None}
+    if addresses:          # a new G-NAF release must not reuse the old one's read
+        st = os.stat(addresses)
+        key["addresses"] = {"size": st.st_size, "mtime": int(st.st_mtime),
+                            "sha256_ends": fingerprint(addresses, st.st_size)}
     for country, path in inputs:
         st = os.stat(path)
         key["extracts"].append({"country": country.code, "size": st.st_size, "mtime": int(st.st_mtime),
@@ -154,7 +159,7 @@ def camera_states(inputs, files, fetched):
 
 
 def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory_mode=None, speed_zones=(),
-        camera_dir=None, camera_download=True):
+        camera_dir=None, camera_download=True, addresses=None):
     """pbf: one Australian extract, or a list of "NZ=path" / (Country, path) (pipeline.inputs_of).
     memory_mode: "low" / "high" / None (decide from free RAM, see resources.py).
     camera_dir: folder for the government camera lists (gov_cameras.py); they're downloaded
@@ -177,7 +182,9 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
         if os.path.exists(out):
             raise Failed(f"output folder already exists: {out}")
         os.makedirs(work, exist_ok=True)
-        if reset_cache(inputs, work, bbox):
+        if addresses and not os.path.isfile(addresses):
+            raise Failed(f"G-NAF file not found: {addresses}")
+        if reset_cache(inputs, work, bbox, addresses):
             print("reusing cached OSM reads from an earlier run", flush=True)
 
         cam_files, fetched = [], {}
@@ -188,7 +195,7 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
             o.emit("cameras", final=False, states=camera_states(inputs, cam_files, fetched))
 
         pipeline.run(inputs, db, work, bbox, stage=o.start_stage, memory_mode=memory_mode,
-                     speed_zones=speed_zones, gov_cameras=cam_files)
+                     speed_zones=speed_zones, gov_cameras=cam_files, addresses=addresses)
         rp = os.path.join(work, pipeline.CAMERAS_REPORT)
         if os.path.isfile(rp):
             with open(rp, encoding="utf-8") as f:
@@ -265,6 +272,7 @@ if __name__ == "__main__":
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--speed-zones", action="append", default=[],
                     help="government speed zones (.geojson or prepared .bin) for roads OSM has no limit for")
+    ap.add_argument("--addresses", help="G-NAF zip (data.gov.au): house numbers for streets OSM has none on")
     ap.add_argument("--memory", choices=("auto", "low", "high"), default=None,
                     help="memory plan (default: decide from free RAM)")
     ap.add_argument("--cameras", metavar="DIR",
@@ -276,7 +284,7 @@ if __name__ == "__main__":
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
     t0 = time.time()
     code = run([a.pbf] + a.extract, a.factory, a.work, a.out, a.manifest, bb, a.json, a.memory,
-               a.speed_zones, a.cameras, not a.no_camera_download)
+               a.speed_zones, a.cameras, not a.no_camera_download, a.addresses)
     if not a.json:
         print(f"{time.time() - t0:.0f}s")
     sys.exit(code)

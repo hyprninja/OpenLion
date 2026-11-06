@@ -42,9 +42,10 @@ public sealed record BuildResult
 /// <param name="SpeedZones">Prepared government speed zone files: limits for roads OSM has none for.</param>
 /// <param name="CameraFolder">Folder for the official speed camera lists the engine downloads
 /// (other states get OSM's cameras); null: OSM cameras everywhere.</param>
+/// <param name="Addresses">G-NAF zip: house numbers for Australian streets OSM has none on.</param>
 public sealed record BuildRequest(IReadOnlyList<(string Country, string Path)> Extracts, string FactoryNavigation,
     string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null,
-    IReadOnlyList<string>? SpeedZones = null, string? CameraFolder = null)
+    IReadOnlyList<string>? SpeedZones = null, string? CameraFolder = null, string? Addresses = null)
 {
     /// <summary>One Australian extract (OpenLion 1.0).</summary>
     public BuildRequest(string pbf, string factoryNavigation, string? manifest, string workFolder,
@@ -90,6 +91,8 @@ public static class MapBuild
             args.AddRange(["--speed-zones", z]);
         if (req.CameraFolder is not null)
             args.AddRange(["--cameras", req.CameraFolder]);
+        if (req.Addresses is not null)
+            args.AddRange(["--addresses", req.Addresses]);
         return args;
     }
 
