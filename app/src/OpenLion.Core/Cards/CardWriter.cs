@@ -15,16 +15,19 @@ public sealed record WriteResult(string NavigationPath, int Files, long Bytes, u
 public class WriteException(string message, Exception? inner = null) : IOException(message, inner);
 
 /// <summary>
-/// Writes a finished navigation/ folder to a blank card. Every write goes through
+/// Writes a finished navigation/ folder, and the factory card's other root items (config/ and
+/// so on), to a blank card. Every write goes through
 /// <see cref="CardGuard"/> again right before it starts (via the gate), so a card swapped
 /// in the meantime is refused. Files go to navigation.partial (write-through), every file is
 /// then read back from the card itself, bypassing Windows' cache, and compared by SHA-256;
-/// only then is the folder renamed to navigation.
+/// only then is the folder renamed to navigation. The other root items go to openlion.partial
+/// first, the same way, and are moved to the card's root at the end.
 /// </summary>
 public static partial class CardWriter
 {
     public const string FolderName = "navigation";
     const string PartialName = "navigation.partial";
+    const string RootPartialName = "openlion.partial";
     const long SpaceMargin = 16_000_000;
     const FileOptions NoBuffering = (FileOptions)0x20000000; // FILE_FLAG_NO_BUFFERING
     const int Block = 1 << 20;
@@ -38,8 +41,10 @@ public static partial class CardWriter
     /// <param name="gate">Re-checks the card right before writing; must return an allowed result
     /// for the same volume. Throws or returns refused to stop.</param>
     /// <param name="label">Volume label to give the card (the factory card's), or null to leave it.</param>
+    /// <param name="cardRoot">The factory card's other root items (the copy's card_root/ folder), written
+    /// to the card's root next to navigation/; null for none.</param>
     public static WriteResult Write(string source, DriveSnapshot target, Func<GuardResult> gate, string? label,
-        IProgress<WriteProgress>? progress = null, CancellationToken ct = default)
+        IProgress<WriteProgress>? progress = null, CancellationToken ct = default, string? cardRoot = null)
     {
         progress?.Report(new WriteProgress(WritePhase.Checking, 0, 0, 0, 0));
         var check = gate();
@@ -51,36 +56,46 @@ public static partial class CardWriter
         if (!Directory.Exists(source))
             throw new WriteException($"The built maps folder is missing: {source}");
 
-        var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)
-            .Select(f => (path: f, rel: Path.GetRelativePath(source, f), size: new FileInfo(f).Length))
-            .OrderBy(f => f.rel, StringComparer.OrdinalIgnoreCase).ToList();
-        var dirs = Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories)
-            .Select(d => Path.GetRelativePath(source, d)).OrderBy(d => d.Length).ToList();
-        long total = files.Sum(f => f.size);
+        if (cardRoot is not null && !Directory.Exists(cardRoot))
+            throw new WriteException($"The factory card's other folders are missing from the copy: {cardRoot}");
 
         var partial = Path.Combine(root, PartialName);
+        var rootPartial = Path.Combine(root, RootPartialName);
         var final = Path.Combine(root, FolderName);
-        // Only reachable for an empty card or one OpenLion wrote before (CardGuard): old maps go.
-        if (Directory.Exists(partial))
-            Directory.Delete(partial, true);
-        if (Directory.Exists(final))
-            Directory.Delete(final, true);
+        var files = Files(source, partial, FolderName);
+        var dirs = Dirs(source, partial);
+        var extras = cardRoot is null ? [] : Directory.EnumerateFileSystemEntries(cardRoot).Select(Path.GetFileName).OfType<string>().ToList();
+        if (cardRoot is not null)
+        {
+            files.AddRange(Files(cardRoot, rootPartial, null));
+            dirs.AddRange(Dirs(cardRoot, rootPartial));
+        }
+        long total = files.Sum(f => f.size);
+
+        // Only reachable for an empty card, one OpenLion wrote before, or one whose files the user
+        // agreed to lose (CardGuard): old maps and old copies of the root items go.
+        foreach (var d in new[] { partial, rootPartial, final })
+            if (Directory.Exists(d))
+                Directory.Delete(d, true);
+        foreach (var name in extras)
+            DeleteItem(Path.Combine(root, name));
         long free = new DriveInfo(root).AvailableFreeSpace;
         if (free < total + SpaceMargin)
             throw new WriteException($"Not enough space on the card: {total / 1e6:N0} MB needed, {free / 1e6:N0} MB free.");
 
         // 1. write
         Directory.CreateDirectory(partial);
-        foreach (var d in dirs)
-            Directory.CreateDirectory(Path.Combine(partial, d));
+        if (cardRoot is not null)
+            Directory.CreateDirectory(rootPartial);
+        foreach (var (_, d) in dirs)
+            Directory.CreateDirectory(d);
         var hashes = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         var buf = new byte[Block];
         long done = 0;
         int n = 0;
-        foreach (var (path, rel, _) in files)
+        foreach (var (path, dst, rel, _) in files)
         {
             ct.ThrowIfCancellationRequested();
-            var dst = Path.Combine(partial, rel);
             using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
             {
                 using (var i = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, Block, FileOptions.SequentialScan))
@@ -104,16 +119,15 @@ public static partial class CardWriter
             n++;
             progress?.Report(new WriteProgress(WritePhase.Writing, n, files.Count, done, total));
         }
-        foreach (var d in dirs.OrderByDescending(d => d.Length))
-            Directory.SetLastWriteTimeUtc(Path.Combine(partial, d), Directory.GetLastWriteTimeUtc(Path.Combine(source, d)));
+        foreach (var (src, d) in dirs.OrderByDescending(d => d.dst.Length))
+            Directory.SetLastWriteTimeUtc(d, Directory.GetLastWriteTimeUtc(src));
 
         // 2. read every file back from the card and compare
         done = 0;
         n = 0;
-        foreach (var (_, rel, size) in files)
+        foreach (var (_, dst, rel, size) in files)
         {
             ct.ThrowIfCancellationRequested();
-            var dst = Path.Combine(partial, rel);
             var len = new FileInfo(dst).Length;
             if (len != size)
                 throw new WriteException($"{rel} has the wrong size on the card ({len:N0} instead of {size:N0} bytes).");
@@ -129,6 +143,22 @@ public static partial class CardWriter
         progress?.Report(new WriteProgress(WritePhase.Finishing, files.Count, files.Count, total, total));
         Directory.Move(partial, final);
         Directory.SetLastWriteTimeUtc(final, Directory.GetLastWriteTimeUtc(source));
+        if (cardRoot is not null)
+        {
+            foreach (var name in extras)
+            {
+                var from = Path.Combine(rootPartial, name);
+                var to = Path.Combine(root, name);
+                if (Directory.Exists(from))
+                {
+                    Directory.Move(from, to);
+                    Directory.SetLastWriteTimeUtc(to, Directory.GetLastWriteTimeUtc(Path.Combine(cardRoot, name)));
+                }
+                else
+                    File.Move(from, to);
+            }
+            Directory.Delete(rootPartial);
+        }
         string? labelWarning = null;
         if (label is not null && !string.Equals(new DriveInfo(root).VolumeLabel, label, StringComparison.Ordinal))
         {
@@ -137,6 +167,32 @@ public static partial class CardWriter
                                "This is unlikely to matter.";
         }
         return new WriteResult(final, files.Count, total, target.VolumeSerial, labelWarning);
+    }
+
+    /// <summary>Every file under folder and where it goes under dest. rel is its path on the card
+    /// (navigation\db_aunz\... or config\create_cd), for messages and the hash table.</summary>
+    static List<(string path, string dst, string rel, long size)> Files(string folder, string dest, string? prefix) =>
+        Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+            .Select(f => (f, r: Path.GetRelativePath(folder, f)))
+            .Select(x => (path: x.f, dst: Path.Combine(dest, x.r), rel: prefix is null ? x.r : Path.Combine(prefix, x.r),
+                          size: new FileInfo(x.f).Length))
+            .OrderBy(f => f.rel, StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>Every folder under folder (empty ones too) and where it goes under dest.</summary>
+    static List<(string src, string dst)> Dirs(string folder, string dest) =>
+        Directory.EnumerateDirectories(folder, "*", SearchOption.AllDirectories)
+            .Select(d => (src: d, dst: Path.Combine(dest, Path.GetRelativePath(folder, d))))
+            .OrderBy(d => d.dst.Length).ToList();
+
+    static void DeleteItem(string path)
+    {
+        if (Directory.Exists(path))
+            Directory.Delete(path, true);
+        else if (File.Exists(path))
+        {
+            File.SetAttributes(path, FileAttributes.Normal);
+            File.Delete(path);
+        }
     }
 
     static bool SameVolume(DriveSnapshot a, DriveSnapshot b) =>

@@ -124,9 +124,11 @@ public sealed class FactoryCardStep : StepViewModel
     public event Action? SkipCopyRequested;
     public System.Windows.Input.ICommand UseSavedCopyCommand { get; }
 
-    /// <summary>A verified copy of a factory card from an earlier run is still on this PC.</summary>
+    /// <summary>A verified copy of a factory card from an earlier run is still on this PC, made by
+    /// OpenLion 1.3 or later (older copies left out the card's config/ and other root folders).</summary>
     public bool HasSavedCopy => _session.State.Factory is { CopyVerified: true } &&
-                                _session.State.FactoryCopyPath is { } p && Directory.Exists(Path.Combine(p, "navigation"));
+                                _session.State.FactoryCopyPath is { } p && Directory.Exists(Path.Combine(p, "navigation")) &&
+                                CardCopier.CardRootOf(p) is not null;
     public string SavedCopyText => _session.State.Factory is { } f
         ? $"{CardNames.Display(f.CardVersion) ?? "Factory card"}{(f.Label.Length > 0 ? $" (label {f.Label})" : "")}, {f.TotalBytes / 1e9:N1} GB card, copied and checked."
         : "";

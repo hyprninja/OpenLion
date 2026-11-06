@@ -91,6 +91,57 @@ public class CardWriterTests
     }
 
     [Fact]
+    public void WritesTheFactoryCardsOtherRootItems()
+    {
+        var (t, src, card) = Setup();
+        using (t)
+        {
+            t.File("copy/card_root/Config/create_cd", "mkdir navigation", Stamp.ToLocalTime());
+            Directory.CreateDirectory(t.Sub("copy", "card_root", "Config", "empty"));
+            t.File("copy/card_root/SW version.txt", "SW 1.2");
+            var r = CardWriter.Write(src, card, Allow(card), null, cardRoot: t.Sub("copy", "card_root"));
+
+            Assert.Equal(5, r.Files);
+            Assert.Equal("mkdir navigation", File.ReadAllText(t.Sub("card", "Config", "create_cd")));
+            Assert.Equal(Stamp, File.GetLastWriteTimeUtc(t.Sub("card", "Config", "create_cd")));
+            Assert.True(Directory.Exists(t.Sub("card", "Config", "empty")));
+            Assert.Equal("SW 1.2", File.ReadAllText(t.Sub("card", "SW version.txt")));
+            Assert.True(File.Exists(t.Sub("card", "navigation", "cdrom.txt")));
+            Assert.False(Directory.Exists(t.Sub("card", "openlion.partial")));
+            Assert.Equal(["Config", "navigation", "SW version.txt"],
+                Directory.EnumerateFileSystemEntries(t.Sub("card")).Select(Path.GetFileName).Order(StringComparer.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public void RewriteReplacesTheOldRootItems()
+    {
+        var (t, src, card) = Setup();
+        using (t)
+        {
+            t.File("copy/card_root/Config/create_cd", "new");
+            t.File("card/Config/create_cd", "old");
+            t.File("card/Config/stale.txt", "old");
+            t.File("card/openlion.partial/half.bin", "from a stopped write");
+            CardWriter.Write(src, card, Allow(card), null, cardRoot: t.Sub("copy", "card_root"));
+            Assert.Equal("new", File.ReadAllText(t.Sub("card", "Config", "create_cd")));
+            Assert.False(File.Exists(t.Sub("card", "Config", "stale.txt")));
+            Assert.False(Directory.Exists(t.Sub("card", "openlion.partial")));
+        }
+    }
+
+    [Fact]
+    public void MissingCardRootIsReported()
+    {
+        var (t, src, card) = Setup();
+        using (t)
+        {
+            Assert.Throws<WriteException>(() => CardWriter.Write(src, card, Allow(card), null, cardRoot: t.Sub("nope")));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(t.Sub("card")));
+        }
+    }
+
+    [Fact]
     public void CancelledWriteNeverLooksFinished()
     {
         var (t, src, card) = Setup();
