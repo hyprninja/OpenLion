@@ -4,7 +4,7 @@ The car warns about fixed speed and red-light cameras from the POI database (`ed
 
 ## How the factory cards store cameras
 
-Cameras are ordinary POIs in the category named **camera**, under the parent category **road sense**. The category's ID differs per card: 55 on MY12, 65 on MY15 and MY17, 59 on MY10. The builder finds it by name (`osm_poi.camera_partition`).
+Cameras are ordinary POIs in the category named **camera**, under the parent category **road sense**. The category's ID differs per card: 55 on MY12, 65 on MY15 and MY17, 59 on MY10. The builder writes cameras under MY12's number (55) like every other POI, and `osm_poi.build` maps it to the card's own "camera" category by name.
 
 | Table | Camera rows |
 |---|---|

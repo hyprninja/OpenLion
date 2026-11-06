@@ -142,9 +142,9 @@ class PoiRows(unittest.TestCase):
                 CREATE TABLE Poi_AlertAttributes (Poi_ID integer primary key, SpeedLimit integer, Direction integer, TimeStamp text, CameraType integer, FixtureStatus integer, SeverityRating integer);
                 CREATE TABLE Poi_Relation (Poi_ID integer, RelationType integer, Related_Poi_ID integer);
                 CREATE TABLE Poi_VSegAttributes (Poi_ID integer primary key, VSeg_ID integer, Direction integer);
-                INSERT INTO String_BaseAttributes VALUES (7, 'restaurant'), (9, 'camera');
-                INSERT INTO Category_BaseAttributes VALUES (4, 7, 1), (55, 9, 1);
-                INSERT INTO PoiPartition_Category_Relation VALUES (4, 4), (55, 55);
+                INSERT INTO String_BaseAttributes VALUES (1, 'restaurant'), (2, 'camera');
+                INSERT INTO Category_BaseAttributes VALUES (4, 1, 1), (65, 2, 1);
+                INSERT INTO PoiPartition_Category_Relation VALUES (4, 4), (65, 65);
             """)
             con.commit()
             con.close()
@@ -159,8 +159,9 @@ class PoiRows(unittest.TestCase):
                                "order by b.PoiPartition_ID").fetchall()
             con.close()
         self.assertEqual(st["cameras"], 1)
+        # the card numbers "camera" 65 (as MY15/MY17 do): the row goes there, not to 55
         self.assertEqual(rows, [(4, "CAFE", None, None, None, None, None),
-                                (55, "Camera", 110, 180, "06-NOV-26", 1, 1)])
+                                (65, "Camera", 110, 180, "06-NOV-26", 1, 1)])
 
 
 if __name__ == "__main__":

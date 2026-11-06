@@ -120,7 +120,9 @@ CATEGORY_NAMES = {
     53: "consumer electronic store", 60: "public restroom", 61: "convenience store",
     62: "government office", 65: "department store", 66: "office supply store", 67: "campground",
     68: "book store", 69: "clothing store", 70: "sporting goods store",
+    55: "camera",                     # speed cameras (cameras.py), not from RULES
 }
+CAMERA_CAT = 55
 
 
 # road-sense alert categories (left empty by OSM builds)
@@ -263,19 +265,6 @@ def read(pbf_path, bbox=None, node_index="flex_mem"):
 CAMERA_NAME = "Camera"           # factory POI name of every camera
 
 
-def camera_partition(factory_db):
-    """The PoiPartition_ID of the card's "camera" category (55 on MY12, 65 on MY15/MY17)."""
-    con = sqlite3.connect(f"file:{factory_db}?mode=ro", uri=True)
-    try:
-        row = con.execute(
-            "select p.PoiPartition_ID from PoiPartition_Category_Relation p "
-            "join Category_BaseAttributes c on c.Category_ID = p.Category_ID "
-            "join String_BaseAttributes s on s.String_ID = c.Name_String_ID where lower(s.Value) = 'camera'").fetchone()
-    finally:
-        con.close()
-    return row[0] if row else None
-
-
 def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, places=(), cameras=(), today=None):
     """Write out_path: the factory POI database with its POIs replaced by `pois`.
     areas / places: osm_names.read_boundaries() / read_places() output, for the city /
@@ -307,10 +296,7 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
             continue
         seen.add(key)
         rows.append((morton(x, y), cat, x, y, name, tags))
-    cam_part = camera_partition(factory_db) if cameras else None
-    if cameras and cam_part is None:
-        stats["skipped: cameras, no camera category on this card"] += len(cameras)
-    elif cameras:
+    if cameras:
         from . import countries as _c
         for cam in cameras:
             x, y = cam["x"], cam["y"]
@@ -319,7 +305,7 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
                 continue
             tags = {"addr:street": cam.get("road"), "_camera": cam,
                     COUNTRY_TAG: _c.NZ.catalog if cam.get("state") == "NZ" else _c.AU.catalog}
-            rows.append((morton(x, y), cam_part, x, y, CAMERA_NAME, tags))
+            rows.append((morton(x, y), CAMERA_CAT, x, y, CAMERA_NAME, tags))
     stamp = (today or datetime.date.today()).strftime("%d-%b-%y").upper()
     rows.sort(key=lambda r: r[:5])
 
