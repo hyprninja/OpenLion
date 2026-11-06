@@ -515,6 +515,10 @@
                 <StackPanel DockPanel.Dock="Top">
                     <TextBlock Style="{StaticResource H1}" Text="Write the new card"/>
                     <TextBlock Style="{StaticResource Body}" Text="{Binding BuildText}" FontWeight="SemiBold"/>
+                    <Border Style="{StaticResource Card}" Visibility="{Binding OldCopy, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource Body}" Margin="0" Foreground="{StaticResource Accent}"
+                                   Text="{Binding OldCopyText}"/>
+                    </Border>
                     <StackPanel Visibility="{Binding IsChoosing, Converter={StaticResource BoolToVis}}">
                         <TextBlock Style="{StaticResource Body}">
                             Remove the factory card and put it somewhere safe. Then insert a blank FAT32 SD card.

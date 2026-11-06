@@ -81,7 +81,16 @@ public sealed class WriteCardStep : StepViewModel
         ? $"Ready to write: {b.Files:N0} files, {b.Bytes / 1e6:N0} MB{(b.Partial ? ". This is a TEST build of a small area only." : ".")}"
         : "There are no built maps yet. Go back to Build maps first.";
 
-    bool CanWrite => IsChoosing && HasBuild && Selected is { Allowed: true } s &&
+    /// <summary>The factory copy's other root items (config/ ...), or null for a copy made before
+    /// OpenLion 1.3, which didn't keep them. The car may not accept a card without them.</summary>
+    string? CardRoot => CardCopier.CardRootOf(_session.State.FactoryCopyPath);
+    public bool OldCopy => HasBuild && CardRoot is null;
+    public string OldCopyText =>
+        "Your copy of the factory card was made with an older version of OpenLion, which only kept its " +
+        "navigation folder. The car also needs the card's other folders (such as config), so please go back to " +
+        "Copy your card and copy the factory card again. You won't need to build the maps again.";
+
+    bool CanWrite => IsChoosing && HasBuild && !OldCopy && Selected is { Allowed: true } s &&
                      string.Equals(ConfirmLetter.Trim().TrimEnd(':'), s.Letter, StringComparison.OrdinalIgnoreCase);
 
     public override bool CanGoNext => false;
@@ -115,6 +124,8 @@ public sealed class WriteCardStep : StepViewModel
     {
         Raise(nameof(HasBuild));
         Raise(nameof(BuildText));
+        Raise(nameof(OldCopy));
+        CommandManager.InvalidateRequerySuggested();
         if (IsChoosing)
             _poller.Start();
     }
@@ -127,7 +138,7 @@ public sealed class WriteCardStep : StepViewModel
 
     async Task WriteAsync()
     {
-        if (!CanWrite || _session.Build is not { } build || Selected is not { } choice)
+        if (!CanWrite || _session.Build is not { } build || Selected is not { } choice || CardRoot is not { } cardRoot)
             return;
         _poller.Stop();
         _cts = new CancellationTokenSource();
@@ -167,10 +178,10 @@ public sealed class WriteCardStep : StepViewModel
             return r;
         }
         var label = _session.FactoryRecord?.Label;
-        AppLog.Write($"write: {build.NavigationPath} -> {target} (serial {target.VolumeSerial:X8}), label '{label}'");
+        AppLog.Write($"write: {build.NavigationPath} and {cardRoot} -> {target} (serial {target.VolumeSerial:X8}), label '{label}'");
         try
         {
-            var result = await Task.Run(() => CardWriter.Write(build.NavigationPath, target, Gate, label, progress, _cts.Token));
+            var result = await Task.Run(() => CardWriter.Write(build.NavigationPath, target, Gate, label, progress, _cts.Token, cardRoot));
             if (!_session.State.WrittenVolumeSerials.Contains(result.VolumeSerial))
                 _session.State.WrittenVolumeSerials.Add(result.VolumeSerial);
             _session.State.Save();

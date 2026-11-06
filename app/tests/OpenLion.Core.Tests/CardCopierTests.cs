@@ -88,6 +88,49 @@ public class CardCopierTests
     }
 
     [Fact]
+    public void CopiesTheCardsOtherRootItems()
+    {
+        using var t = FakeCard();
+        t.File("card/Config/create_cd", "mkdir navigation", Factory);   // as on the MY17 card
+        t.File("card/SW version.txt", "SW 1.2");
+        Directory.CreateDirectory(t.Sub("card", "Config", "empty"));
+        t.File("card/System Volume Information/IndexerVolumeGuid", "windows");
+        t.File("card/._navigation", "macOS");
+        var r = CardCopier.Copy(t.Sub("card"), t.Sub("copy"), null, default, allowSameDrive: true);
+
+        Assert.Equal(4, r.Manifest.Count);                               // navigation/ only, as before
+        Assert.Equal(["Config/create_cd", "SW version.txt"], r.CardRootManifest.Select(e => e.Path).Order(StringComparer.Ordinal));
+        Assert.Equal("mkdir navigation", File.ReadAllText(Path.Combine(r.CardRootPath, "Config", "create_cd")));
+        Assert.Equal(Factory, File.GetLastWriteTime(Path.Combine(r.CardRootPath, "Config", "create_cd")));
+        Assert.True(Directory.Exists(Path.Combine(r.CardRootPath, "Config", "empty")));
+        Assert.False(Directory.Exists(Path.Combine(r.CardRootPath, "System Volume Information")));
+        Assert.False(File.Exists(Path.Combine(r.CardRootPath, "._navigation")));
+        Assert.False(Directory.Exists(Path.Combine(r.CardRootPath, "navigation")));
+        Assert.Equal(r.CardRootManifest.OrderBy(e => e.Path, StringComparer.Ordinal),
+            FileManifest.Read(Path.Combine(r.CopyRoot, CardCopier.CardRootManifestName)));
+        Assert.Equal(r.CardRootPath, CardCopier.CardRootOf(r.CopyRoot));
+    }
+
+    [Fact]
+    public void CardWithNothingElseStillMarksTheCopy()
+    {
+        using var t = FakeCard();
+        var r = CardCopier.Copy(t.Sub("card"), t.Sub("copy"), null, default, allowSameDrive: true);
+        Assert.Empty(r.CardRootManifest);
+        Assert.Equal(r.CardRootPath, CardCopier.CardRootOf(r.CopyRoot));
+    }
+
+    [Fact]
+    public void CopyFromAnOlderVersionHasNoCardRoot()
+    {
+        using var t = new TempDir();
+        t.File("copy/navigation/cdrom.txt", "Volume: CD_TEST");
+        t.File("copy/manifest.tsv", "");
+        Assert.Null(CardCopier.CardRootOf(t.Sub("copy")));
+        Assert.Null(CardCopier.CardRootOf(null));
+    }
+
+    [Fact]
     public void ReportsProgressToTheEnd()
     {
         using var t = FakeCard();
