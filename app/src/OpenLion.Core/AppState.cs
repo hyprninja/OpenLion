@@ -91,6 +91,15 @@ public sealed class AppState
 {
     public FactoryCardRecord? Factory { get; set; }
     public string? FactoryCopyPath { get; set; }
+
+    /// <summary>The factory card copied in an earlier run, when its verified copy is still on this PC
+    /// and was made by OpenLion 1.3 or later (older copies left out config/ and the card's other
+    /// root folders); otherwise null.</summary>
+    public FactoryCardRecord? UsableFactoryCopy() =>
+        Factory is { CopyVerified: true } f && FactoryCopyPath is { } p &&
+        Directory.Exists(Path.Combine(p, "navigation")) && Cards.CardCopier.CardRootOf(p) is not null
+            ? f
+            : null;
     public List<uint> WrittenVolumeSerials { get; set; } = [];
     /// <summary>The last finished map build, if any.</summary>
     public BuildRecord? Build { get; set; }

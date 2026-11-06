@@ -149,6 +149,7 @@ public sealed class CopyCardStep : StepViewModel
         catch (OperationCanceledException)
         {
             AppLog.Write("copy step cancelled");
+            _session.UseSavedFactoryCopy(); // the copy from an earlier run is untouched
             Phase = CopyPhase.Cancelled;
             Status = "Stopped. Press Try again to start over.";
             Detail = "";
@@ -163,6 +164,7 @@ public sealed class CopyCardStep : StepViewModel
         CompatResult? compat, Exception? e)
     {
         AppLog.Write($"{step} failed: {message}{(e is null ? "" : Environment.NewLine + e)}");
+        _session.UseSavedFactoryCopy();
         Phase = CopyPhase.Failed;
         Status = message;
         Detail = "";
