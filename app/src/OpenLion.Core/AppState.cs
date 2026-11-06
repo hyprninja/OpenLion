@@ -35,6 +35,8 @@ public static class AppPaths
     /// <summary>One folder per state's prepared speed zones (speed/vic, ...).</summary>
     public static string SpeedZonesFolderFor(Speed.SpeedZoneSource s) =>
         Path.Combine(Root, "speed", s.Code.ToLowerInvariant());
+    /// <summary>Official speed camera lists, downloaded by the engine at each build (VIC.json, ...).</summary>
+    public static string CamerasFolder => Path.Combine(Root, "cameras");
     /// <summary>Engine working folder: cached OSM reads and the new map tables.</summary>
     public static string BuildWorkFolder => Path.Combine(Root, "build", "work");
     /// <summary>The finished navigation/ folder that gets written to the new card.</summary>
@@ -52,8 +54,9 @@ public static class AppPaths
 /// <summary>A finished build: which factory card and OSM extracts it came from.</summary>
 /// <param name="OsmFileName">The extract's file name; several countries' names joined by "+"
 /// (see <see cref="OsmKey"/>).</param>
+/// <param name="CameraNote">What the build said about its speed camera sources (SpeedCameras.Describe).</param>
 public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial, string OsmFileName, DateOnly? OsmDate,
-    int Files, long Bytes, DateTime BuiltUtc, bool Partial)
+    int Files, long Bytes, DateTime BuiltUtc, bool Partial, string? CameraNote = null)
 {
     /// <summary>What a build is keyed on: the extracts' file names in country order. One
     /// Australian extract gives its plain file name, as OpenLion 1.0 stored it.</summary>

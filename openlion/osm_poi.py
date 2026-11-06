@@ -16,12 +16,15 @@ strings are replaced:
 Coordinate = Morton code: bit 2k is bit k of x, bit 2k+1 is bit k of y, with
 x = (lon + 180) * 2^32 / 360 and y = (lat + 180) * 2^32 / 360.
 
-The road-sense categories (school zone, camera, blackspot, railway crossing, check
-speed, school point) are left empty: their direction and camera fields aren't
-decoded well enough to warn correctly. The factory link/entry points (categories 82,
-83) and POI relations aren't rebuilt either.
+Speed cameras (cameras.py, report 23) go in the "camera" category, found by name since
+its ID differs per card: one POI per enforced direction, with Poi_AlertAttributes
+SpeedLimit, Direction (travel heading), TimeStamp ('06-NOV-26'), CameraType and
+FixtureStatus 1, as on the factory cards. The other road-sense categories (school zone,
+blackspot, railway crossing, check speed, school point) are left empty. The factory
+link/entry points (categories 82, 83) and POI relations aren't rebuilt.
 """
 import collections
+import datetime
 import os
 import re
 import shutil
@@ -209,11 +212,28 @@ def read(pbf_path, bbox=None, node_index="flex_mem"):
     return out
 
 
-def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, places=()):
+CAMERA_NAME = "Camera"           # factory POI name of every camera
+
+
+def camera_partition(factory_db):
+    """The PoiPartition_ID of the card's "camera" category (55 on MY12, 65 on MY15/MY17)."""
+    con = sqlite3.connect(f"file:{factory_db}?mode=ro", uri=True)
+    try:
+        row = con.execute(
+            "select p.PoiPartition_ID from PoiPartition_Category_Relation p "
+            "join Category_BaseAttributes c on c.Category_ID = p.Category_ID "
+            "join String_BaseAttributes s on s.String_ID = c.Name_String_ID where lower(s.Value) = 'camera'").fetchone()
+    finally:
+        con.close()
+    return row[0] if row else None
+
+
+def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, places=(), cameras=(), today=None):
     """Write out_path: the factory POI database with its POIs replaced by `pois`.
     areas / places: osm_names.read_boundaries() / read_places() output, for the city /
     state of each POI. A POI's country is the catalog in tags[COUNTRY_TAG] (default 0).
-    bbox: map extent (deg * 1e5); POIs outside it (e.g. Heard Island) are left out."""
+    bbox: map extent (deg * 1e5); POIs outside it (e.g. Heard Island) are left out.
+    cameras: cameras.place() output, written to the card's camera category."""
     from . import countries, osm_names
     stats = collections.Counter()
     loc_idx = st_idx = None
@@ -239,7 +259,21 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
             continue
         seen.add(key)
         rows.append((morton(x, y), cat, x, y, name, tags))
-    rows.sort()
+    cam_part = camera_partition(factory_db) if cameras else None
+    if cameras and cam_part is None:
+        stats["skipped: cameras, no camera category on this card"] += len(cameras)
+    elif cameras:
+        from . import countries as _c
+        for cam in cameras:
+            x, y = cam["x"], cam["y"]
+            if bbox and not (bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3]):
+                stats["skipped: camera outside the map"] += 1
+                continue
+            tags = {"addr:street": cam.get("road"), "_camera": cam,
+                    COUNTRY_TAG: _c.NZ.catalog if cam.get("state") == "NZ" else _c.AU.catalog}
+            rows.append((morton(x, y), cam_part, x, y, CAMERA_NAME, tags))
+    stamp = (today or datetime.date.today()).strftime("%d-%b-%y").upper()
+    rows.sort(key=lambda r: r[:5])
 
     tmp = out_path + ".tmp"
     if os.path.exists(tmp):
@@ -288,7 +322,12 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
         base.append((pid, cat, code, sid(name), name, p_raw))
         addr.append((pid, sid(text(tags.get("addr:housenumber"), 20)), sid(text(tags.get("addr:street"))), None,
                      sid(city), sid(region), sid(country.name), None, sid(p_pretty)))
-        alert.append((pid, None, None, None, None, None, None))
+        cam = tags.get("_camera")
+        if cam is not None:
+            alert.append((pid, cam.get("speed"), cam.get("heading"), stamp, cam["type"], 1, None))
+            stats["cameras"] += 1
+        else:
+            alert.append((pid, None, None, None, None, None, None))
         stats[f"category {cat}"] += 1
     cur.executemany("insert into String_BaseAttributes (String_ID, Value) values (?, ?)",
                     [(i, s) for s, i in strings.items()])

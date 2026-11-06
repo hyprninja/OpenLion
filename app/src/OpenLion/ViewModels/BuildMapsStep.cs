@@ -7,6 +7,7 @@ using OpenLion.Core;
 using OpenLion.Core.Engine;
 using OpenLion.Core.Osm;
 using OpenLion.Core.Reports;
+using OpenLion.Core.Speed;
 
 namespace OpenLion.ViewModels;
 
@@ -34,7 +35,7 @@ public sealed class BuildMapsStep : StepViewModel
     BuildProgress? _progress;
     BuildPhase _phase;
     double _percent;
-    string _status = "", _detail = "", _elapsed = "", _summary = "", _intro = "", _warning = "";
+    string _status = "", _detail = "", _elapsed = "", _summary = "", _intro = "", _warning = "", _cameraNote = "";
     string? _reportPath;
 
     public BuildMapsStep(Session session) : base("Build maps")
@@ -86,6 +87,9 @@ public sealed class BuildMapsStep : StepViewModel
     /// <summary>Low memory / disk space, or a test-area build.</summary>
     public string Warning { get => _warning; private set { if (Set(ref _warning, value)) Raise(nameof(HasWarning)); } }
     public bool HasWarning => Warning.Length > 0;
+    /// <summary>Which states' speed cameras are official and up to date, and which get OSM's guess.</summary>
+    public string CameraNote { get => _cameraNote; private set { if (Set(ref _cameraNote, value)) Raise(nameof(HasCameraNote)); } }
+    public bool HasCameraNote => CameraNote.Length > 0;
     public string? ReportPath { get => _reportPath; private set => Set(ref _reportPath, value); }
 
     public override bool CanGoNext => Phase == BuildPhase.Done;
@@ -109,11 +113,13 @@ public sealed class BuildMapsStep : StepViewModel
             Status = $"Maps are ready: built {build.BuiltUtc.ToLocalTime():d MMMM 'at' h:mm tt} from {_session.DescribeOsm()}{SpeedNote}.";
             Detail = $"{build.Files:N0} files, {build.Bytes / 1e6:N0} MB, checked.";
             Warning = build.Partial ? $"This is a TEST build of a small area only, not all of {Places}." : "";
+            CameraNote = build.CameraNote ?? "";
             Phase = BuildPhase.Done;
             return;
         }
         _session.Build = null;
         Status = Detail = "";
+        CameraNote = SpeedCameras.Preview(_session.Countries);
         Phase = BuildPhase.Ready;
         Intro = osm is null ? "" :
             $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}{SpeedNote}, using your factory card's copy. " +
@@ -205,6 +211,7 @@ public sealed class BuildMapsStep : StepViewModel
         Percent = 0;
         Status = "Starting the map engine…";
         Detail = "";
+        CameraNote = "";
         Warning = CheckResources();
         Phase = BuildPhase.Building;
         _clock.Restart();
@@ -231,7 +238,7 @@ public sealed class BuildMapsStep : StepViewModel
             var extracts = _session.Countries.Zip(osm, (c, e) => (c.Code, e.Path)).ToList();
             var zones = _session.SpeedZones.Select(z => z.Path).ToList();
             var req = new BuildRequest(extracts, nav, FactoryManifest is { } m && File.Exists(m) ? m : null,
-                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, zones);
+                AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, zones, AppPaths.CamerasFolder);
             AppLog.Write($"build: engine {engine.Python} ({(engine.Bundled ? "bundled" : "dev")}), " +
                          $"extracts {string.Join(", ", extracts.Select(x => $"{x.Code}={x.Path}"))}, " +
                          $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}" +
@@ -245,7 +252,13 @@ public sealed class BuildMapsStep : StepViewModel
                 AppLog.Write($"build: stage {p.Stage.Id} at {_clock.Elapsed:hh\\:mm\\:ss}");
                 Tick();
             });
-            result = await MapBuild.RunAsync(engine, req, progress, ct);
+            var cameras = new Progress<IReadOnlyList<CameraState>>(states =>
+            {
+                CameraNote = SpeedCameras.Describe(states);
+                AppLog.Write("build: speed cameras " + string.Join(", ", states.Select(s =>
+                    $"{s.Code} {s.Source}{(s.Cameras is { } n ? " " + n : "")}{(s.DownloadFailed ? " (download failed)" : "")}")));
+            });
+            result = await MapBuild.RunAsync(engine, req, progress, ct, cameras);
             AppLog.Write($"build: ok={result.Ok}, exit {result.ExitCode}, {result.Files} files, {result.Bytes} bytes, " +
                          $"error {result.Error}");
             if (!result.Ok)
@@ -254,7 +267,9 @@ public sealed class BuildMapsStep : StepViewModel
                 return;
             }
             var record = new BuildRecord(result.CardPath ?? AppPaths.BuildOutput, _session.FactoryRecord?.VolumeSerial ?? 0,
-                BuildRecord.Key(osm, _session.SpeedZones), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null);
+                BuildRecord.Key(osm, _session.SpeedZones), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null,
+                result.Cameras.Count > 0 ? SpeedCameras.Describe(result.Cameras) : null);
+            CameraNote = record.CameraNote ?? "";
             _session.State.Build = record;
             _session.State.Save();
             _session.Build = record;

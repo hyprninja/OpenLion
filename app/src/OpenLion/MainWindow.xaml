@@ -371,6 +371,15 @@
                         <TextBlock Style="{StaticResource Body}" Text="{Binding Intro}"/>
                     </StackPanel>
 
+                    <!-- Speed camera sources: before, during and after the build -->
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Muted}" BorderThickness="1"
+                            Visibility="{Binding HasCameraNote, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold" Text="Speed cameras"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding CameraNote}" Margin="0"/>
+                        </StackPanel>
+                    </Border>
+
                     <Border Style="{StaticResource Card}" BorderBrush="#C9A227" BorderThickness="2"
                             Visibility="{Binding HasWarning, Converter={StaticResource BoolToVis}}">
                         <TextBlock Style="{StaticResource Body}" Text="{Binding Warning}" Margin="0"/>

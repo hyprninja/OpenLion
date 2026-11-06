@@ -15,6 +15,7 @@ import argparse
 import collections
 import gc
 import hashlib
+import json
 import os
 import pickle
 import struct
@@ -23,7 +24,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import (countries, flat, gov_speed, graph, layers, mapfile, memory, osm_fea, osm_import,  # noqa: E402
+from openlion import (cameras, countries, flat, gov_speed, graph, layers, mapfile, memory, osm_fea, osm_import,  # noqa: E402
                       osm_names, osm_poi, resources, roads, schema, search, tiler)
 from openlion.common import DamagedTable, build_header  # noqa: E402
 
@@ -116,9 +117,10 @@ def inputs_of(pbf):
     return sorted(out, key=lambda cp: cp[0].catalog)
 
 
-def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed_zones=()):
+def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed_zones=(), gov_cameras=()):
     """pbf: one Australian extract, or [(Country, path)] (see inputs_of).
     speed_zones: government speed zone files (gov_speed.py) that fill in limits OSM lacks.
+    gov_cameras: government camera lists (gov_cameras.py); other states get OSM's cameras.
     stage: optional callback, called with a name from STAGES as each stage starts.
     memory_mode: "low", "high" or None (decide from free RAM; see resources.py)."""
     os.makedirs(os.path.join(out, "db"), exist_ok=True)
@@ -138,7 +140,7 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed
             app_stage(name)
 
     try:
-        return _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones)
+        return _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones, gov_cameras)
     finally:
         sampler.stop()
         log("peak memory per step: " + ", ".join(f"{k} {memory.gb(v)}" for k, v in sampler.peaks().items()))
@@ -147,7 +149,7 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed
 
 # OSM reads, each cached per country as <name>_<CODE>.pickle. Bump a name when the
 # reader's output format changes so stale caches are never loaded.
-READS = ("roads2", "boundaries3", "places3", "fea2", "pois2")
+READS = ("roads2", "boundaries3", "places3", "fea2", "pois2", "cams1")
 CACHES = READS + ("overview2",)      # overview2: written alongside roads2
 
 
@@ -166,6 +168,8 @@ def _read(name, code, path, region, node_index):
         return osm_fea.read(path, region, node_index=node_index)
     if name == "pois2":
         return osm_poi.read(path, region, node_index=node_index)
+    if name == "cams1":
+        return cameras.read_osm(path, region)
     raise ValueError(name)
 
 
@@ -219,9 +223,10 @@ def _remove(path, tries=20):
 class _Ctx:
     """What a stage process needs to know (picklable)."""
 
-    def __init__(self, inputs, db, out, region, plan, lookups, speed_zones=()):
+    def __init__(self, inputs, db, out, region, plan, lookups, speed_zones=(), gov_cameras=()):
         self.inputs = [(cn.code, p) for cn, p in inputs]
         self.speed_zones = list(speed_zones)
+        self.gov_cameras = list(gov_cameras)
         self.db, self.out, self.region, self.plan, self.lookups = db, out, region, plan, list(lookups)
         self.poi_box = None      # set from the roads stage's message before the POI stage starts
 
@@ -306,6 +311,7 @@ def _roads_stage(ctx, stage, q):
         log("speed zones: " + ", ".join(f"{os.path.basename(p)} ({len(z.speeds):,} lines)"
                                         for p, z in zip(ctx.speed_zones, zones)))
         fill = gov_speed.first_of(zones)
+    _place_cameras(ctx, c)
     stage("graph")
     g, si, st = osm_import.build_graph(c, consume=True, speed_fill=fill)
     del fill
@@ -376,6 +382,28 @@ def _roads_stage(ctx, stage, q):
         del gk, dk
 
 
+CAMERAS_FILE = "cameras.pickle"
+CAMERAS_REPORT = "cameras_report.json"
+
+
+def _place_cameras(ctx, c):
+    """Speed cameras (cameras.py) for the POI stage, while the roads are still loaded:
+    each camera is snapped onto its road for heading and speed limit."""
+    areas = []
+    for cn, a in ctx.per_country("boundaries3"):
+        areas += [x for x in a if x.level == 4]
+    st_idx = osm_names.AreaIndex(areas, cell=50000)
+    osm = {cn.code: cams for cn, cams in ctx.per_country("cams1")}
+    cams, report = cameras.place(c.ways, osm, ctx.gov_cameras, st_idx, [cn.code for cn, _ in ctx.countries()],
+                                 ctx.region)
+    del areas, st_idx
+    save_cache(os.path.join(ctx.out, CAMERAS_FILE), cams)
+    with open(os.path.join(ctx.out, CAMERAS_REPORT), "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=1)
+    log("speed cameras: " + ", ".join(f"{s['code']} {s['cameras']} ({s['source']})" for s in report["states"])
+        + f"; OSM cameras replaced by official lists: {report['osm_dropped']}")
+
+
 def _fea_stage(ctx, stage, q):
     """Background map (auz.fea): water, parks, land use, coast and the overview roads."""
     stage("fea_read")
@@ -426,16 +454,17 @@ def _pois_stage(ctx, stage, q):
     stage("pois")
     db = ctx.db
     poi_path = os.path.join(ctx.out, "edb", "POI", "aunz_sql.db3")
+    cams = load_cache(os.path.join(ctx.out, CAMERAS_FILE))
     pst = osm_poi.build(pois, os.path.join(db, "..", "edb", "POI", "aunz_sql.db3"), poi_path, areas,
-                        ctx.poi_box, places=places)
-    log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM)")
+                        ctx.poi_box, places=places, cameras=cams)
+    log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM), {pst.get('cameras', 0):,} camera POIs")
 
 
-def _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones=()):
+def _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones=(), gov_cameras=()):
     import multiprocessing as mp
     inputs = inputs_of(pbf)
     log("countries: " + ", ".join(f"{c.title} ({os.path.basename(p)})" for c, p in inputs))
-    ctx = _Ctx(inputs, db, out, region, plan, lookups, speed_zones)
+    ctx = _Ctx(inputs, db, out, region, plan, lookups, speed_zones, gov_cameras)
 
     q = None
     order = {s: i for i, s in enumerate(STAGES)}
@@ -565,6 +594,9 @@ if __name__ == "__main__":
                     help="memory plan (default: decide from free RAM)")
     ap.add_argument("--speed-zones", action="append", default=[],
                     help="government speed zones (.geojson or prepared .bin) for roads OSM has no limit for")
+    ap.add_argument("--gov-cameras", action="append", default=[],
+                    help="a government camera list (gov_cameras.py STATE.json); other states use OSM's")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
-    run([a.pbf] + a.extract, a.db, a.out, bb, a.lookup, memory_mode=a.memory, speed_zones=a.speed_zones)
+    run([a.pbf] + a.extract, a.db, a.out, bb, a.lookup, memory_mode=a.memory, speed_zones=a.speed_zones,
+        gov_cameras=a.gov_cameras)
