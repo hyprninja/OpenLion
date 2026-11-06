@@ -1,10 +1,10 @@
-# 22. Speed limits from government open data (Victoria, Western Australia, New Zealand)
+# 22. Speed limits from government open data (Victoria, WA, NSW, New Zealand)
 
 OSM has a `maxspeed` tag on about a third of Australian road segments. Some
 governments publish their whole speed limit register as open data. This report adds
-three of them, Victoria, Western Australia (see [Western Australia](#western-australia))
-and New Zealand (see [New Zealand](#new-zealand)), as optional sources for roads OSM
-has no limit for.
+four of them as optional sources for roads OSM has no limit for: Victoria, Western
+Australia (see [Western Australia](#western-australia)), New South Wales (see
+[New South Wales](#new-south-wales)) and New Zealand (see [New Zealand](#new-zealand)).
 
 ## Source
 
@@ -188,6 +188,62 @@ they don't provide their speed limits in an open format, and a note on the page 
 Fixed along the way: ticking a second state while the first was being checked
 skipped the second check.
 
+## New South Wales
+
+Transport for NSW, **Speed Zones**, on the
+[TfNSW Open Data Hub](https://opendata.transport.nsw.gov.au/data/dataset/speed-zones)
+(CKAN; no API key needed for the file downloads), licence **CC BY**. It's one GeoJSON
+of lines, `speed_zones.geojson` (373 MB, 447,538 sections). The file keeps the same
+name; the version we used was updated 6 November 2026. The catalogue labels it
+format "data", not "GeoJSON".
+
+| Type | sections | km | used |
+|---|---:|---:|---|
+| Default | 427,623 | 139,642 | yes: 50 or 100, the default Transport for NSW applies to that road |
+| Ordinary Permanent | 15,403 | 64,366 | yes |
+| High Pedestrian, Shared, Local Traffic | 783 | 1,028 | yes (permanent) |
+| School, School Bus, Variable, Wet Weather, Toll Plaza | 3,729 | 2,377 | no: part-time or conditional |
+
+- Fields are `sz_type`, `sz_status` (all "Existing"), `sz_direction` (almost all "Both
+  Directions") and `sz_speed` ("60 km/h").
+- Unlike WA's default-rule sections, NSW's "Default" sections carry one definite value
+  for the road.
+- `prepare()` reads them with `feature_speed()` (kept types in `NSW_KEEP`): 441,650
+  lines, 22 MB, 27 s. 2,073 sections have no usable shape.
+
+### Results: NSW bbox (`tests/gov_speed_check.py`)
+
+OSM graph of 140.99,-37.51 to 153.64,-28.15 (639k ways; the box also takes in the ACT
+and parts of Victoria, SA and Queensland). Lookups: 47 s.
+
+| | segments | km |
+|---|---:|---:|
+| OSM and NSW agree | 260,099 | 85,928 |
+| OSM and NSW disagree | 29,413 | 5,967 |
+| OSM only | 98,972 | 42,843 |
+| **Filled from NSW (OSM had nothing)** | **274,986** | **107,518** |
+| Neither | 430,686 | 214,241 |
+
+**Agreement where both have a limit: 89.8 %**, the best of the four (highway 93 %,
+freeway 92 %, street 91 %, arterial 89 %). Filled km by speed: 100 → 81,939,
+50 → 19,907, 80 → 2,295, 60 → 2,137, 40 → 597. Largest disagreements, OSM → NSW:
+60 → 50 (4,397), 40 → 50 (3,372), 50 → 100 (2,823), 50 → 60 (2,147). Roads OSM tags 50
+or 60 but NSW has at 100 are about 1.4 % of the compared segments.
+
+**Sydney card** (`make_card --bbox 150.6 -34.2 151.4 -33.6 --speed-zones nsw_speed.bin`):
+244,656 segments, 199,809 with a limit (**81.7 %**), of which 93,386 come from NSW,
+against 43.5 % from OSM alone. `card_check`: 0 problems.
+
+### App
+
+New South Wales is a checkbox on the Speed data step, downloaded by the app from the
+catalogue like Victoria's file. The catalogue reader now recognises a GeoJSON by its
+`.geojson` file name as well as its format label. Since the file name never changes,
+a source with `DataName` gets the catalogue date in its file name and title
+(`speed_zones_2026-11-06.geojson`, "Speed Zones 6 November 2026"), so a newer file is
+seen as new. Download and prepare take ~40 s in the app (22 MB kept). With all four
+sources on an Australia + New Zealand card, the page still fits without scrolling.
+
 ## New Zealand
 
 NZ Transport Agency Waka Kotahi, **National Speed Limit Register** (NSLR), licence
@@ -274,5 +330,5 @@ scrolling.
 
 ## Not done
 
-- Other states. NSW is the next candidate.
-- Car tests of cards with WA or NZ limits.
+- Queensland, Tasmania and the ACT (their open data is stale or partial).
+- Car tests of cards with WA, NSW or NZ limits.

@@ -32,6 +32,20 @@ public class SpeedZoneTests
         Assert.Equal("Speed Zones September 2026", r.Name);
     }
 
+    [Fact]
+    public void Newest_NswGeoJsonLabelledData_GetsADatedName()
+    {
+        const string nsw = "https://opendata.transport.nsw.gov.au/data/dataset/4253/resource/";
+        var r = SpeedZoneDownloader.Newest(Reply(
+            ("ZIP", nsw + "a/download/speedzones.zip", "Speed Zones data", "2026-11-06T18:20:00"),
+            ("data", nsw + "b/download/speed_zones.geojson", "Speed Zones - GeoJSON Format", "2026-11-06T18:20:17"),
+            ("CSV", nsw + "c/download/speed_zones.csv", "Speed Zones - CSV Format", "2026-11-06T18:20:30")),
+            SpeedZoneSource.NewSouthWales);
+        Assert.Equal("speed_zones_2026-11-06.geojson", r.FileName);
+        Assert.Equal("Speed Zones 6 November 2026", r.Name);
+        Assert.EndsWith("/speed_zones.geojson", r.Url.AbsolutePath);
+    }
+
     [Theory]
     [InlineData("https://evil.example.com/speed_zones.geojson")]
     [InlineData("http://opendata.transport.vic.gov.au/x/speed_zones.geojson")]
@@ -53,14 +67,16 @@ public class SpeedZoneTests
     public void VictoriaAndWaAreAvailable_SaAndNtNotListed()
     {
         Assert.Equal(["VIC", "WA", "NSW", "QLD", "TAS", "ACT", "NZ"], SpeedZoneSource.All.Select(s => s.Code));
+        Assert.Same(SpeedZoneSource.NewSouthWales, SpeedZoneSource.ByCode("nsw"));
+        Assert.Null(SpeedZoneSource.NewSouthWales.EngineFetch);
         Assert.Null(SpeedZoneSource.ByCode("SA"));
         Assert.Null(SpeedZoneSource.ByCode("NT"));
         Assert.Equal(["South Australia", "the Northern Territory"], SpeedZoneSource.NotOpen);
-        Assert.Equal(["VIC", "WA", "NZ"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.Equal(["VIC", "WA", "NSW", "NZ"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
         Assert.All(SpeedZoneSource.All.Where(s => s.Code != "NZ"), s => Assert.Equal(MapCountry.Australia, s.Country));
         Assert.Equal(MapCountry.NewZealand, SpeedZoneSource.NewZealand.Country);
         Assert.Equal("fetch-nz", SpeedZoneSource.NewZealand.EngineFetch);
-        Assert.All(SpeedZoneSource.All.Where(s => s.Available), s => Assert.Contains("CC BY 4.0", s.Credit));
+        Assert.All(SpeedZoneSource.All.Where(s => s.Available), s => Assert.Contains("CC BY", s.Credit));
         Assert.Same(SpeedZoneSource.Victoria, SpeedZoneSource.ByCode("vic"));
         Assert.Same(SpeedZoneSource.WesternAustralia, SpeedZoneSource.ByCode("WA"));
         Assert.Null(SpeedZoneSource.Victoria.EngineFetch);

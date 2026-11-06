@@ -47,6 +47,15 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
         "The legal speed limit register for every road, kept up to date by NZTA.",
         "fetch-nz", "NZ", "National Speed Limit Register");
 
+    /// <summary>Transport for NSW's speed zone register. The file keeps one name, so its version is
+    /// the catalogue's date for it ("Speed Zones 6 November 2026").</summary>
+    public static readonly SpeedZoneSource NewSouthWales = new("NSW", "New South Wales",
+        new Uri("https://opendata.transport.nsw.gov.au/data/api/3/action/package_show?id=speed-zones"),
+        ["opendata.transport.nsw.gov.au"],
+        "Speed zone data © Transport for NSW, CC BY", 375,
+        "Every road in the state, from Transport for NSW's speed zone register.",
+        DataName: "Speed Zones");
+
     static SpeedZoneSource Later(string code, string title) => new(code, title, null, [], "", 0);
 
     /// <summary>The states and territories that publish (or may soon publish) usable open data, the
@@ -58,7 +67,7 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
     [
         Victoria,
         WesternAustralia,
-        Later("NSW", "New South Wales"),
+        NewSouthWales,
         Later("QLD", "Queensland"),
         Later("TAS", "Tasmania"),
         Later("ACT", "Australian Capital Territory"),
@@ -182,15 +191,23 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
             foreach (var res in reply.GetProperty("result").GetProperty("resources").EnumerateArray())
             {
                 string? Str(string n) => res.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-                if (!string.Equals(Str("format"), "geojson", StringComparison.OrdinalIgnoreCase) ||
-                    !Uri.TryCreate(Str("url"), UriKind.Absolute, out var url) || !Allowed(url, source))
+                if (!Uri.TryCreate(Str("url"), UriKind.Absolute, out var url) || !Allowed(url, source))
+                    continue;
+                var name = Path.GetFileName(url.AbsolutePath);
+                // NSW labels its GeoJSON "data": go by the file name too
+                if (name.Length == 0 || !(string.Equals(Str("format"), "geojson", StringComparison.OrdinalIgnoreCase) ||
+                                          name.EndsWith(".geojson", StringComparison.OrdinalIgnoreCase)))
                     continue;
                 var when = Date(Str("last_modified")) ?? Date(Str("created"));
-                var name = Path.GetFileName(url.AbsolutePath);
-                if (name.Length == 0)
-                    continue;
+                var title = Str("name") ?? name;
+                if (source.DataName is { } dn && when is { } w)
+                {
+                    // one file name for every version: the catalogue's date tells them apart
+                    name = $"{Path.GetFileNameWithoutExtension(name)}_{w:yyyy-MM-dd}{Path.GetExtension(name)}";
+                    title = $"{dn} {w.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}";
+                }
                 if (best is null || (when ?? DateTime.MinValue) > (best.Modified ?? DateTime.MinValue))
-                    best = new SpeedZoneRemote(url, name, Str("name") ?? name, when);
+                    best = new SpeedZoneRemote(url, name, title, when);
             }
         }
         catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException)

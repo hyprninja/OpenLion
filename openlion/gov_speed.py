@@ -10,6 +10,12 @@ Zones that only apply some of the time (school, shopping strip, seasonal, side-r
 activated) are left out: the dataset records their lowest value, which would be wrong
 most of the day. Such roads keep whatever OSM says, or no limit.
 
+New South Wales (Transport for NSW, "Speed Zones", CC BY, updated as zones change): every
+road as GeoJSON lines with Type, Status, Direction and Speed ("60 km/h"). "Default" sections
+carry the default limit Transport for NSW applies to that road (50 or 100), so unlike WA's
+they're a definite value. School, School Bus, Variable, Wet Weather and Toll Plaza zones are
+part-time or conditional and left out.
+
 Western Australia (Main Roads WA, "Legal Speed Limits", CC BY 4.0, refreshed weekly):
 every public road as lines with SPEED_LIMIT ("60km/h") and CWY (Single, or Left/Right
 for each side of a divided road). About three quarters of the sections only say "50km/h
@@ -37,8 +43,12 @@ MAGIC = b"OLGSPD1\0"
 MAGIC_AREAS = b"OLGSPA1\0"
 SOURCES = {"VIC": "Victoria Department of Transport and Planning, Speed Zones (CC BY 4.0)",
            "WA": "Main Roads Western Australia, Legal Speed Limits (CC BY 4.0)",
-           "NZ": "NZ Transport Agency Waka Kotahi, National Speed Limit Register (CC BY 4.0)"}
+           "NZ": "NZ Transport Agency Waka Kotahi, National Speed Limit Register (CC BY 4.0)",
+           "NSW": "Transport for NSW, Speed Zones (CC BY)"}
 NORMAL = "Normal Operation"
+# NSW zone types that always apply. Left out: School, School Bus, Variable, Wet Weather and
+# Toll Plaza (part-time or conditional), and Truck & bus (not for cars).
+NSW_KEEP = {"Ordinary Permanent", "Default", "High Pedestrian", "Shared", "Local Traffic"}
 WA_SIGNED = re.compile(r"^\s*(\d{1,3})\s*km/h\s*$", re.IGNORECASE)
 
 CELL = 7            # grid cell = 2**7 units of 1e-5 degree (~140 m x 110 m in Victoria)
@@ -90,6 +100,17 @@ def _conditions(p):
 def feature_speed(p):
     """(km/h, None) for a feature's properties, or (None, reason it's left out).
     Knows Victoria's (speed_limit, zone_conditions) and WA's (SPEED_LIMIT) fields."""
+    if "sz_type" in p or ("Type" in p and "Speed" in p):   # New South Wales
+        kind = p.get("sz_type") or p.get("Type")
+        if kind not in NSW_KEEP:
+            return None, "skipped (part-time or conditional zone)"
+        if (p.get("sz_status") or p.get("Status")) not in (None, "Existing"):
+            return None, "skipped (not existing)"
+        m = WA_SIGNED.match(p.get("sz_speed") or p.get("Speed") or "")
+        if not m:
+            return None, "skipped (no speed)"
+        speed = int(m.group(1))
+        return (speed, None) if 5 <= speed <= 130 else (None, "skipped (no speed)")
     if "speedLimitZoneValue" in p:                  # New Zealand
         if p.get("speedCategoryName") not in (None, "Permanent"):
             return None, "skipped (not permanent)"
