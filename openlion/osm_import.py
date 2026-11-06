@@ -103,6 +103,9 @@ def road_rank(tags):
     return rank
 
 
+LANDMARK_ROUNDABOUT = 2   # .si landmark value on roundabouts (docs/12_osm_import.md)
+
+
 def seginfo_fields(tags):
     hw = tags["highway"]
     _, cls = HIGHWAY[hw]
@@ -119,6 +122,10 @@ def seginfo_fields(tags):
         f["detailedcity"] = 1
     if hw in ("motorway", "trunk", "primary") and oneway_dir(tags) != 0:
         f["dbldig"] = 1
+    # The factory data marks roundabout segments with landmark = 2. Without it the
+    # unit treats a roundabout as ordinary turns ("turn left, then turn left").
+    if tags.get("junction") == "roundabout":
+        f["landmark"] = LANDMARK_ROUNDABOUT
     return f
 
 
