@@ -73,7 +73,14 @@ public class SpeedZoneTests
         Assert.Null(SpeedZoneSource.ByCode("SA"));
         Assert.Null(SpeedZoneSource.ByCode("NT"));
         Assert.Equal(["South Australia", "the Northern Territory"], SpeedZoneSource.NotOpen);
-        Assert.Equal(["VIC", "WA", "NSW", "ACT", "NZ"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.Equal(["VIC", "WA", "NSW", "QLD", "TAS", "ACT", "NZ"], SpeedZoneSource.All.Where(s => s.Available).Select(s => s.Code));
+        Assert.Same(SpeedZoneSource.Tasmania, SpeedZoneSource.ByCode("tas"));
+        Assert.Equal("fetch-tas", SpeedZoneSource.Tasmania.EngineFetch);
+        Assert.Contains("LAST_UPDATED", Uri.UnescapeDataString(SpeedZoneSource.Tasmania.PackageApi!.Query));
+        Assert.Same(SpeedZoneSource.Queensland, SpeedZoneSource.ByCode("qld"));
+        Assert.Equal("fetch-qld", SpeedZoneSource.Queensland.EngineFetch);
+        Assert.Equal("signs", SpeedZoneSource.Queensland.ProgressUnit);
+        Assert.Equal("road sections", SpeedZoneSource.WesternAustralia.ProgressUnit);
         Assert.Equal("fetch-act", SpeedZoneSource.AustralianCapitalTerritory.EngineFetch);
         Assert.All(SpeedZoneSource.All.Where(s => s.Code != "NZ"), s => Assert.Equal(MapCountry.Australia, s.Country));
         Assert.Equal(MapCountry.NewZealand, SpeedZoneSource.NewZealand.Country);
@@ -93,6 +100,30 @@ public class SpeedZoneTests
         Assert.Equal("wa-2026-11-05", r.FileName);
         Assert.Equal("Legal Speed Limits 5 November 2026", r.Name);
         Assert.Equal("catalogue.data.wa.gov.au", r.Url.Host);
+    }
+
+    [Fact]
+    public void Dated_Queensland_UsesItsDataName()
+    {
+        var reply = JsonDocument.Parse("""{"result": {"title": "Speed Limits  for state and local roads", "metadata_modified": "2026-07-23T06:21:46.246482"}}""").RootElement;
+        var r = SpeedZoneDownloader.Dated(reply, SpeedZoneSource.Queensland);
+        Assert.Equal("qld-2026-07-23", r.FileName);
+        Assert.Equal("Speed limit signs 23 July 2026", r.Name);
+    }
+
+    [Fact]
+    public void Dated_Tasmania_ReadsTheStatisticsQuery()
+    {
+        var reply = JsonDocument.Parse("""
+            {"displayFieldName": "", "fieldAliases": {"NEWEST": "NEWEST"},
+             "fields": [{"name": "NEWEST", "type": "esriFieldTypeDate"}],
+             "features": [{"attributes": {"NEWEST": 1783382400000}}]}
+            """).RootElement;
+        var r = SpeedZoneDownloader.Dated(reply, SpeedZoneSource.Tasmania);
+        Assert.Equal("tas-2026-07-07", r.FileName);
+        Assert.Equal("State Road Speed Limits 7 July 2026", r.Name);
+        var empty = JsonDocument.Parse("""{"features": []}""").RootElement;
+        Assert.Throws<SpeedZoneException>(() => SpeedZoneDownloader.Dated(empty, SpeedZoneSource.Tasmania));
     }
 
     [Fact]

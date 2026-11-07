@@ -104,6 +104,8 @@ public sealed class SpeedDataStep : StepViewModel
     /// <summary>The states still to come, listed together in one compact box.</summary>
     public IEnumerable<SpeedZoneRow> LaterRows => Shown.Where(r => !r.IsAvailable).ToList();
     public bool ShowLater => AustraliaOnCard && LaterRows.Any();
+    /// <summary>The box under the list: what's coming, and why South Australia and the NT aren't there.</summary>
+    public bool ShowOtherStates => ShowLater || (AustraliaOnCard && SpeedZoneSource.NotOpen.Count > 0);
     public ICommand DownloadCommand { get; }
     public ICommand CheckCommand { get; }
     public ICommand CancelCommand { get; }
@@ -131,7 +133,8 @@ public sealed class SpeedDataStep : StepViewModel
     public bool ShowDownload => Shown.Any(r => r.WantsDownload);
     public string DownloadLabel => Shown.Where(r => r.WantsDownload).All(r => !r.HasCached) ? "Download" : "Download the newer data";
 
-    /// <summary>"Victoria and Western Australia are available now. The other states ..."</summary>
+    /// <summary>"Victoria and Western Australia are available now. The other states ..."; with more
+    /// than two, the names are left to the list below (the page must fit without scrolling).</summary>
     public string AvailableNote
     {
         get
@@ -139,7 +142,7 @@ public sealed class SpeedDataStep : StepViewModel
             var t = AvailableRows.Select(r => r.Title).ToList();
             if (t.Count == 0)
                 return "";
-            var names = t.Count <= 1 ? string.Concat(t) : string.Join(", ", t.Take(t.Count - 1)) + " and " + t[^1];
+            var names = t.Count <= 1 ? string.Concat(t) : t.Count == 2 ? $"{t[0]} and {t[1]}" : "These";
             return $"{names} {(t.Count == 1 ? "is" : "are")} available now." +
                    (ShowLater ? " The others listed are coming soon, in future versions of OpenLion." : "");
         }
@@ -150,7 +153,7 @@ public sealed class SpeedDataStep : StepViewModel
         $"{string.Join(" and ", SpeedZoneSource.NotOpen)} aren't listed: they don't provide their speed limits in an open format.";
 
     /// <summary>Credit lines for the chosen states (their licences ask for it).</summary>
-    public string Credits => string.Join("  ·  ", AvailableRows.Select(r => r.Source.Credit));
+    public string Credits => AvailableRows.Any() ? "Speed data " + string.Join("  ·  ", AvailableRows.Select(r => r.Source.Credit)) : "";
 
     /// <summary>Optional: carry on with nothing ticked, but a ticked state must be downloaded first.</summary>
     public override bool CanGoNext => !IsBusy && Shown.Where(r => r.IsChecked).All(r => r.HasCached);
@@ -186,7 +189,7 @@ public sealed class SpeedDataStep : StepViewModel
     {
         // the countries may have changed on the Get OSM data step
         foreach (var name in new[] { nameof(AustraliaOnCard), nameof(HasChoices), nameof(NoChoices), nameof(ChoiceHeading),
-                                     nameof(AvailableRows), nameof(LaterRows), nameof(ShowLater), nameof(AvailableNote),
+                                     nameof(AvailableRows), nameof(LaterRows), nameof(ShowLater), nameof(ShowOtherStates), nameof(AvailableNote),
                                      nameof(NotOpenNote), nameof(Credits) })
             Raise(name);
         foreach (var r in Rows)
@@ -259,7 +262,7 @@ public sealed class SpeedDataStep : StepViewModel
                 Status = $"Downloading {row.Title} speed data: {remote.Name}…";
                 Detail = "";
                 SetPercent(null);
-                bool sections = row.Source.EngineFetch is not null;   // the engine counts road sections, not bytes
+                bool sections = row.Source.EngineFetch is not null;   // the engine counts road sections or signs, not bytes
                 var progress = new Progress<DownloadProgress>(p =>
                 {
                     if (p.Phase == DownloadPhase.Verifying)
@@ -271,7 +274,7 @@ public sealed class SpeedDataStep : StepViewModel
                     }
                     SetPercent(p.Fraction * 100);
                     Detail = sections
-                        ? $"{p.Done:N0} road sections"
+                        ? $"{p.Done:N0} {row.Source.ProgressUnit}"
                         : $"{p.Done / 1e6:N0}{(p.Total is { } t ? $" of {t / 1e6:N0}" : "")} MB" +
                           (p.BytesPerSecond > 0 ? $"  ({p.BytesPerSecond / 1e6:N1} MB/s)" : "");
                 });

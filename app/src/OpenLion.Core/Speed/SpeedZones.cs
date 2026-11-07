@@ -12,7 +12,7 @@ namespace OpenLion.Core.Speed;
 /// <param name="Code">Short code, also the folder name ("VIC").</param>
 /// <param name="PackageApi">CKAN package_show URL that lists the dataset's files; null when not available yet.</param>
 /// <param name="AllowedHosts">Hosts a data file may come from (the catalogue's links are only followed to these).</param>
-/// <param name="Credit">Attribution the licence asks for.</param>
+/// <param name="Credit">Attribution the licence asks for ("© holder, licence"; the page puts "Speed data" before them).</param>
 /// <param name="Blurb">What the data covers, shown beside the checkbox.</param>
 /// <param name="EngineFetch">The engine command that downloads the data (gov_speed.py "fetch-wa"),
 /// for data served in pages by a map server rather than as one file; null when the app downloads
@@ -24,20 +24,21 @@ namespace OpenLion.Core.Speed;
 /// <param name="YearlyService">For data published as one ArcGIS service per year: a pattern for the
 /// service name with the year as its first group. <see cref="PackageApi"/> is then the service list,
 /// and the newest year is the version.</param>
+/// <param name="ProgressUnit">What the engine counts while it downloads ("road sections", "signs").</param>
 public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi, IReadOnlyList<string> AllowedHosts,
     string Credit, int ApproxMb, string Blurb = "", string? EngineFetch = null, string CountryCode = "AU",
-    string? DataName = null, string? YearlyService = null)
+    string? DataName = null, string? YearlyService = null, string ProgressUnit = "road sections")
 {
     public static readonly SpeedZoneSource Victoria = new("VIC", "Victoria",
         new Uri("https://discover.data.vic.gov.au/api/3/action/package_show?id=speed-zones"),
         ["opendata.transport.vic.gov.au", "discover.data.vic.gov.au"],
-        "Speed zone data © State of Victoria (Department of Transport and Planning), CC BY 4.0", 480,
+        "© State of Victoria (Department of Transport and Planning), CC BY 4.0", 480,
         "Every road in the state, updated monthly by the state government.");
 
     public static readonly SpeedZoneSource WesternAustralia = new("WA", "Western Australia",
         new Uri("https://catalogue.data.wa.gov.au/api/3/action/package_show?id=mrwa-legal-speed-limits"),
         ["catalogue.data.wa.gov.au", "gisservices.mainroads.wa.gov.au"],
-        "Speed limit data © Main Roads Western Australia, CC BY 4.0", 16,
+        "© Main Roads Western Australia, CC BY 4.0", 16,
         "Signposted limits on state and many local roads, updated weekly by Main Roads WA.",
         "fetch-wa", DataName: "Legal Speed Limits");
 
@@ -46,7 +47,7 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
     public static readonly SpeedZoneSource NewZealand = new("NZ", "New Zealand",
         new Uri("https://services.arcgis.com/CXBb7LAjgIIdcsPt/ArcGIS/rest/services/SpeedLimitZoneFull__View/FeatureServer/0?f=json"),
         ["services.arcgis.com"],
-        "Speed limit data © NZ Transport Agency Waka Kotahi (National Speed Limit Register), CC BY 4.0", 180,
+        "© NZ Transport Agency Waka Kotahi (National Speed Limit Register), CC BY 4.0", 180,
         "The legal speed limit register for every road, kept up to date by NZTA.",
         "fetch-nz", "NZ", "National Speed Limit Register");
 
@@ -55,7 +56,7 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
     public static readonly SpeedZoneSource NewSouthWales = new("NSW", "New South Wales",
         new Uri("https://opendata.transport.nsw.gov.au/data/api/3/action/package_show?id=speed-zones"),
         ["opendata.transport.nsw.gov.au"],
-        "Speed zone data © Transport for NSW, CC BY", 375,
+        "© Transport for NSW, CC BY", 375,
         "Every road in the state, from Transport for NSW's speed zone register.",
         DataName: "Speed Zones");
 
@@ -63,16 +64,36 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
     public static readonly SpeedZoneSource AustralianCapitalTerritory = new("ACT", "Australian Capital Territory",
         new Uri("https://services1.arcgis.com/E5n4f1VY84i0xSjy/ArcGIS/rest/services?f=json"),
         ["services1.arcgis.com"],
-        "Speed zone data © ACT Government (Transport Canberra and City Services), CC BY 4.0", 15,
+        "© ACT Government (Transport Canberra and City Services), CC BY 4.0", 15,
         "Every road in the territory, a yearly snapshot from the ACT Government.",
         "fetch-act", DataName: "Road Network Speed Zones",
         YearlyService: @"^ACTGOV_Road_Network_(\d{4})_Speed_Zones_view$");
 
+    /// <summary>Queensland has no zone data, only a 2019–20 survey of its speed signs (never updated):
+    /// the engine walks each sign's limit along its road (gov_signs.py).</summary>
+    public static readonly SpeedZoneSource Queensland = new("QLD", "Queensland",
+        new Uri("https://www.data.qld.gov.au/api/3/action/package_show?id=speed-limits-for-state-and-local-roads"),
+        ["www.data.qld.gov.au"],
+        "© State of Queensland (Department of Transport and Main Roads), CC BY 4.0", 22,
+        "Signposted limits from a 2019–20 survey of the state's speed signs, not updated since.",
+        "fetch-qld", DataName: "Speed limit signs", ProgressUnit: "signs");
+
+    /// <summary>Tasmania's state road limits (Department of State Growth). The layer has no edit date, so
+    /// <see cref="PackageApi"/> asks it for its newest LAST_UPDATED, which is the version.</summary>
+    public static readonly SpeedZoneSource Tasmania = new("TAS", "Tasmania",
+        new Uri("https://data.stategrowth.tas.gov.au/ags/rest/services/PUBLIC/SPEEDLIMITS/FeatureServer/1/query?where=1%3D1&f=json" +
+                "&outStatistics=%5B%7B%22statisticType%22%3A%22max%22%2C%22onStatisticField%22%3A%22LAST_UPDATED%22%2C" +
+                "%22outStatisticFieldName%22%3A%22newest%22%7D%5D"),
+        ["data.stategrowth.tas.gov.au"],
+        "© State of Tasmania (Department of State Growth), CC BY 3.0 AU", 7,
+        "State highways and main roads only, kept up to date by the Department of State Growth.",
+        "fetch-tas", DataName: "State Road Speed Limits");
+
     static SpeedZoneSource Later(string code, string title) => new(code, title, null, [], "", 0);
 
-    /// <summary>The states and territories that publish (or may soon publish) usable open data, the
-    /// ones OpenLion can use first, then New Zealand; only those with a <see cref="PackageApi"/> can be
-    /// chosen, and only for the countries on the card. South
+    /// <summary>The states and territories that publish usable open data, then New Zealand; only those
+    /// with a <see cref="PackageApi"/> can be chosen (all of them now: <see cref="Later"/> is kept for the
+    /// next one), and only for the countries on the card. South
     /// Australia and the Northern Territory are left off: they don't publish their speed limits in
     /// an open format (see <see cref="NotOpen"/>).</summary>
     public static readonly IReadOnlyList<SpeedZoneSource> All =
@@ -80,8 +101,8 @@ public sealed record SpeedZoneSource(string Code, string Title, Uri? PackageApi,
         Victoria,
         WesternAustralia,
         NewSouthWales,
-        Later("QLD", "Queensland"),
-        Later("TAS", "Tasmania"),
+        Queensland,
+        Tasmania,
         AustralianCapitalTerritory,
         NewZealand,
     ];
@@ -172,8 +193,9 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         }
     }
 
-    /// <summary>For data the engine fetches: the catalogue's last-updated date is the version
-    /// ("wa-2026-11-05", "Legal Speed Limits 5 November 2026"). Public for tests.</summary>
+    /// <summary>For data the engine fetches: the catalogue's last-updated date (or the ArcGIS layer's last
+    /// edit, or the newest date a statistics query returns) is the version ("wa-2026-11-05",
+    /// "Legal Speed Limits 5 November 2026"). Public for tests.</summary>
     public static SpeedZoneRemote Dated(JsonElement reply, SpeedZoneSource source)
     {
         DateTime? when = null;
@@ -194,6 +216,14 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
                 foreach (var f in new[] { "dataLastEditDate", "lastEditDate" })
                     if (when is null && ed.TryGetProperty(f, out var ms) && ms.ValueKind == JsonValueKind.Number)
                         when = DateTimeOffset.FromUnixTimeMilliseconds(ms.GetInt64()).UtcDateTime;
+            }
+            else if (reply.TryGetProperty("features", out var fs) && fs.ValueKind == JsonValueKind.Array)   // ArcGIS statistics query
+            {
+                foreach (var f in fs.EnumerateArray())
+                    if (f.TryGetProperty("attributes", out var at) && at.ValueKind == JsonValueKind.Object)
+                        foreach (var v in at.EnumerateObject())
+                            if (when is null && v.Value.ValueKind == JsonValueKind.Number && v.Value.TryGetInt64(out var ms))
+                                when = DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime;
             }
         }
         catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException or ArgumentOutOfRangeException)

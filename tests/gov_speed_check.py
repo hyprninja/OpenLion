@@ -15,7 +15,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import gov_speed, osm_import  # noqa: E402
+from openlion import gov_signs, gov_speed, osm_import  # noqa: E402
 
 CLASS = {0: "freeway", 1: "highway", 2: "arterial", 3: "street", 6: "ramp", 7: "track", 8: "busway"}
 
@@ -28,9 +28,15 @@ if __name__ == "__main__":
     c = pickle.load(open(sys.argv[1], "rb"))
     t = time.time()
     ix = gov_speed.open_index(sys.argv[2])
-    print(f"index: {len(ix.speeds):,} lines ({time.time() - t:.0f}s)")
-    g, si, st = osm_import.build_graph(c)
+    signs = isinstance(ix, gov_signs.SignSet)
+    print(f"index: {len(ix.speeds):,} {'signs' if signs else 'lines'} ({time.time() - t:.0f}s)")
+    hw = [] if signs else None
+    g, si, st = osm_import.build_graph(c, sign_fill=(lambda g, h, s: hw.extend(h) or ()) if signs else None)
     t = time.time()
+    if signs:
+        walked = collections.Counter()
+        by_seg = ix.speeds_for(g, hw, walked)
+        print("signs:", dict(walked))
     tally = collections.Counter()
     dist = collections.Counter()
     pairs = collections.Counter()
@@ -38,12 +44,15 @@ if __name__ == "__main__":
     bad = []
     for s in range(g.n_segs):
         xy = seg_xy(g, s)
-        if not ix.covers(xy):
+        if not signs and not ix.covers(xy):
             continue
         cls = CLASS.get((si[g.seg_info[s]] >> 3) & 15, "?")
         L = g.seg_len[s] * osm_import.FT / 1000
         osm = (g.seg_adas[s] or {}).get("speed_kmh")
-        gov = ix.lookup(xy, "track" if cls == "track" else None)
+        gov = by_seg.get(s) if signs else ix.lookup(xy, "track" if cls == "track" else None)
+        if signs and gov is None and (g.seg_adas[s] is None or not ix.bbox[0] <= xy[0][0] <= ix.bbox[2]
+                                      or not ix.bbox[1] <= xy[0][1] <= ix.bbox[3]):
+            continue    # the signs only reach the roads they're on: "neither" would be most of the state
         if osm:
             if gov is None:
                 k = "osm only"

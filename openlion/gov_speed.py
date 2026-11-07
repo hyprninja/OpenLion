@@ -20,6 +20,12 @@ ACT (Transport Canberra and City Services, "Road Network Speed Zones", CC BY 4.0
 yearly static view; "indicative only"): every road as lines, one per direction, with
 SPEED_ZONE ("50", or "SCHOOL ZONE", which is left out).
 
+Tasmania (Department of State Growth, "Speed Limits (on State Highways and Subsidiary
+Roads)", CC BY 3.0 AU, reviewed at least yearly): only the state road network (~4,000 km), as
+lines with PD and CD, the limit in the line's own direction and the other way (0 or empty for
+one carriageway of a divided road); the lower is kept. Part-time limits (school and variable
+zones) aren't in the data.
+
 Western Australia (Main Roads WA, "Legal Speed Limits", CC BY 4.0, refreshed weekly):
 every public road as lines with SPEED_LIMIT ("60km/h") and CWY (Single, or Left/Right
 for each side of a divided road). About three quarters of the sections only say "50km/h
@@ -32,6 +38,9 @@ as polygons around road corridors (typically ~23 m wide) on top of large "Defaul
 polygons (all 100 km/h). The smallest zone holding a point wins. The register keeps its
 history, so only zones in force now are fetched, and only permanent ones. Zones are
 areas, not lines, so they get their own file type and AreaIndex.
+
+Queensland publishes speed signs (points), not zones: see gov_signs.py. Its prepared file
+is a third type (SignSet), worked out over the whole road graph rather than per piece.
 
 prepare() turns the downloaded GeoJSON into a small binary file once (deduplicated lines,
 integer coordinates); Index loads that file and answers lookup(xy) for a road piece.
@@ -49,6 +58,8 @@ SOURCES = {"VIC": "Victoria Department of Transport and Planning, Speed Zones (C
            "WA": "Main Roads Western Australia, Legal Speed Limits (CC BY 4.0)",
            "NZ": "NZ Transport Agency Waka Kotahi, National Speed Limit Register (CC BY 4.0)",
            "NSW": "Transport for NSW, Speed Zones (CC BY)",
+           "TAS": "Tasmania Department of State Growth, Speed Limits on State Highways and Subsidiary Roads (CC BY 3.0 AU)",
+           "QLD": "Queensland Department of Transport and Main Roads, Speed Limits for state and local roads (CC BY 4.0)",
            "ACT": "ACT Government (Transport Canberra and City Services), Road Network Speed Zones (CC BY 4.0)"}
 NORMAL = "Normal Operation"
 # NSW zone types that always apply. Left out: School, School Bus, Variable, Wet Weather and
@@ -104,7 +115,7 @@ def _conditions(p):
 
 def feature_speed(p):
     """(km/h, None) for a feature's properties, or (None, reason it's left out).
-    Knows Victoria's (speed_limit, zone_conditions) and WA's (SPEED_LIMIT) fields."""
+    Knows the fields of Victoria (speed_limit, zone_conditions), NSW, the ACT, NZ, Tasmania and WA."""
     if "sz_type" in p or ("Type" in p and "Speed" in p):   # New South Wales
         kind = p.get("sz_type") or p.get("Type")
         if kind not in NSW_KEEP:
@@ -121,6 +132,12 @@ def feature_speed(p):
         if not v.isdigit():
             return None, "skipped (part-time or conditional zone)" if "SCHOOL" in v.upper() else "skipped (no speed)"
         speed = int(v)
+        return (speed, None) if 5 <= speed <= 130 else (None, "skipped (no speed)")
+    if "PD" in p and "CD" in p and "CWAY_CODE" in p:  # Tasmania: each direction, keep the lower
+        both = [v for v in (p.get("PD"), p.get("CD")) if isinstance(v, (int, float)) and v > 0]
+        if not both:
+            return None, "skipped (no speed)"
+        speed = int(min(both))
         return (speed, None) if 5 <= speed <= 130 else (None, "skipped (no speed)")
     if "speedLimitZoneValue" in p:                  # New Zealand
         if p.get("speedCategoryName") not in (None, "Permanent"):
@@ -164,7 +181,11 @@ def _features(path):
 
 
 def prepare(geojson, out):
-    """Speed zone GeoJSON (Victoria, WA: lines; NZ: polygons) -> compact binary. Returns stats."""
+    """Speed zone GeoJSON (Victoria, WA: lines; NZ: polygons), or Queensland's speed sign CSV,
+    -> compact binary. Returns stats."""
+    if geojson.lower().endswith(".csv"):
+        from openlion import gov_signs
+        return gov_signs.prepare_signs(geojson, out)
     first = next(_features(geojson), None)
     if first and (first.get("geometry") or {}).get("type") in ("Polygon", "MultiPolygon"):
         return prepare_areas(geojson, out)
@@ -572,16 +593,21 @@ def _add(grid, key, v):
 
 
 def open_index(path):
-    """Index or AreaIndex, by the prepared file's type."""
+    """Index, AreaIndex or gov_signs.SignSet, by the prepared file's type."""
     with open(path, "rb") as fh:
         magic = fh.read(8)
-    return AreaIndex(path) if magic == MAGIC_AREAS else Index(path)
+    if magic == MAGIC_AREAS:
+        return AreaIndex(path)
+    from openlion import gov_signs
+    if magic == gov_signs.MAGIC_SIGNS:
+        return gov_signs.SignSet(path)
+    return Index(path)
 
 
 def load(path, work):
     """An Index from a prepared .bin, or from a .geojson (prepared into work/ once,
     keyed on the file's name, size and time)."""
-    if not path.lower().endswith((".geojson", ".json")):
+    if not path.lower().endswith((".geojson", ".json", ".csv")):
         return open_index(path)
     stat = os.stat(path)
     base = os.path.splitext(os.path.basename(path))[0]
@@ -592,7 +618,8 @@ def load(path, work):
 
 
 def first_of(indexes):
-    """One speed_fill callable over several indexes: the first that answers."""
+    """One speed_fill callable over several indexes: the first that answers. (A SignSet never
+    answers here: it fills the finished graph, see sign_fill.)"""
     def fill(xy, highway=None):
         for ix in indexes:
             if ix.covers(xy):
@@ -600,6 +627,16 @@ def first_of(indexes):
                 if v:
                     return v
         return None
+    return fill
+
+
+def sign_fill(sign_sets):
+    """build_graph's sign_fill over several SignSets: fills pieces still without a limit."""
+    def fill(g, highway, stats):
+        for ss in sign_sets:
+            for s, v in ss.speeds_for(g, highway, stats).items():
+                if g.seg_adas[s] is None:
+                    yield s, v
     return fill
 
 
@@ -744,6 +781,36 @@ def _fetch_pages(url, where, fields, dest, progress=None, page_size=2000):
     return len(feats)
 
 
+TAS_LAYER = "https://data.stategrowth.tas.gov.au/ags/rest/services/PUBLIC/SPEEDLIMITS/FeatureServer/1"
+
+
+def latest_tas():
+    """(name, file name) of the Tasmanian state road limits, dated by their newest edit (the
+    layer has no editing info, so it's asked for the largest LAST_UPDATED)."""
+    import datetime
+    import urllib.parse
+    q = urllib.parse.urlencode({"where": "1=1", "f": "json", "outStatistics": json.dumps(
+        [{"statisticType": "max", "onStatisticField": "LAST_UPDATED", "outStatisticFieldName": "newest"}])})
+    reply = _get_json(TAS_LAYER + "/query?" + q, 60)
+    ms = None
+    for f in reply.get("features") or []:
+        ms = next((v for v in (f.get("attributes") or {}).values() if isinstance(v, (int, float))), None)
+    if not ms:
+        raise RuntimeError("the Tasmanian speed limit service gave no last-edit date")
+    d = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).date()
+    return f"State Road Speed Limits {d.day} {d:%B %Y}", f"tas_speed_limits_{d.isoformat()}.geojson"
+
+
+def fetch_tas(folder, progress=None):
+    """Download Tasmania's state road speed limits. Returns (name, path)."""
+    name, fname = latest_tas()
+    dest = os.path.join(folder, fname)
+    if not os.path.exists(dest):
+        os.makedirs(folder, exist_ok=True)
+        _fetch_pages(TAS_LAYER + "/query", "1=1", "PD,CD,CWAY_CODE,DSG_NAME", dest, progress)
+    return name, dest
+
+
 def fetch_nz(folder, progress=None):
     """Download the zones in force from NZ's National Speed Limit Register. Returns (name, path)."""
     name, fname = latest_nz()
@@ -796,10 +863,15 @@ if __name__ == "__main__":
         print(*fetch_wa(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep="\n")
     elif len(sys.argv) == 3 and sys.argv[1] == "fetch-act":
         print(*fetch_act(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep=chr(10))
+    elif len(sys.argv) == 3 and sys.argv[1] == "fetch-tas":
+        print(*fetch_tas(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep=chr(10))
+    elif len(sys.argv) == 3 and sys.argv[1] == "fetch-qld":
+        from openlion import gov_signs
+        print(*gov_signs.fetch_qld(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep=chr(10))
     elif len(sys.argv) == 3 and sys.argv[1] == "fetch-nz":
         print(*fetch_nz(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep=chr(10))
     elif len(sys.argv) == 4 and sys.argv[1] == "prepare":
         print(prepare(sys.argv[2], sys.argv[3]))
     else:
-        sys.exit("usage: python -m openlion.gov_speed fetch-vic | fetch-wa | fetch-act | fetch-nz <folder> | "
-                 "prepare <in.geojson> <out.bin>")
+        sys.exit("usage: python -m openlion.gov_speed fetch-vic | fetch-wa | fetch-act | fetch-qld | fetch-tas | fetch-nz <folder> | "
+                 "prepare <in.geojson|in.csv> <out.bin>")

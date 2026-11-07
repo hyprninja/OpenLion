@@ -24,7 +24,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import (cameras, countries, flat, gov_addr, gov_speed, graph, layers, mapfile, memory, osm_addr,  # noqa: E402
+from openlion import (cameras, countries, flat, gov_addr, gov_signs, gov_speed, graph, layers, mapfile, memory, osm_addr,  # noqa: E402
                       osm_fea, osm_import,
                       osm_names, osm_poi, resources, roads, schema, search, tiler)
 from openlion.common import DamagedTable, build_header  # noqa: E402
@@ -317,17 +317,22 @@ def _roads_stage(ctx, stage, q):
     stage("roads")
     c = osm_import.merge([(cn.catalog, col) for cn, col in ctx.per_country("roads2")])
     log(f"roads: {len(c.ways):,} ways, {len(c.restrictions):,} restriction relations")
-    fill = None
+    fill = sign_fill = None
     if ctx.speed_zones:
         stage("speed_zones")
         zones = [gov_speed.load(p, ctx.out) for p in ctx.speed_zones]
-        log("speed zones: " + ", ".join(f"{os.path.basename(p)} ({len(z.speeds):,} {'zones' if isinstance(z, gov_speed.AreaIndex) else 'lines'})"
+        def kind(z):
+            return ("zones" if isinstance(z, gov_speed.AreaIndex) else
+                    "signs" if isinstance(z, gov_signs.SignSet) else "lines")
+        log("speed zones: " + ", ".join(f"{os.path.basename(p)} ({len(z.speeds):,} {kind(z)})"
                                         for p, z in zip(ctx.speed_zones, zones)))
-        fill = gov_speed.first_of(zones)
+        signs = [z for z in zones if isinstance(z, gov_signs.SignSet)]
+        fill = gov_speed.first_of([z for z in zones if z not in signs])
+        sign_fill = gov_speed.sign_fill(signs) if signs else None
     _place_cameras(ctx, c)
     stage("graph")
-    g, si, st = osm_import.build_graph(c, consume=True, speed_fill=fill)
-    del fill
+    g, si, st = osm_import.build_graph(c, consume=True, speed_fill=fill, sign_fill=sign_fill)
+    del fill, sign_fill
     zones = None
     del c
     gc.collect()

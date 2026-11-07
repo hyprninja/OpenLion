@@ -124,6 +124,13 @@ class FeatureSpeedTest(unittest.TestCase):
         self.assertIn("part-time", why)
         self.assertIsNone(gov_speed.feature_speed({"SPEED_ZONE": "", "CARRIAGEWAY": "ASCENDING"})[0])
 
+    def test_tas_keeps_the_lower_direction(self):
+        tas = {"CWAY_CODE": "A", "DSG_NAME": "Tasman HWY"}
+        self.assertEqual(gov_speed.feature_speed({**tas, "PD": 60, "CD": 80}), (60, None))
+        self.assertEqual(gov_speed.feature_speed({**tas, "PD": 100, "CD": 0}), (100, None))   # one carriageway
+        self.assertEqual(gov_speed.feature_speed({**tas, "PD": None, "CD": 70}), (70, None))
+        self.assertIsNone(gov_speed.feature_speed({**tas, "PD": None, "CD": None})[0])
+
     def test_victoria_still_reads(self):
         self.assertEqual(gov_speed.feature_speed({"speed_limit": "80", "zone_conditions": ["Normal Operation"]}), (80, None))
         self.assertIsNone(gov_speed.feature_speed({"speed_limit": "40", "zone_conditions": ["School"]})[0])

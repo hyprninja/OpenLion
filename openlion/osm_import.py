@@ -296,13 +296,16 @@ def junction_nodes(ways, buckets=8):
     return out
 
 
-def build_graph(c, max_shape_points=500, consume=False, speed_fill=None):
+def build_graph(c, max_shape_points=500, consume=False, speed_fill=None, sign_fill=None):
     """Collected OSM data -> (Graph, seginfo record list, stats).
     consume=True empties c.ways as it goes, so the raw ways and the finished graph are
     never in memory together (the pipeline takes what else it needs from them first).
     speed_fill: optional callable(xy, highway) -> km/h or None, asked for road pieces OSM has
     no maxspeed for (gov_speed.Index.lookup). Service roads and ramps are never asked:
-    they run beside bigger roads and would pick up those roads' limits."""
+    they run beside bigger roads and would pick up those roads' limits.
+    sign_fill: optional callable(graph, highway per segment, stats) -> (segment, km/h) pairs, run
+    once the roads are joined up (gov_speed.sign_fill: limits walked on from speed signs); only
+    segments still without a limit are filled."""
     junction = junction_nodes(c.ways)
     in_restriction = {w for _, frm, _, to in c.restrictions for w in (frm, to)}
     g = Graph()
@@ -312,6 +315,7 @@ def build_graph(c, max_shape_points=500, consume=False, speed_fill=None):
     si_index, si_records = {}, []
     stats = collections.Counter()
     piece_of = collections.defaultdict(list)   # osm way id -> [(seg, a_osm, b_osm)]
+    seg_hw = [] if sign_fill is not None else None
 
     def node(nid, x, y):
         if nid not in nodes:
@@ -370,6 +374,8 @@ def build_graph(c, max_shape_points=500, consume=False, speed_fill=None):
             s = g.add_segment(a, b, length_ft(xy), si_index[v], None, Shape(shape) if shape else None, [], adas)
             g.seg_label.append(label)
             g.seg_country.append(tags.get(COUNTRY_TAG, 0))
+            if seg_hw is not None:
+                seg_hw.append(hw)
             if wid in in_restriction:
                 piece_of[wid].append((s, seq[0][0], seq[-1][0]))
             stats["segments"] += 1
@@ -390,6 +396,14 @@ def build_graph(c, max_shape_points=500, consume=False, speed_fill=None):
 
     for n in range(g.n_nodes):
         g.node_arms[n].sort(key=lambda s: (first_step(n, s), s))
+
+    if sign_fill is not None:
+        for s, v in list(sign_fill(g, seg_hw, stats)):
+            if g.seg_adas[s] is None:
+                g.seg_adas[s] = shared({"content": 2, "speed_kmh": v, "lanes": None, "n_limits": 0})
+                stats["speed limit from government speed signs"] += 1
+                stats["with speed limit"] += 1
+        seg_hw = None
 
     # The format allows at most 8 arms per node. Split bigger junctions: move arms
     # beyond 7 to a twin node at the same spot, joined by a 1 ft two-way connector.

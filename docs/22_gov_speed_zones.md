@@ -1,11 +1,14 @@
-# 22. Speed limits from government open data (Victoria, WA, NSW, ACT, New Zealand)
+# 22. Speed limits from government open data (Victoria, WA, NSW, Queensland, Tasmania, ACT, New Zealand)
 
 OSM has a `maxspeed` tag on about a third of Australian road segments. Some
 governments publish their whole speed limit register as open data. This report adds
 five of them as optional sources for roads OSM has no limit for: Victoria, Western
 Australia (see [Western Australia](#western-australia)), New South Wales (see
 [New South Wales](#new-south-wales)), the ACT (see [ACT](#act)) and New Zealand (see
-[New Zealand](#new-zealand)).
+[New Zealand](#new-zealand)). Queensland publishes no register, only a survey of its
+speed signs, which gives a sixth, smaller source (see [Queensland](#queensland)), and
+Tasmania publishes limits for its state roads only (see [Tasmania](#tasmania)). South
+Australia and the Northern Territory publish nothing in an open format.
 
 ## Source
 
@@ -294,6 +297,149 @@ retrying an empty list twice. Only Queensland and Tasmania are still in the
 coming-soon box. With all five sources on an Australia + New Zealand card, the page
 still fits without scrolling.
 
+## Queensland
+
+Queensland has no speed zone data. The only open source is the Department of
+Transport and Main Roads' **Speed Limits for state and local roads**
+([data.qld.gov.au](https://www.data.qld.gov.au/dataset/speed-limits-for-state-and-local-roads)),
+licence **CC BY 4.0**. It's labelled "Point in time – Not updated": a survey of speed
+signs, driven in 2019 and 2020, published in 2022 as 64 CSV files, one per council or
+group of councils (22 MB). The catalogue says: "Speed zones or links not available. No
+further updates planned." TMR's map services (traffic counts, crashes, state roads)
+have no speed layer either.
+
+Each record is a point: latitude, longitude, `SPEED`, `SIGN_NUM` (the sign's standard
+number), `SIGN_TXT`, street name and type, and the `DIRECTION` the survey car was
+driving (8 compass points).
+
+| Records | count | used |
+|---|---:|---|
+| `UNSIGNED` (a road with no sign: 50 or 100 by the default rule) | 133,839 | no: default rule, as for WA |
+| R4-1A/B/C/D, plain speed limit signs with no text | 52,215 | **yes** |
+| R4-1 with text (road work, ramp speed, school zone, crash zone...) | 928 | no |
+| R4-Q01 school zone signs | 9,198 | no: part-time |
+| R4-10/R4-11 area signs ("40 AREA" and its end) | 4,590 | no: cover every street in an area |
+| R4-1 with no usable speed, direction or position | 180 | no |
+| TC1785 variable (gantries, tunnels), other temporary and warning signs, shared zones | 5,142 | no |
+
+### Signs to limits (`openlion/gov_signs.py`)
+
+A sign starts a limit in its direction of travel, so the limits are worked out over the
+finished road graph rather than per road piece: `build_graph(..., sign_fill=...)`
+runs once the roads are joined up and fills only pieces still without a limit.
+
+- **Snap**: each sign onto the nearest OSM piece within 20 m running its way (within
+  60°), if that piece has the same name. Names are compared with the street type
+  shortened ("Stuart Drive" = "STUART DR").
+- **Walk** forward from the sign: at each junction onto the straightest piece with the
+  same name (turn of at most 60°; two within 20° of each other is a fork, and the walk
+  stops). It also stops at the next sign on the road, or at a sign facing the other
+  way that shows a different speed (a zone boundary usually has one each way), and
+  after 5 km.
+- **Vote** per piece and direction: the speed covering at least 60 % of the piece and
+  75 % of what was covered; two directions that disagree give the lower.
+- Never filled: motorways (gantry signs, mostly variable; 72 % agreement in the
+  prototype), ramps, service roads and tracks.
+
+`fetch_qld()` reads the catalogue, downloads the 64 files (~1 min), keeps the usable
+signs and writes them as one CSV (3 MB). `prepare()` turns that into a third file type
+(`OLGSPS1`, 466 KB). The walk for all of Queensland takes about a minute.
+
+### Results: all of Queensland (`tests/gov_speed_check.py`)
+
+OSM graph of 137.9,-29.2 to 153.65,-9.0 (382k ways). 45,274 signs placed; 4,367 sit
+on a road OSM names differently, 2,574 on no road going their way. The signs only
+reach the roads they're on, so there's no "neither" count.
+
+| | segments | km |
+|---|---:|---:|
+| OSM and signs agree | 61,585 | 13,807 |
+| OSM and signs disagree | 8,664 | 2,020 |
+| **Filled from the signs (OSM had nothing)** | **27,580** | **7,895** |
+
+**Agreement where both have a limit: 87.7 %** (arterial 89 %, highway 87 %, street
+84 %). Filled km: 60 → 2,645, 80 → 1,702, 100 → 1,493, 50 → 1,222, 70 → 467,
+40 → 231. Largest disagreements, OSM → signs: 50 → 60 (2,158), 60 → 70 (964),
+60 → 50 (687), 100 → 80 (556). Many of the 50 → 60 ones are inner Brisbane roads
+(Ipswich Road, Gladstone Road, Old Cleveland Road) lowered from 60 to 50 since the
+survey, where OSM is newer. Short ones (10–30 m) are junction stubs where a walk runs
+a few metres past a boundary.
+
+This is the smallest gain of the six sources. OSM has 218,000 km without a limit in
+Queensland; the signs fill 8,000 km of it, because most residential streets have no
+sign (they're the `UNSIGNED` default) and the walk only runs along signed roads.
+
+**Brisbane card** (`make_card --bbox 152.7 -27.75 153.3 -27.2 --speed-zones qld_speed.bin`,
+with the file the app prepared): 176,220 segments, 102,445 with a limit (**58.1 %**), of
+which 4,392 come from the signs, against 55.6 % from OSM alone. 12,578 signs were placed
+(the rest are outside the box). The whole graph stage took 18 s.
+`card_check`: 0 problems.
+
+### App
+
+Queensland is a checkbox on the Speed data step, with the blurb "Signposted limits from
+a 2019–20 survey of the state's speed signs, not updated since." The engine downloads it
+(`fetch-qld`) and counts signs as it goes (`SpeedZoneSource.ProgressUnit`). Its version
+is the catalogue's date ("Speed limit signs 23 July 2026"). With six sources, the page
+needed room: the coming-soon box (then just Tasmania) is one line, the "available now"
+note no longer repeats every name, the credits share one "Speed data" label, and the
+default window is 1040×940.
+
+## Tasmania
+
+Department of State Growth, **Speed Limits (on State Highways and Subsidiary Roads)**,
+an ArcGIS feature service (`data.stategrowth.tas.gov.au/ags/rest/services/PUBLIC/
+SPEEDLIMITS/FeatureServer/1`). data.gov.au lists its licence as "not specified", but
+theLIST's own metadata record gives **Creative Commons Attribution 3.0 Australia**. The
+record says the data "has no legal status", is reviewed at least yearly, and that
+"part-time speed limits, such as 40 km/h School Zones & Variable Speed Zones are excluded".
+It's maintained: 253 sections carry a `LAST_UPDATED` date, the newest 7 July 2026.
+
+It only covers the **state road network** (state highways and subsidiary roads, ~4,000
+km); council roads aren't in it. 1,798 sections as lines, one per carriageway
+(`CWAY_CODE` A; B and C for each side of a divided road; R.. for ramps), each with `PD`
+(the limit in the line's own direction) and `CD` (the other way; 0 or empty on one side
+of a divided road). Speeds: 100 (475), 80 (429), 60 (345), 50 (144), 70 (120), 110 (77),
+90 (42), 40 (23). The two differ on 228 sections; the lower is kept, as for the other
+sources.
+
+`fetch_tas()` pages the layer (one request, ~5 s, 7 MB). The layer has no edit date, so
+`latest_tas()` asks it for its largest `LAST_UPDATED` (an `outStatistics` query) and
+names the version from that ("State Road Speed Limits 7 July 2026"). `prepare()`: 1,703
+lines (90 sections have no geometry), 0.5 MB.
+
+### Results: Tasmania (`tests/gov_speed_check.py`)
+
+OSM graph of 143.5,-44.0 to 148.6,-39.4 (49k ways).
+
+| | segments | km |
+|---|---:|---:|
+| OSM and Tasmania agree | 5,356 | 2,689 |
+| OSM and Tasmania disagree | 671 | 177 |
+| OSM only | 12,728 | 3,550 |
+| **Filled from Tasmania (OSM had nothing)** | **2,001** | **1,186** |
+| Neither | 65,638 | 30,308 |
+
+**Agreement where both have a limit: 88.9 %** (freeway 96 %, highway 89 %, arterial
+81 %, street 66 %: streets only meet the data where they cross or run beside a state
+road). Filled km: 100 → 822, 80 → 211, 60 → 53, 70 → 48, 50 → 33. Largest
+disagreements, OSM → Tasmania: 60 → 50 (100), 100 → 80 (93), 80 → 60 (82), 80 → 100
+(76). OSM already has most of the state roads, so the gain is small: the 30,000 km of
+council roads without a limit stay that way.
+
+**Hobart card** (`make_card --bbox 147.0 -43.1 147.6 -42.6 --speed-zones tas_speed.bin`):
+21,512 segments, 6,582 with a limit (**30.6 %**), of which 173 come from Tasmania,
+against 29.8 % from OSM alone. `card_check`: 0 problems.
+
+### App
+
+Tasmania is a checkbox on the Speed data step ("State highways and main roads only"),
+downloaded by the engine (`fetch-tas`). The app reads the version from the same
+statistics query (`SpeedZoneDownloader.Dated` now also takes an ArcGIS statistics
+reply). No state is "coming soon" any more, so that line is gone; the box keeps the note
+on South Australia and the Northern Territory. With seven sources the rows are a little
+tighter, and the page still fits without scrolling at 1040×940.
+
 ## New Zealand
 
 NZ Transport Agency Waka Kotahi, **National Speed Limit Register** (NSLR), licence
@@ -380,5 +526,7 @@ scrolling.
 
 ## Not done
 
-- Queensland and Tasmania (their open data is stale or partial).
-- Car tests of cards with WA, NSW, ACT or NZ limits.
+- A Queensland register: if TMR publishes speed zones, they'd replace the 2019–20 signs.
+- Tasmanian council roads, if they're ever published.
+- South Australia and the Northern Territory: nothing open to use.
+- Car tests of cards with WA, NSW, Queensland, Tasmania, ACT or NZ limits.
