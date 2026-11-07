@@ -132,6 +132,9 @@ public sealed record SpeedZoneRemote(Uri Url, string FileName, string Name, Date
 
 public class SpeedZoneException(string message, Exception? inner = null) : Exception(message, inner);
 
+/// <summary>A download far bigger than the source ever is: the partial file is thrown away.</summary>
+public sealed class TooBigException(string message) : SpeedZoneException(message);
+
 /// <summary>
 /// Gets one state's speed zones: asks the data catalogue (CKAN) for the newest GeoJSON, downloads
 /// it, has the engine turn it into its compact file (python -m openlion.gov_speed prepare), and
@@ -314,7 +317,15 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
                 File.Delete(stale);
             if (!File.Exists(geo))
             {
-                await FetchAsync(remote.Url, part, progress, ct);
+                try
+                {
+                    await FetchAsync(remote.Url, part, progress, ct);
+                }
+                catch (TooBigException)
+                {
+                    File.Delete(part);   // don't resume a file that's already too big
+                    throw;
+                }
                 File.Move(part, geo, overwrite: true);
             }
         }
@@ -375,6 +386,9 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         return full;
     }
 
+    /// <summary>The largest download accepted from this source: four times its usual size, at least 256 MB.</summary>
+    public long MaxBytes => Math.Max(source.ApproxMb, 64) * 4L * 1024 * 1024;
+
     async Task FetchAsync(Uri url, string part, IProgress<DownloadProgress>? progress, CancellationToken ct)
     {
         long have = File.Exists(part) ? new FileInfo(part).Length : 0;
@@ -382,13 +396,26 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
         if (have > 0)
             req.Headers.Range = new RangeHeaderValue(have, null);
         using var r = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (r.RequestMessage?.RequestUri is { } final && !Allowed(final, source))
+            throw new SpeedZoneException($"The download was redirected to {final.Host}; OpenLion only downloads " +
+                                         $"{source.Title} speed zones from {string.Join(", ", source.AllowedHosts)}.");
         if (r.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable && have > 0)
-            return;     // already complete
+        {
+            // complete only if the server says the file is exactly what we have; otherwise it changed: start over
+            if (r.Content.Headers.ContentRange?.Length == have)
+                return;
+            File.Delete(part);
+            await FetchAsync(url, part, progress, ct);
+            return;
+        }
         r.EnsureSuccessStatusCode();
         bool resume = have > 0 && r.StatusCode == HttpStatusCode.PartialContent;
         if (!resume)
             have = 0;
         long? total = r.Content.Headers.ContentLength is { } cl ? cl + have : null;
+        if (total > MaxBytes)
+            throw new TooBigException($"The {source.Title} speed zone file is {total / 1e6:N0} MB, far bigger than " +
+                                         $"expected (about {source.ApproxMb} MB). Not downloaded.");
         await using var src = await r.Content.ReadAsStreamAsync(ct);
         await using var dst = new FileStream(part, resume ? FileMode.Append : FileMode.Create, FileAccess.Write,
             FileShare.None, 1 << 20, FileOptions.Asynchronous);
@@ -403,6 +430,9 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
             await dst.WriteAsync(buf.AsMemory(0, n), ct);
             done += n;
             since += n;
+            if (done > MaxBytes)
+                throw new TooBigException($"The {source.Title} speed zone file is over {MaxBytes / 1e6:N0} MB, far bigger " +
+                                             $"than expected (about {source.ApproxMb} MB). Download stopped.");
             var now = clock.Elapsed;
             if (now - tick >= TimeSpan.FromMilliseconds(250))
             {
@@ -414,5 +444,8 @@ public sealed class SpeedZoneDownloader(HttpClient http, string folder, SpeedZon
             }
         }
         progress?.Report(new DownloadProgress(DownloadPhase.Downloading, done, total, rate));
+        if (total is { } want && done != want)
+            throw new SpeedZoneException($"The {source.Title} download stopped early ({done / 1e6:N0} of {want / 1e6:N0} MB). " +
+                                         "Press Download to carry on.");
     }
 }

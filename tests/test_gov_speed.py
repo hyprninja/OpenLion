@@ -136,5 +136,75 @@ class FeatureSpeedTest(unittest.TestCase):
         self.assertIsNone(gov_speed.feature_speed({"speed_limit": "40", "zone_conditions": ["School"]})[0])
 
 
+class DamagedDownloadTest(unittest.TestCase):
+    """A cut-off, empty or odd file never becomes a prepared zone file."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def prepare(self, text):
+        src = os.path.join(self.tmp.name, "in.geojson")
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        out = os.path.join(self.tmp.name, "out.bin")
+        stats = gov_speed.prepare(src, out)
+        return stats, out
+
+    def assertRefused(self, text, words):
+        with self.assertRaisesRegex(ValueError, words):
+            self.prepare(text)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "out.bin")))
+
+    def collection(self, feats):
+        return json.dumps({"type": "FeatureCollection", "features": feats})
+
+    def test_cut_off_after_a_whole_feature_is_refused(self):
+        full = self.collection(ZONES)
+        last = json.dumps(ZONES[1])
+        self.assertRefused(full[:full.index(last) + len(last)], "ends early")
+        self.assertRefused(full[:full.index(last) + len(last)] + ", ", "ends early")
+
+    def test_cut_off_mid_feature_is_refused(self):
+        full = self.collection(ZONES)
+        self.assertRefused(full[:len(full) // 2], "damaged feature|ends early")
+
+    def test_empty_collection_is_refused(self):
+        self.assertRefused(self.collection([]), "no usable speed zones")
+
+    def test_only_school_zones_is_refused(self):
+        self.assertRefused(self.collection([ZONES[2]]), "no usable speed zones")
+
+    def test_not_geojson_is_refused(self):
+        self.assertRefused("<html>Service busy</html>", "not a GeoJSON FeatureCollection")
+
+    def test_null_and_odd_features_are_skipped(self):
+        stats, _ = self.prepare(self.collection([None, 7, {"geometry": "x"}] + ZONES))
+        self.assertEqual(stats["lines"], 1)
+        self.assertEqual(stats["skipped (not a feature)"], 2)
+
+    def test_bad_coordinates_are_skipped(self):
+        bad = feature([[145.0, "x"], [145.0, -37.0]], 50)
+        stats, _ = self.prepare(self.collection([bad] + ZONES))
+        self.assertEqual(stats["skipped (bad geometry)"], 1)
+        self.assertEqual(stats["lines"], 1)
+
+    def test_altitude_is_ignored(self):
+        stats, _ = self.prepare(self.collection([feature([[x, y, 12.5] for x, y in NS], 60)]))
+        self.assertEqual(stats["lines"], 1)
+
+    def test_polygons_with_altitude_and_nulls(self):
+        ring = [[174.7, -36.85, 0], [174.71, -36.85, 0], [174.71, -36.84, 0], [174.7, -36.84, 0], [174.7, -36.85, 0]]
+        zone = {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]},
+                "properties": {"speedLimitZoneValue": 50, "speedCategoryName": "Permanent"}}
+        stats, _ = self.prepare(self.collection([None, zone]))
+        self.assertEqual(stats["zones"], 1)
+
+    def test_victorian_links_must_be_https_from_victoria(self):
+        self.assertTrue(gov_speed._vic_allowed("https://opendata.transport.vic.gov.au/x/zones.geojson"))
+        self.assertFalse(gov_speed._vic_allowed("http://opendata.transport.vic.gov.au/x/zones.geojson"))
+        self.assertFalse(gov_speed._vic_allowed("https://opendata.transport.vic.gov.au.evil.com/zones.geojson"))
+
+
 if __name__ == "__main__":
     unittest.main()

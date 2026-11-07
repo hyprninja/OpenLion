@@ -188,6 +188,91 @@ public class SpeedZoneTests
         Assert.Empty(Directory.EnumerateFiles(t.Path));
     }
 
+    /// <summary>Answers every request with the given function and records the requests.</summary>
+    sealed class Server(Func<HttpRequestMessage, HttpResponseMessage> answer) : HttpMessageHandler
+    {
+        public List<HttpRequestMessage> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+        {
+            Requests.Add(req);
+            return Task.FromResult(answer(req));
+        }
+    }
+
+    static readonly SpeedZoneRemote VicFile =
+        new(new Uri(Base + "zones.geojson"), "zones.geojson", "Speed Zones", null);
+
+    static Task<SpeedZoneData> Download(TempDir t, Server s) =>
+        new SpeedZoneDownloader(new HttpClient(s), t.Path, SpeedZoneSource.Victoria)
+            .DownloadAsync(VicFile, new EnginePaths("python", t.Path, false));
+
+    [Fact]
+    public async Task Download_RefusesARedirectToAnotherHost()
+    {
+        using var t = new TempDir();
+        var s = new Server(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent("{}"u8.ToArray()),
+            RequestMessage = new HttpRequestMessage(HttpMethod.Get, "https://evil.example.com/zones.geojson"),
+        });
+        var e = await Assert.ThrowsAsync<SpeedZoneException>(() => Download(t, s));
+        Assert.Contains("evil.example.com", e.Message);
+        Assert.Empty(Directory.EnumerateFiles(t.Path));
+    }
+
+    [Fact]
+    public async Task Download_RefusesAFileFarBiggerThanExpected()
+    {
+        using var t = new TempDir();
+        var s = new Server(_ =>
+        {
+            var c = new ByteArrayContent([1, 2, 3]);
+            c.Headers.ContentLength = 10L << 30;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = c };
+        });
+        await Assert.ThrowsAsync<TooBigException>(() => Download(t, s));
+        Assert.Empty(Directory.EnumerateFiles(t.Path));
+    }
+
+    [Fact]
+    public async Task Download_ThatStopsEarly_IsNotTreatedAsComplete()
+    {
+        using var t = new TempDir();
+        var s = new Server(_ =>
+        {
+            var c = new ByteArrayContent(new byte[10]);
+            c.Headers.ContentLength = 100;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = c };
+        });
+        var e = await Assert.ThrowsAsync<SpeedZoneException>(() => Download(t, s));
+        Assert.Contains("stopped early", e.Message);
+        Assert.False(File.Exists(t.Sub("zones.geojson")));
+        Assert.True(File.Exists(t.Sub("zones.geojson.part")));    // kept to resume
+    }
+
+    [Fact]
+    public async Task Download_RangeNotSatisfiable_ForADifferentLength_StartsOver()
+    {
+        using var t = new TempDir();
+        File.WriteAllBytes(t.Sub("zones.geojson.part"), new byte[10]);
+        var s = new Server(req =>
+        {
+            if (req.Headers.Range is not null)
+            {
+                var c = new ByteArrayContent([]);
+                c.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(5);  // the file is now 5 bytes
+                return new HttpResponseMessage(HttpStatusCode.RequestedRangeNotSatisfiable) { Content = c };
+            }
+            var full = new ByteArrayContent(new byte[100]);
+            full.Headers.ContentLength = 1000;      // stop before the engine runs
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = full };
+        });
+        await Assert.ThrowsAsync<SpeedZoneException>(() => Download(t, s));
+        Assert.Equal(2, s.Requests.Count);
+        Assert.Null(s.Requests[1].Headers.Range);
+    }
+
     [Fact]
     public void BuildKey_AddsSpeedDataOnlyWhenUsed()
     {

@@ -165,19 +165,54 @@ def feature_speed(p):
 
 def _features(path):
     """Yield features from a FeatureCollection one at a time (the file is read as one
-    string, but only one feature is a Python object at a time)."""
+    string, but only one feature is a Python object at a time). A file that isn't a
+    FeatureCollection, or ends before its feature list does (a cut-off download), raises
+    ValueError."""
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     dec = json.JSONDecoder()
-    i = text.index("[", text.index('"features"')) + 1
+    try:
+        i = text.index("[", text.index('"features"')) + 1
+    except ValueError:
+        raise ValueError(f"{os.path.basename(path)}: not a GeoJSON FeatureCollection") from None
     n = len(text)
-    while i < n:
-        while text[i] in " \r\n\t,":
+    while True:
+        while i < n and text[i] in " \r\n\t,":
             i += 1
+        if i >= n:
+            raise ValueError(f"{os.path.basename(path)}: the file ends early (incomplete download?)")
         if text[i] == "]":
             return
-        obj, i = dec.raw_decode(text, i)
+        try:
+            obj, i = dec.raw_decode(text, i)
+        except ValueError as e:
+            raise ValueError(f"{os.path.basename(path)}: damaged feature near character {i:,} "
+                             f"({getattr(e, 'msg', e)})") from None
         yield obj
+
+
+def _points(coords):
+    """(lon, lat) pairs of a coordinate list; a third value (altitude) is ignored."""
+    for c in coords:
+        lon, lat = float(c[0]), float(c[1])
+        if not (math.isfinite(lon) and math.isfinite(lat)):
+            raise ValueError("coordinate is not a number")
+        yield lon, lat
+
+
+def _parts(f):
+    """(properties, geometry) of a feature, or None for something that isn't a feature."""
+    if not isinstance(f, dict):
+        return None
+    p, g = f.get("properties"), f.get("geometry")
+    return (p if isinstance(p, dict) else {}), (g if isinstance(g, dict) else None)
+
+
+def _skip(st, why):
+    st[why] = st.get(why, 0) + 1
+
+
+BAD_GEOMETRY = (TypeError, ValueError, IndexError, KeyError)
 
 
 def prepare(geojson, out):
@@ -186,14 +221,18 @@ def prepare(geojson, out):
     if geojson.lower().endswith(".csv"):
         from openlion import gov_signs
         return gov_signs.prepare_signs(geojson, out)
-    first = next(_features(geojson), None)
-    if first and (first.get("geometry") or {}).get("type") in ("Polygon", "MultiPolygon"):
+    first = next((pg[1] for pg in map(_parts, _features(geojson)) if pg and pg[1]), None)
+    if first and first.get("type") in ("Polygon", "MultiPolygon"):
         return prepare_areas(geojson, out)
     lines = {}      # geometry key -> [speed, xy array]
     st = {"features": 0, "skipped (no speed)": 0, "skipped (no geometry)": 0, "direction pairs disagree": 0}
     for f in _features(geojson):
         st["features"] += 1
-        p, g = f.get("properties") or {}, f.get("geometry")
+        pg = _parts(f)
+        if pg is None:
+            _skip(st, "skipped (not a feature)")
+            continue
+        p, g = pg
         if not g or not g.get("coordinates"):
             st["skipped (no geometry)"] += 1
             continue
@@ -201,14 +240,18 @@ def prepare(geojson, out):
         if speed is None:
             st[why] = st.get(why, 0) + 1
             continue
-        parts = g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]]
         xy = array.array("i")
-        for part in parts:
-            for lon, lat in part:
-                x, y = round(lon * 1e5), round(lat * 1e5)
-                if len(xy) < 2 or (xy[-2], xy[-1]) != (x, y):
-                    xy.append(x)
-                    xy.append(y)
+        try:
+            parts = g["coordinates"] if g.get("type") == "MultiLineString" else [g["coordinates"]]
+            for part in parts:
+                for lon, lat in _points(part):
+                    x, y = round(lon * 1e5), round(lat * 1e5)
+                    if len(xy) < 2 or (xy[-2], xy[-1]) != (x, y):
+                        xy.append(x)
+                        xy.append(y)
+        except BAD_GEOMETRY:
+            _skip(st, "skipped (bad geometry)")
+            continue
         if len(xy) < 4:
             st["skipped (no geometry)"] += 1
             continue
@@ -232,6 +275,8 @@ def prepare(geojson, out):
         offs.append(len(pts) // 2)
     st["lines"] = len(speeds)
     st["points"] = len(pts) // 2
+    if not speeds:
+        raise ValueError(f"{os.path.basename(geojson)}: no usable speed zones ({st['features']:,} features read)")
     tmp = out + ".part"
     with open(tmp, "wb") as fh:
         fh.write(MAGIC + struct.pack("<II", len(speeds), len(pts) // 2))
@@ -388,7 +433,11 @@ def prepare_areas(geojson, out):
     st = {"features": 0, "skipped (no speed)": 0, "skipped (no geometry)": 0}
     for f in _features(geojson):
         st["features"] += 1
-        p, g = f.get("properties") or {}, f.get("geometry")
+        pg = _parts(f)
+        if pg is None:
+            _skip(st, "skipped (not a feature)")
+            continue
+        p, g = pg
         if not g or g.get("type") not in ("Polygon", "MultiPolygon") or not g.get("coordinates"):
             st["skipped (no geometry)"] += 1
             continue
@@ -398,6 +447,11 @@ def prepare_areas(geojson, out):
             continue
         polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
         area, rings = 0.0, []
+        try:
+            polys = [[list(_points(ring)) for ring in poly] for poly in polys]
+        except BAD_GEOMETRY:
+            _skip(st, "skipped (bad geometry)")
+            continue
         for poly in polys:
             for k, ring in enumerate(poly):
                 xy = array.array("i")
@@ -424,6 +478,8 @@ def prepare_areas(geojson, out):
             ring_pts.append(len(pts) // 2)
         poly_rings.append(len(ring_pts) - 1)
     st["zones"] = len(speeds)
+    if not speeds:
+        raise ValueError(f"{os.path.basename(geojson)}: no usable speed zones ({st['features']:,} features read)")
     st["background zones"] = sum(background)
     st["points"] = len(pts) // 2
     tmp = out + ".part"
@@ -653,7 +709,19 @@ def latest_vic():
     if not geo:
         raise RuntimeError("no GeoJSON resource in the Victorian Speed Zones dataset")
     best = max(geo, key=lambda x: x.get("last_modified") or x.get("created") or "")
+    if not _vic_allowed(best["url"]):
+        raise RuntimeError(f"refusing to download the Victorian file from {best['url']}")
     return best["name"], best["url"]
+
+
+VIC_HOSTS = {"opendata.transport.vic.gov.au", "discover.data.vic.gov.au"}
+
+
+def _vic_allowed(url):
+    """Victorian files only over HTTPS from the state's own hosts (as the app allows)."""
+    import urllib.parse
+    u = urllib.parse.urlsplit(url)
+    return u.scheme == "https" and (u.hostname or "").lower() in VIC_HOSTS
 
 
 def fetch_vic(folder):
@@ -665,6 +733,8 @@ def fetch_vic(folder):
         os.makedirs(folder, exist_ok=True)
         req = urllib.request.Request(url, headers={"User-Agent": "OpenLion"})
         with urllib.request.urlopen(req, timeout=120) as r, open(dest + ".part", "wb") as fh:
+            if not _vic_allowed(r.geturl()):
+                raise RuntimeError(f"the Victorian download was redirected to {r.geturl()}")
             while True:
                 b = r.read(1 << 20)
                 if not b:
@@ -871,7 +941,10 @@ if __name__ == "__main__":
     elif len(sys.argv) == 3 and sys.argv[1] == "fetch-nz":
         print(*fetch_nz(sys.argv[2], lambda n: print(f"progress {n}", flush=True)), sep=chr(10))
     elif len(sys.argv) == 4 and sys.argv[1] == "prepare":
-        print(prepare(sys.argv[2], sys.argv[3]))
+        try:
+            print(prepare(sys.argv[2], sys.argv[3]))
+        except (ValueError, UnicodeDecodeError) as e:
+            sys.exit(f"This isn't the speed zone file OpenLion expected: {e}")
     else:
         sys.exit("usage: python -m openlion.gov_speed fetch-vic | fetch-wa | fetch-act | fetch-qld | fetch-tas | fetch-nz <folder> | "
                  "prepare <in.geojson|in.csv> <out.bin>")
