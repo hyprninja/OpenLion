@@ -24,7 +24,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import (cameras, countries, flat, gov_addr, gov_signs, gov_speed, graph, layers, mapfile, memory, osm_addr,  # noqa: E402
+from openlion import (alerts, cameras, countries, flat, gov_addr, gov_nz, gov_signs, gov_speed, graph, layers, mapfile, memory, osm_addr,  # noqa: E402
                       osm_fea, osm_import,
                       osm_names, osm_poi, resources, roads, schema, search, tiler)
 from openlion.common import DamagedTable, build_header  # noqa: E402
@@ -119,11 +119,14 @@ def inputs_of(pbf):
 
 
 def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed_zones=(), gov_cameras=(),
-        addresses=None):
+        addresses=None, alert_lists=(), nz_addresses=None, nz_suburbs=None):
     """pbf: one Australian extract, or [(Country, path)] (see inputs_of).
     speed_zones: government speed zone files (gov_speed.py) that fill in limits OSM lacks.
     gov_cameras: government camera lists (gov_cameras.py); other states get OSM's cameras.
     addresses: a G-NAF zip (gov_addr.py); its house numbers fill streets OSM has none on.
+    alert_lists: official school zone and level crossing lists (alerts.py); OSM elsewhere.
+    nz_addresses / nz_suburbs: LINZ files (gov_nz.py) for New Zealand house numbers and
+    suburb boundaries.
     stage: optional callback, called with a name from STAGES as each stage starts.
     memory_mode: "low", "high" or None (decide from free RAM; see resources.py)."""
     os.makedirs(os.path.join(out, "db"), exist_ok=True)
@@ -143,7 +146,8 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed
             app_stage(name)
 
     try:
-        return _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones, gov_cameras, addresses)
+        return _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones, gov_cameras, addresses,
+                    alert_lists, nz_addresses, nz_suburbs)
     finally:
         sampler.stop()
         log("peak memory per step: " + ", ".join(f"{k} {memory.gb(v)}" for k, v in sampler.peaks().items()))
@@ -152,7 +156,7 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed
 
 # OSM reads, each cached per country as <name>_<CODE>.pickle. Bump a name when the
 # reader's output format changes so stale caches are never loaded.
-READS = ("roads2", "boundaries3", "places3", "fea2", "pois2", "cams1", "addr1")
+READS = ("roads2", "boundaries3", "places3", "fea2", "pois2", "cams1", "addr1", "alerts2")
 GNAF = "gnaf1"                       # the G-NAF read (Australia only), when asked for
 CACHES = READS + ("overview2", GNAF)  # overview2: written alongside roads2
 
@@ -176,6 +180,8 @@ def _read(name, code, path, region, node_index):
         return cameras.read_osm(path, region)
     if name == "addr1":
         return osm_addr.read(path, region, node_index=node_index)
+    if name == "alerts2":
+        return alerts.read_osm(path, region)
     if name == GNAF:
         return gov_addr.read(path, region)
     raise ValueError(name)
@@ -231,8 +237,11 @@ def _remove(path, tries=20):
 class _Ctx:
     """What a stage process needs to know (picklable)."""
 
-    def __init__(self, inputs, db, out, region, plan, lookups, speed_zones=(), gov_cameras=(), addresses=None):
+    def __init__(self, inputs, db, out, region, plan, lookups, speed_zones=(), gov_cameras=(), addresses=None,
+                 alert_lists=(), nz_addresses=None, nz_suburbs=None):
         self.inputs = [(cn.code, p) for cn, p in inputs]
+        self.alert_lists = list(alert_lists)
+        self.nz_addresses, self.nz_suburbs = nz_addresses, nz_suburbs
         self.speed_zones = list(speed_zones)
         self.gov_cameras = list(gov_cameras)
         self.addresses = addresses
@@ -245,6 +254,23 @@ class _Ctx:
     def gnaf_wanted(self):
         """G-NAF given, and Australia is on the card (G-NAF has only Australian addresses)."""
         return bool(self.addresses) and any(code == "AU" for code, _ in self.inputs)
+
+    def has(self, code):
+        return any(c == code for c, _ in self.inputs)
+
+    def localities(self):
+        """Every country's boundary areas and place points, plus LINZ's NZ suburbs."""
+        areas, places = [], []
+        for cn, a in self.per_country("boundaries3"):
+            areas += a
+        for cn, (a, pts) in self.per_country("places3"):
+            areas += a
+            places += pts
+        if self.nz_suburbs and self.has("NZ"):
+            linz = gov_nz.read_suburbs(self.nz_suburbs, countries.NZ.catalog, self.region)
+            log(f"LINZ suburbs and localities: {len(linz):,} (OSM places kept where LINZ has none)")
+            areas += linz
+        return areas, places
 
     def cache(self, name, cn):
         return os.path.join(self.out, f"{name}_{cn.code}.pickle")
@@ -330,6 +356,7 @@ def _roads_stage(ctx, stage, q):
         fill = gov_speed.first_of([z for z in zones if z not in signs])
         sign_fill = gov_speed.sign_fill(signs) if signs else None
     _place_cameras(ctx, c)
+    _place_alerts(ctx, c)
     stage("graph")
     g, si, st = osm_import.build_graph(c, consume=True, speed_fill=fill, sign_fill=sign_fill)
     del fill, sign_fill
@@ -352,12 +379,7 @@ def _roads_stage(ctx, stage, q):
     log(f"graph: {dict(st)}")
 
     stage("boundaries")
-    areas, places = [], []
-    for cn, a in ctx.per_country("boundaries3"):
-        areas += a
-    for cn, (a, pts) in ctx.per_country("places3"):
-        areas += a
-        places += pts
+    areas, places = ctx.localities()
     log(f"boundaries: {len(areas):,} areas, {len(places):,} place points")
     factory = {"stt": ctx.raw("auz.stt"), "cny": ctx.raw("auz.cny"), "cal": ctx.raw("au.cal"),
                "cat": ctx.raw("au.cat")}
@@ -374,6 +396,13 @@ def _roads_stage(ctx, stage, q):
         log(f"G-NAF: {len(gn):,} house numbers; {cst['g-naf: added']:,} added, "
             f"{cst['g-naf: already in OSM']:,} already in OSM")
         del gn
+    if ctx.nz_addresses and ctx.has("NZ"):
+        ln = gov_nz.read_addresses(ctx.nz_addresses, ctx.region)
+        cst = collections.Counter()
+        addr = gov_addr.combine(addr, ln, cst)
+        log(f"LINZ: {len(ln):,} house numbers; {cst['g-naf: added']:,} added, "
+            f"{cst['g-naf: already in OSM']:,} already in OSM")
+        del ln
     stage("names")
     tables, nst = osm_names.build(g, g.seg_label, areas, factory, places=places, addresses=addr)
     del addr
@@ -432,6 +461,27 @@ def _place_cameras(ctx, c):
         + f"; OSM cameras replaced by official lists: {report['osm_dropped']}")
 
 
+ALERTS_FILE = "alerts.pickle"
+ALERTS_REPORT = "alerts_report.json"
+
+
+def _place_alerts(ctx, c):
+    """School zones and level crossings (alerts.py) for the POI stage, placed on the roads."""
+    areas = []
+    for cn, a in ctx.per_country("boundaries3"):
+        areas += [x for x in a if x.level == 4]
+    st_idx = osm_names.AreaIndex(areas, cell=50000)
+    osm = {cn.code: r for cn, r in ctx.per_country("alerts2")}
+    out, report = alerts.place(c.ways, osm, ctx.alert_lists, st_idx, [cn.code for cn, _ in ctx.countries()],
+                               ctx.region)
+    save_cache(os.path.join(ctx.out, ALERTS_FILE), out)
+    with open(os.path.join(ctx.out, ALERTS_REPORT), "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=1)
+    n = collections.Counter(a["cat"] for a in out)
+    log(f"road alerts: {n['school_zone']:,} school zones, {n['school_point']:,} school zone entries, "
+        f"{n['railway']:,} level crossing approaches; {report['stats']}")
+
+
 def _fea_stage(ctx, stage, q):
     """Background map (auz.fea): water, parks, land use, coast and the overview roads."""
     stage("fea_read")
@@ -473,26 +523,26 @@ def _pois_stage(ctx, stage, q):
         for cat, x, y, tags in part:
             tags[osm_poi.COUNTRY_TAG] = cn.catalog
             pois.append((cat, x, y, tags))
-    areas, places = [], []
-    for cn, a in ctx.per_country("boundaries3"):
-        areas += a
-    for cn, (a, pts) in ctx.per_country("places3"):
-        areas += a
-        places += pts
+    areas, places = ctx.localities()
     stage("pois")
     db = ctx.db
     poi_path = os.path.join(ctx.out, "edb", "POI", "aunz_sql.db3")
     cams = load_cache(os.path.join(ctx.out, CAMERAS_FILE))
+    al = load_cache(os.path.join(ctx.out, ALERTS_FILE))
     pst = osm_poi.build(pois, os.path.join(db, "..", "edb", "POI", "aunz_sql.db3"), poi_path, areas,
-                        ctx.poi_box, places=places, cameras=cams)
-    log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM), {pst.get('cameras', 0):,} camera POIs")
+                        ctx.poi_box, places=places, cameras=cams, alerts=al)
+    log(f"POIs: {pst['pois']:,} written ({len(pois):,} read from OSM), {pst.get('cameras', 0):,} camera POIs, "
+        f"{pst.get('school_zone', 0):,} school zones, {pst.get('school_point', 0):,} school zone entries, "
+        f"{pst.get('railway', 0):,} level crossing approaches")
 
 
-def _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones=(), gov_cameras=(), addresses=None):
+def _run(pbf, db, out, bbox, lookups, stage, region, plan, speed_zones=(), gov_cameras=(), addresses=None,
+         alert_lists=(), nz_addresses=None, nz_suburbs=None):
     import multiprocessing as mp
     inputs = inputs_of(pbf)
     log("countries: " + ", ".join(f"{c.title} ({os.path.basename(p)})" for c, p in inputs))
-    ctx = _Ctx(inputs, db, out, region, plan, lookups, speed_zones, gov_cameras, addresses)
+    ctx = _Ctx(inputs, db, out, region, plan, lookups, speed_zones, gov_cameras, addresses, alert_lists,
+               nz_addresses, nz_suburbs)
 
     q = None
     order = {s: i for i, s in enumerate(STAGES)}
@@ -627,7 +677,12 @@ if __name__ == "__main__":
     ap.add_argument("--gov-cameras", action="append", default=[],
                     help="a government camera list (gov_cameras.py STATE.json); other states use OSM's")
     ap.add_argument("--addresses", help="G-NAF zip: house numbers for streets OSM has none on")
+    ap.add_argument("--alerts", action="append", default=[],
+                    help="an official school zone / level crossing list (alerts.py); OSM elsewhere")
+    ap.add_argument("--nz-addresses", help="LINZ addresses (gov_nz.py addresses.csv.gz)")
+    ap.add_argument("--nz-suburbs", help="LINZ suburbs and localities (gov_nz.py suburbs.json.gz)")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
     run([a.pbf] + a.extract, a.db, a.out, bb, a.lookup, memory_mode=a.memory, speed_zones=a.speed_zones,
-        gov_cameras=a.gov_cameras, addresses=a.addresses)
+        gov_cameras=a.gov_cameras, addresses=a.addresses, alert_lists=a.alerts, nz_addresses=a.nz_addresses,
+        nz_suburbs=a.nz_suburbs)

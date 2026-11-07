@@ -37,6 +37,9 @@ public static class AppPaths
         Path.Combine(Root, "speed", s.Code.ToLowerInvariant());
     /// <summary>Official speed camera lists, downloaded by the engine at each build (VIC.json, ...).</summary>
     public static string CamerasFolder => Path.Combine(Root, "cameras");
+    /// <summary>Official school zone and level crossing lists and New Zealand's LINZ addresses and
+    /// suburbs, downloaded by the engine (alerts/, linz/).</summary>
+    public static string GovDataFolder => Path.Combine(Root, "govdata");
     /// <summary>The G-NAF release (house numbers), one zip at a time.</summary>
     public static string GnafFolder => Path.Combine(Root, "gnaf");
     /// <summary>Downloaded voice packs, one zip each.</summary>
@@ -60,7 +63,7 @@ public static class AppPaths
 /// (see <see cref="OsmKey"/>).</param>
 /// <param name="CameraNote">What the build said about its speed camera sources (SpeedCameras.Describe).</param>
 public sealed record BuildRecord(string NavigationPath, uint FactoryVolumeSerial, string OsmFileName, DateOnly? OsmDate,
-    int Files, long Bytes, DateTime BuiltUtc, bool Partial, string? CameraNote = null)
+    int Files, long Bytes, DateTime BuiltUtc, bool Partial, string? CameraNote = null, string? AlertNote = null)
 {
     /// <summary>What a build is keyed on: the extracts' file names in country order. One
     /// Australian extract gives its plain file name, as OpenLion 1.0 stored it.</summary>

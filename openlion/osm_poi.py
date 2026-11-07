@@ -121,12 +121,16 @@ CATEGORY_NAMES = {
     62: "government office", 65: "department store", 66: "office supply store", 67: "campground",
     68: "book store", 69: "clothing store", 70: "sporting goods store",
     55: "camera",                     # speed cameras (cameras.py), not from RULES
+    54: "school zone", 59: "school point", 57: "railway",     # alerts.py, not from RULES
 }
 CAMERA_CAT = 55
+ALERT_CAT = {"school_zone": 54, "school_point": 59, "railway": 57}
 
 
-# road-sense alert categories (left empty by OSM builds, except "camera": cameras.py)
+# road-sense alert categories: "camera" from cameras.py; "school zone", "school point" and
+# "railway" from alerts.py; "blackspot" and "check speed" stay empty
 ROAD_SENSE = ("school zone", "camera", "blackspot", "railway", "check speed", "school point")
+FILLED_ALERTS = ("camera", "school zone", "school point", "railway")
 
 
 def card_categories(con):
@@ -265,12 +269,14 @@ def read(pbf_path, bbox=None, node_index="flex_mem"):
 CAMERA_NAME = "Camera"           # factory POI name of every camera
 
 
-def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, places=(), cameras=(), today=None):
+def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, places=(), cameras=(), today=None,
+          alerts=()):
     """Write out_path: the factory POI database with its POIs replaced by `pois`.
     areas / places: osm_names.read_boundaries() / read_places() output, for the city /
     state of each POI. A POI's country is the catalog in tags[COUNTRY_TAG] (default 0).
     bbox: map extent (deg * 1e5); POIs outside it (e.g. Heard Island) are left out.
-    cameras: cameras.place() output, written to the card's camera category."""
+    cameras: cameras.place() output, written to the card's camera category.
+    alerts: alerts.place() output (school zones, school points, level crossings)."""
     from . import countries, osm_names
     stats = collections.Counter()
     loc_idx = st_idx = None
@@ -306,6 +312,16 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
             tags = {"addr:street": cam.get("road"), "_camera": cam,
                     COUNTRY_TAG: _c.NZ.catalog if cam.get("state") == "NZ" else _c.AU.catalog}
             rows.append((morton(x, y), CAMERA_CAT, x, y, CAMERA_NAME, tags))
+    if alerts:
+        from . import alerts as _alerts
+        for al in alerts:
+            x, y = al["x"], al["y"]
+            if bbox and not (bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3]):
+                stats["skipped: alert outside the map"] += 1
+                continue
+            tags = {"addr:street": al.get("road"), "_alert": al,
+                    COUNTRY_TAG: countries.NZ.catalog if al.get("state") == "NZ" else countries.AU.catalog}
+            rows.append((morton(x, y), ALERT_CAT[al["cat"]], x, y, _alerts.POI_NAME[al["cat"]], tags))
     stamp = (today or datetime.date.today()).strftime("%d-%b-%y").upper()
     rows.sort(key=lambda r: r[:5])
 
@@ -360,9 +376,13 @@ def build(pois, factory_db, out_path, areas=None, bbox=None, progress=None, plac
         addr.append((pid, sid(text(tags.get("addr:housenumber"), 20)), sid(text(tags.get("addr:street"))), None,
                      sid(city), sid(region), sid(country.name), None, sid(p_pretty)))
         cam = tags.get("_camera")
+        al = tags.get("_alert")
         if cam is not None:
             alert.append((pid, cam.get("speed"), cam.get("heading"), stamp, cam["type"], 1, None))
             stats["cameras"] += 1
+        elif al is not None:     # factory style: speed + heading, no camera type or fixture status
+            alert.append((pid, al.get("speed"), al.get("heading"), stamp, None, None, None))
+            stats[al["cat"]] += 1
         else:
             alert.append((pid, None, None, None, None, None, None))
         stats[f"category {cat}"] += 1
