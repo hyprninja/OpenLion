@@ -35,7 +35,7 @@ public sealed class BuildMapsStep : StepViewModel
     BuildProgress? _progress;
     BuildPhase _phase;
     double _percent;
-    string _status = "", _detail = "", _elapsed = "", _summary = "", _intro = "", _warning = "", _cameraNote = "";
+    string _status = "", _detail = "", _elapsed = "", _summary = "", _intro = "", _warning = "", _cameraNote = "", _alertNote = "";
     string? _reportPath;
 
     public BuildMapsStep(Session session) : base("Build maps")
@@ -90,6 +90,9 @@ public sealed class BuildMapsStep : StepViewModel
     /// <summary>Which states' speed cameras are official and up to date, and which get OSM's guess.</summary>
     public string CameraNote { get => _cameraNote; private set { if (Set(ref _cameraNote, value)) Raise(nameof(HasCameraNote)); } }
     public bool HasCameraNote => CameraNote.Length > 0;
+    /// <summary>Where school zones, level crossings and New Zealand's addresses and suburbs come from.</summary>
+    public string AlertNote { get => _alertNote; private set { if (Set(ref _alertNote, value)) Raise(nameof(HasAlertNote)); } }
+    public bool HasAlertNote => AlertNote.Length > 0;
     public string? ReportPath { get => _reportPath; private set => Set(ref _reportPath, value); }
 
     public override bool CanGoNext => Phase == BuildPhase.Done;
@@ -114,12 +117,14 @@ public sealed class BuildMapsStep : StepViewModel
             Detail = $"{build.Files:N0} files, {build.Bytes / 1e6:N0} MB, checked.";
             Warning = build.Partial ? $"This is a TEST build of a small area only, not all of {Places}." : "";
             CameraNote = build.CameraNote ?? "";
+            AlertNote = build.AlertNote ?? "";
             Phase = BuildPhase.Done;
             return;
         }
         _session.Build = null;
         Status = Detail = "";
         CameraNote = SpeedCameras.Preview(_session.Countries);
+        AlertNote = RoadAlerts.Preview(_session.Countries);
         Phase = BuildPhase.Ready;
         Intro = osm is null ? "" :
             $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}{Extras}, using your factory card's copy. " +
@@ -261,7 +266,7 @@ public sealed class BuildMapsStep : StepViewModel
             var zones = _session.SpeedZones.Select(z => z.Path).ToList();
             var req = new BuildRequest(extracts, nav, FactoryManifest is { } m && File.Exists(m) ? m : null,
                 AppPaths.BuildWorkFolder, AppPaths.BuildOutput, bbox, zones, AppPaths.CamerasFolder, _session.Gnaf?.Path,
-                _session.Voice?.Path);
+                _session.Voice?.Path, AppPaths.GovDataFolder);
             AppLog.Write($"build: engine {engine.Python} ({(engine.Bundled ? "bundled" : "dev")}), " +
                          $"extracts {string.Join(", ", extracts.Select(x => $"{x.Code}={x.Path}"))}, " +
                          $"factory {nav}{(bbox is null ? "" : ", bbox " + string.Join(" ", bbox))}" +
@@ -283,7 +288,15 @@ public sealed class BuildMapsStep : StepViewModel
                 AppLog.Write("build: speed cameras " + string.Join(", ", states.Select(s =>
                     $"{s.Code} {s.Source}{(s.Cameras is { } n ? " " + n : "")}{(s.DownloadFailed ? " (download failed)" : "")}")));
             });
-            result = await MapBuild.RunAsync(engine, req, progress, ct, cameras);
+            var govData = new Progress<GovDataReport>(r =>
+            {
+                var note = RoadAlerts.Describe(r);
+                if (note.Length > 0)
+                    AlertNote = note;
+                AppLog.Write("build: official lists " + string.Join(", ", r.Sources.Select(s =>
+                    $"{s.Id} {s.Download ?? "-"} {s.Fetched?.ToString("yyyy-MM-dd") ?? "none"} {s.Count}")));
+            });
+            result = await MapBuild.RunAsync(engine, req, progress, ct, cameras, govData);
             AppLog.Write($"build: ok={result.Ok}, exit {result.ExitCode}, {result.Files} files, {result.Bytes} bytes, " +
                          $"error {result.Error}");
             if (!result.Ok)
@@ -293,8 +306,10 @@ public sealed class BuildMapsStep : StepViewModel
             }
             var record = new BuildRecord(result.CardPath ?? AppPaths.BuildOutput, _session.FactoryRecord?.VolumeSerial ?? 0,
                 BuildRecord.Key(osm, _session.SpeedZones, _session.Gnaf, _session.Voice?.Pack.Id), osm.Min(e => e.DataDate), result.Files, result.Bytes, DateTime.UtcNow, bbox is not null,
-                result.Cameras.Count > 0 ? SpeedCameras.Describe(result.Cameras) : null);
+                result.Cameras.Count > 0 ? SpeedCameras.Describe(result.Cameras) : null,
+                result.GovData is { } gd && RoadAlerts.Describe(gd) is { Length: > 0 } an ? an : null);
             CameraNote = record.CameraNote ?? "";
+            AlertNote = record.AlertNote ?? AlertNote;
             _session.State.Build = record;
             _session.State.Save();
             _session.Build = record;

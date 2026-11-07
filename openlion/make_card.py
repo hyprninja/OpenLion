@@ -4,7 +4,7 @@ The one command the Windows app runs to build maps:
 
   python -m openlion.make_card <extract.osm.pbf> <factory navigation/> <work dir> <out navigation/>
          [--extract NZ=<extract.osm.pbf> ...] [--addresses <G-NAF zip>] [--manifest <manifest.tsv>]
-         [--voice-pack <pack.zip>]
+         [--voice-pack <pack.zip>] [--gov-data <dir>]
          [--bbox lon0 lat0 lon1 lat1] [--json]
 
 The first extract may name its country (AU=..., NZ=...); a bare path is Australia.
@@ -24,6 +24,9 @@ With --json, prints one JSON object per line, mixed with plain log lines:
   {"event": "cameras", "final": bool, "states": [{"code", "name", "source": "gov"/"osm", "provider",
    "fetched", "cameras", "download": "ok"/"failed"/null}]}   (with --cameras: once before the build
    with the sources, once after it with the counts)
+  {"event": "gov_data", "final": bool, "sources": [{"id", "name", "provider", "download": "ok"/"failed"/
+   "cached"/null, "fetched", "count"}]}  (with --gov-data: once before the build, once after it)
+  {"event": "alerts", "states": [{"code", "name", "school_zones": {...}, "crossings": {...}}]}
   {"event": "result", "ok": bool, "card": path, "bytes": n, "files": n, "replaced": n,
    "stage": failed stage, "error": ..., "error_type": ..., "traceback": ...}
 """
@@ -38,7 +41,7 @@ import time
 
 if not __package__:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from openlion import build, cameras, gov_cameras, pipeline, voicepack  # noqa: E402
+from openlion import alerts, build, cameras, gov_cameras, gov_nz, pipeline, voicepack  # noqa: E402
 from openlion.common import DamagedTable  # noqa: E402
 from openlion.compat import error_name, safe_traceback  # noqa: E402
 
@@ -160,14 +163,43 @@ def camera_states(inputs, files, fetched):
     return out
 
 
+def gov_data_sources(gov_dir, inputs, fetched):
+    """What the --gov-data folder holds for this build, for the app (event "gov_data")."""
+    codes = {cn.code for cn, _ in inputs}
+    out = []
+    for (state, kind), src in alerts.SOURCES.items():
+        if "AU" not in codes:
+            continue
+        path = alerts.path_of(gov_dir, state, kind)
+        d = alerts.load(path) if os.path.isfile(path) else None
+        f = fetched.get(f"{state} {kind}")
+        out.append({"id": f"{state}_{kind}", "name": src["name"], "provider": src["provider"],
+                    "download": None if f is None else "ok" if f["ok"] else "failed",
+                    "fetched": d["fetched"] if d else None, "count": len(d["items"]) if d else None})
+    if "NZ" in codes:
+        for name, path, title in (("addresses", gov_nz.addresses_path(gov_dir), "New Zealand addresses"),
+                                  ("suburbs", gov_nz.suburbs_path(gov_dir), "New Zealand suburbs and localities")):
+            m = gov_nz.meta(path) if os.path.isfile(path) else None
+            f = fetched.get(f"linz {name}")
+            dl = None if f is None else "failed" if not f["ok"] else "cached" if f["fetched"] != fetched.get("today") \
+                else "ok"
+            out.append({"id": f"NZ_{name}", "name": title, "provider": gov_nz.PROVIDER, "download": dl,
+                        "fetched": m["fetched"] if m else None, "count": m.get(name) if m else None})
+    return out
+
+
 def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory_mode=None, speed_zones=(),
-        camera_dir=None, camera_download=True, addresses=None, voice_pack=None):
+        camera_dir=None, camera_download=True, addresses=None, voice_pack=None, gov_dir=None, gov_download=True):
     """pbf: one Australian extract, or a list of "NZ=path" / (Country, path) (pipeline.inputs_of).
     memory_mode: "low" / "high" / None (decide from free RAM, see resources.py).
     camera_dir: folder for the government camera lists (gov_cameras.py); they're downloaded
     there first unless camera_download is False, and the last good copy is used when a
     download fails. None: OSM cameras everywhere.
-    voice_pack: a voice pack zip to install into voices/en_GB, or None for the factory voice."""
+    voice_pack: a voice pack zip to install into voices/en_GB, or None for the factory voice.
+    gov_dir: folder for the other official lists: school zones and level crossings
+    (alerts.py) and, for New Zealand, LINZ addresses and suburbs (gov_nz.py). Downloaded
+    there first unless gov_download is False; the last good copy is used when a download
+    fails. None: OSM school zones and crossings, OSM-only NZ addresses and places."""
     o = Out(as_json)
     inputs = pipeline.inputs_of(pbf)
     total = sum(os.path.getsize(p) for _, p in inputs if os.path.isfile(p))
@@ -204,8 +236,32 @@ def run(pbf, factory, work, out, manifest=None, bbox=None, as_json=False, memory
             cam_files = gov_cameras.available(camera_dir)
             o.emit("cameras", final=False, states=camera_states(inputs, cam_files, fetched))
 
+        alert_files, nz_addr, nz_sub, gfetched = [], None, None, {}
+        if gov_dir:
+            log = lambda m: print(m, flush=True)  # noqa: E731
+            if gov_download:
+                import datetime
+                gfetched["today"] = datetime.date.today().isoformat()
+                if any(cn.code == "AU" for cn, _ in inputs):
+                    gfetched.update(alerts.fetch(gov_dir, log=log))
+                if any(cn.code == "NZ" for cn, _ in inputs):
+                    gfetched.update({f"linz {k}": v for k, v in gov_nz.fetch(gov_dir, log=log).items()})
+            # each country's lists only when that country is on the card: Australia's school zones and
+            # crossings, New Zealand's LINZ addresses and suburbs
+            has_au = any(cn.code == "AU" for cn, _ in inputs)
+            has_nz = any(cn.code == "NZ" for cn, _ in inputs)
+            alert_files = alerts.available(gov_dir) if has_au else []
+            nz_addr = gov_nz.addresses_path(gov_dir) if has_nz and os.path.isfile(gov_nz.addresses_path(gov_dir)) else None
+            nz_sub = gov_nz.suburbs_path(gov_dir) if has_nz and os.path.isfile(gov_nz.suburbs_path(gov_dir)) else None
+            o.emit("gov_data", final=False, sources=gov_data_sources(gov_dir, inputs, gfetched))
+
         pipeline.run(inputs, db, work, bbox, stage=o.start_stage, memory_mode=memory_mode,
-                     speed_zones=speed_zones, gov_cameras=cam_files, addresses=addresses)
+                     speed_zones=speed_zones, gov_cameras=cam_files, addresses=addresses,
+                     alert_lists=alert_files, nz_addresses=nz_addr, nz_suburbs=nz_sub)
+        ra = os.path.join(work, pipeline.ALERTS_REPORT)
+        if os.path.isfile(ra):
+            with open(ra, encoding="utf-8") as f:
+                o.emit("alerts", states=json.load(f)["states"])
         rp = os.path.join(work, pipeline.CAMERAS_REPORT)
         if os.path.isfile(rp):
             with open(rp, encoding="utf-8") as f:
@@ -295,13 +351,19 @@ if __name__ == "__main__":
                          "(OSM cameras for every other state). Without it: OSM cameras everywhere")
     ap.add_argument("--no-camera-download", action="store_true",
                     help="use the camera lists already in --cameras without downloading")
+    ap.add_argument("--gov-data", metavar="DIR",
+                    help="folder for official school zone and level crossing lists and New Zealand's LINZ "
+                         "addresses and suburbs, downloaded there first (OSM where there's no list)")
+    ap.add_argument("--no-gov-download", action="store_true",
+                    help="use the lists already in --gov-data without downloading")
     ap.add_argument("--voice-pack", metavar="ZIP",
                     help="install this voice pack into voices/en_GB (default: keep the factory voice)")
     a = ap.parse_args()
     bb = tuple(round(v * 1e5) for v in a.bbox) if a.bbox else None
     t0 = time.time()
     code = run([a.pbf] + a.extract, a.factory, a.work, a.out, a.manifest, bb, a.json, a.memory,
-               a.speed_zones, a.cameras, not a.no_camera_download, a.addresses, a.voice_pack)
+               a.speed_zones, a.cameras, not a.no_camera_download, a.addresses, a.voice_pack,
+               a.gov_data, not a.no_gov_download)
     if not a.json:
         print(f"{time.time() - t0:.0f}s")
     sys.exit(code)

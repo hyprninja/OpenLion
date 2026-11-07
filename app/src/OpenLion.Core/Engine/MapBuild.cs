@@ -26,6 +26,8 @@ public sealed record BuildResult
     public int Replaced { get; init; }
     /// <summary>Where each state's speed cameras came from, if the build reported it.</summary>
     public IReadOnlyList<CameraState> Cameras { get; init; } = [];
+    /// <summary>School zone, level crossing and LINZ sources and counts, if the build reported them.</summary>
+    public GovDataReport? GovData { get; init; }
     /// <summary>Stage that failed, if known.</summary>
     public string? FailedStage { get; init; }
     public string? Error { get; init; }
@@ -44,10 +46,12 @@ public sealed record BuildResult
 /// (other states get OSM's cameras); null: OSM cameras everywhere.</param>
 /// <param name="Addresses">G-NAF zip: house numbers for Australian streets OSM has none on.</param>
 /// <param name="VoicePack">Voice pack zip to install into voices/en_GB; null keeps the factory voice.</param>
+/// <param name="GovDataFolder">Folder for the other official lists the engine downloads: school zones,
+/// level crossings, New Zealand's LINZ addresses and suburbs; null: OpenStreetMap only.</param>
 public sealed record BuildRequest(IReadOnlyList<(string Country, string Path)> Extracts, string FactoryNavigation,
     string? Manifest, string WorkFolder, string OutputNavigation, double[]? Bbox = null,
     IReadOnlyList<string>? SpeedZones = null, string? CameraFolder = null, string? Addresses = null,
-    string? VoicePack = null)
+    string? VoicePack = null, string? GovDataFolder = null)
 {
     /// <summary>One Australian extract (OpenLion 1.0).</summary>
     public BuildRequest(string pbf, string factoryNavigation, string? manifest, string workFolder,
@@ -97,6 +101,8 @@ public static class MapBuild
             args.AddRange(["--addresses", req.Addresses]);
         if (req.VoicePack is not null)
             args.AddRange(["--voice-pack", req.VoicePack]);
+        if (req.GovDataFolder is not null)
+            args.AddRange(["--gov-data", req.GovDataFolder]);
         return args;
     }
 
@@ -104,10 +110,10 @@ public static class MapBuild
     /// (no counts yet), once at the end.</param>
     public static async Task<BuildResult> RunAsync(EnginePaths engine, BuildRequest req,
         IProgress<BuildProgress>? progress = null, CancellationToken ct = default,
-        IProgress<IReadOnlyList<CameraState>>? cameras = null)
+        IProgress<IReadOnlyList<CameraState>>? cameras = null, IProgress<GovDataReport>? govData = null)
     {
         var args = Arguments(req);
-        var parser = new Parser(progress, cameras);
+        var parser = new Parser(progress, cameras, govData);
         // Below normal priority: the build takes most of an hour and the PC should stay usable.
         int code = await EngineRunner.RunAsync(engine, args, parser.Feed, ct, ProcessPriorityClass.BelowNormal);
         return parser.Finish(code);
@@ -115,8 +121,10 @@ public static class MapBuild
 
     /// <summary>Turns make_card's output lines into progress and a result. Public for tests.</summary>
     public sealed class Parser(IProgress<BuildProgress>? progress = null,
-        IProgress<IReadOnlyList<CameraState>>? cameras = null)
+        IProgress<IReadOnlyList<CameraState>>? cameras = null, IProgress<GovDataReport>? govData = null)
     {
+        IReadOnlyList<GovDataSource> _sources = [];
+        IReadOnlyList<AlertState> _alerts = [];
         readonly object _lock = new();
         readonly List<string> _log = [];
         List<BuildStage> _stages = [];
@@ -161,6 +169,14 @@ public static class MapBuild
                         _cameras = e.GetProperty("states").EnumerateArray().Select(CameraState.FromJson).ToList();
                         cameras?.Report(_cameras);
                         break;
+                    case "gov_data":
+                        _sources = e.GetProperty("sources").EnumerateArray().Select(GovDataSource.FromJson).ToList();
+                        govData?.Report(new GovDataReport(_sources, _alerts));
+                        break;
+                    case "alerts":
+                        _alerts = e.GetProperty("states").EnumerateArray().Select(AlertState.FromJson).ToList();
+                        govData?.Report(new GovDataReport(_sources, _alerts));
+                        break;
                     case "result":
                         _result = e;
                         break;
@@ -198,6 +214,7 @@ public static class MapBuild
                     Bytes = r.TryGetProperty("bytes", out var b) ? b.GetInt64() : 0,
                     Replaced = r.TryGetProperty("replaced", out var rp) ? rp.GetInt32() : 0,
                     Cameras = _cameras,
+                    GovData = _sources.Count > 0 || _alerts.Count > 0 ? new GovDataReport(_sources, _alerts) : null,
                     FailedStage = ok ? null : Label(Str("stage") ?? _current),
                     Error = ok ? null : Str("error") ?? $"exit code {exitCode}",
                     ExitCode = exitCode,

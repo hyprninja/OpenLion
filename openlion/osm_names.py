@@ -73,13 +73,14 @@ def rotations(name):
 # ---- boundaries --------------------------------------------------------------
 
 class Area:
-    __slots__ = ("level", "name", "postcode", "rings", "bbox", "osm_id", "country", "kind", "_bands")
+    __slots__ = ("level", "name", "postcode", "rings", "bbox", "osm_id", "country", "kind", "town", "_bands")
 
     def __init__(self, level, name, postcode, rings, osm_id, country=0, kind=None):
         """rings: [(outer, [inner, ...])], each a list of (x, y); stored as flat arrays."""
         self.level, self.name, self.postcode, self.osm_id = level, name, postcode, osm_id
         self.rings = [(Shape(o), [Shape(i) for i in inners]) for o, inners in rings]
         self.country, self.kind = country, kind     # catalog; place=* value for place areas
+        self.town = None        # LINZ suburbs (gov_nz.py): the town or city it's part of
         xs = [x for r in rings for x, _ in r[0]]
         ys = [y for r in rings for _, y in r[0]]
         self.bbox = (min(xs), min(ys), max(xs), max(ys))
@@ -348,16 +349,28 @@ class Localities:
         self.n_bounds, self.n_areas = len(bounds), len(bounds) + len(p_areas)
         self.loc = bounds + p_areas + places
         self.area_idx = AreaIndex(bounds)
+        # countries with LINZ suburbs (gov_nz.read_suburbs ids "linz:<id>"): fill boundary gaps
+        self.bound_countries = {a.country for a in bounds if str(a.osm_id).startswith("linz:")}
         self.place_area_idx = AreaIndex(p_areas)
         by_c = collections.defaultdict(list)
         for k, p in enumerate(places):
             by_c[p.country].append(k)
         self.point_idx = {c: (PlaceIndex([places[k] for k in ks]), ks) for c, ks in by_c.items()}
 
+    # boundary gaps: a road just outside every suburb (a bridge over a river LINZ leaves
+    # out, a causeway) takes the suburb this close by, before any place point
+    GAP_STEPS = (150, 400, 1000)       # deg * 1e5 (~150 m, 400 m, 1 km)
+
     def find(self, x, y, country=0):
         i = self.area_idx.find(x, y)
         if i is not None:
             return i
+        if country in self.bound_countries:
+            for d in self.GAP_STEPS:
+                for dx, dy in ((d, 0), (-d, 0), (0, d), (0, -d), (d, d), (-d, -d), (d, -d), (-d, d)):
+                    i = self.area_idx.find(x + dx, y + dy)
+                    if i is not None and self.loc[i].country == country:
+                        return i
         j = self.place_area_idx.find_smallest(x, y)
         if j is not None:
             return self.n_bounds + j
@@ -503,6 +516,23 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=(), addresses=None
         for m, st, _ in prof.municipalities:
             if st == stn:
                 muni_of[i] = ("name", loc[i].country, m)
+    # LINZ suburbs name their town or city (Te Rapa -> Hamilton): list them under it, and
+    # under the town's own locality where there is one of that name (the nearest)
+    own = collections.defaultdict(list)
+    for j, a in enumerate(loc):
+        if isinstance(a, Area) and a.level == 9 and not getattr(a, "town", None):
+            own[(a.country, normalise(a.name))].append(j)
+    for i in used:
+        town = getattr(loc[i], "town", None)
+        if not town or i in muni_of:
+            continue
+        x, y = loc[i].centroid()
+        cand = own.get((loc[i].country, normalise(town)))
+        if cand:
+            j = min(cand, key=lambda j: (loc[j].centroid()[0] - x) ** 2 + (loc[j].centroid()[1] - y) ** 2)
+            muni_of[i] = ("loc", j)
+        else:
+            muni_of[i] = ("name", loc[i].country, normalise(town))
     for c in sorted({loc[i].country for i in used}):
         if not profile(c).suburbs_in_towns:
             continue
@@ -590,8 +620,12 @@ def build(g, seg_labels, areas, factory, catalog_id=0, places=(), addresses=None
             if m[0] == "loc":
                 centre = loc[m[1]].centroid()
             else:
-                cbd = next(cbd for name, _, cbd in profile(c).municipalities if name == m[2])
-                centre = loc[next((i for i in kids if city_name[i] == cbd), kids[0])].centroid()
+                cbd = next((cbd for name, _, cbd in profile(c).municipalities if name == m[2]), None)
+                if cbd is not None:
+                    centre = loc[next((i for i in kids if city_name[i] == cbd), kids[0])].centroid()
+                else:       # a LINZ town with no locality of its own: the middle of its suburbs
+                    b = union(cover_of(i) for i in kids)
+                    centre = ((b[0] + b[2]) // 2, (b[1] + b[3]) // 2)
             lga = idx[6].find(*centre)
             city_rec[m] = len(cities)
             city_country.append(c)

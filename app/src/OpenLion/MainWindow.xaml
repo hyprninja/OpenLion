@@ -400,7 +400,8 @@
                     </TextBlock>
 
                     <TextBlock Style="{StaticResource Body}" Visibility="{Binding NoAustralia, Converter={StaticResource BoolToVis}}">
-                        G-NAF only covers Australia, and Australia isn't on this card, so there's nothing to add here.
+                        G-NAF only covers Australia, and Australia isn't on this card, so there's nothing to choose here.
+                        New Zealand's house numbers and suburbs come from LINZ automatically when the maps are built.
                         Press Next.
                     </TextBlock>
 
@@ -557,6 +558,15 @@
                         <StackPanel>
                             <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold" Text="Speed cameras"/>
                             <TextBlock Style="{StaticResource Body}" Text="{Binding CameraNote}" Margin="0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- School zones, level crossings and New Zealand's LINZ data: before, during and after -->
+                    <Border Style="{StaticResource Card}" BorderBrush="{StaticResource Muted}" BorderThickness="1"
+                            Visibility="{Binding HasAlertNote, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Body}" FontWeight="SemiBold" Text="School zones and level crossings"/>
+                            <TextBlock Style="{StaticResource Body}" Text="{Binding AlertNote}" Margin="0"/>
                         </StackPanel>
                     </Border>
 

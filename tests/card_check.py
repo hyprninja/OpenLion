@@ -182,18 +182,30 @@ if poi_rel:
         dangling += q(f"select count(*) from Poi_AddressAttributes where {c} is not null and "
                       f"{c} not in (select String_ID from String_BaseAttributes)")[0][0]
     no_alert = q("select count(*) from Poi_BaseAttributes where Poi_ID not in (select Poi_ID from Poi_AlertAttributes)")[0][0]
-    # OSM builds leave the road-sense alert categories empty (looked up by name: IDs differ per card),
-    # except "camera": speed cameras (cameras.py) go there, each with a camera type. Direction and
-    # speed limit can be empty, as on the factory cards (MY12: 16 of 1,037 cameras have no direction,
-    # 88 no speed limit). A POI there without a camera type is one filed under the wrong ID.
+    # Road-sense alert categories (looked up by name: IDs differ per card). "camera" holds the speed
+    # cameras (cameras.py), each with a camera type; direction and speed limit can be empty, as on the
+    # factory cards (MY12: 16 of 1,037 cameras have no direction, 88 no speed limit). "school zone",
+    # "school point" and "railway" (alerts.py) carry a time stamp and no camera type; school zones and
+    # points a speed limit, crossings none. "blackspot" and "check speed" stay empty. A POI breaking
+    # these rules is one filed under the wrong ID.
     cats = osm_poi.card_categories(con)
-    alert_ids = [cid for name, cid in cats.items() if name in osm_poi.ROAD_SENSE and name != "camera"]
+    empty_ids = [cid for name, cid in cats.items() if name in osm_poi.ROAD_SENSE and name not in osm_poi.FILLED_ALERTS]
     in_alert = q("select count(*) from Poi_BaseAttributes where PoiPartition_ID in "
-                 f"({','.join(map(str, alert_ids)) or 'NULL'})")[0][0]
-    if "camera" in cats:
+                 f"({','.join(map(str, empty_ids)) or 'NULL'})")[0][0]
+    rules = {"camera": "a.CameraType is null",
+             "school zone": "a.TimeStamp is null or a.SpeedLimit is null or a.Direction is not null "
+                            "or a.CameraType is not null",
+             "school point": "a.TimeStamp is null or a.SpeedLimit is null or a.CameraType is not null",
+             "railway": "a.TimeStamp is null or a.SpeedLimit is not null or a.CameraType is not null"}
+    alert_counts = {}
+    for name, bad in rules.items():
+        if name not in cats:
+            continue
         in_alert += q("select count(*) from Poi_BaseAttributes b left join Poi_AlertAttributes a using (Poi_ID) "
-                      "where b.PoiPartition_ID = ? and a.CameraType is null",
-                      (cats["camera"],))[0][0]
+                      f"where b.PoiPartition_ID = ? and ({bad})", (cats[name],))[0][0]
+        alert_counts[name] = q("select count(*) from Poi_BaseAttributes where PoiPartition_ID = ?",
+                               (cats[name],))[0][0]
+    print("road-sense POIs: " + ", ".join(f"{k} {v:,}" for k, v in alert_counts.items()))
     mp0 = mapfile.MapFile(open(os.path.join(DB, "auz.mp0"), "rb").read())
     outside = 0
     for (v,) in con.execute("select Coordinate from Poi_BaseAttributes"):
@@ -203,7 +215,7 @@ if poi_rel:
     con.close()
     kept = osm_poi.compare_schema(os.path.join(FACTORY, poi_rel), os.path.join(CARD, poi_rel)) if FACTORY else None
     print(f"POIs: {n:,}, integrity {integ}, bad category {orphans}, dangling strings {dangling}, "
-          f"missing alert rows {no_alert}, in road-sense categories {in_alert}, beyond the road map {outside}, "
+          f"missing alert rows {no_alert}, bad road-sense POIs {in_alert}, beyond the road map {outside}, "
           f"factory structure changed: {kept if kept is not None else 'not checked'}")
     problems += (integ != "ok") + orphans + dangling + no_alert + in_alert + outside + len(kept or [])
 print(f"{problems} problems, {time.time() - t0:.0f}s")
