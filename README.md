@@ -70,8 +70,8 @@ OpenLion checks your card before it builds anything. If your card isn't supporte
 
 ## How it works
 
-1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.5.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
-   **On a Mac**, open `OpenLion-1.5.0-mac.dmg` and drag OpenLion to Applications. It isn't notarized by Apple yet, so the first time you open it macOS says it can't check it: open **System Settings › Privacy & Security**, scroll down and click **Open Anyway** next to OpenLion.
+1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.6.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
+   **On a Mac**, open `OpenLion-1.6.0-mac.dmg` and drag OpenLion to Applications. It isn't notarized by Apple yet, so the first time you open it macOS says it can't check it: open **System Settings › Privacy & Security**, scroll down and click **Open Anyway** next to OpenLion.
 2. **Read and accept the warning.** OpenLion is unofficial, and you use it at your own risk.
 3. **Insert your factory card.** Set its lock switch first if you can. OpenLion copies it to your PC, checks every file, then checks that it understands your card's map format.
 4. **Get the map data.** Choose Australia, New Zealand, or both (the factory card had both). OpenLion downloads the latest OpenStreetMap extract for each from Geofabrik and checks it. If you already have a `.osm.pbf` file, you can pick that instead.
@@ -265,13 +265,15 @@ To build the MSI (needs the .NET 10 SDK, WiX 6 and any Python with pip):
 ```powershell
 dotnet tool install -g wix --version 6.0.2
 wix extension add -g WixToolset.UI.wixext/6.0.2
-pwsh packaging/build-release.ps1 -Version 1.5.0     # → dist/OpenLion-1.5.0.msi (+ .sha256)
+pwsh packaging/build-release.ps1 -Version 1.6.0     # → dist/OpenLion-1.6.0.msi (+ .sha256)
 ```
+
+Pushing a version tag (`v1.6.0`) also builds the MSI on GitHub Actions (`.github/workflows/release.yml`) and keeps it as the run's artifact.
 
 To build the Mac app (on an Apple silicon Mac with the .NET 10 SDK and the Xcode command line tools):
 
 ```bash
-packaging/build-mac.sh 1.5.0     # → dist/OpenLion-1.5.0-mac.dmg (+ .sha256) and dist/mac/OpenLion.app
+packaging/build-mac.sh 1.6.0     # → dist/OpenLion-1.6.0-mac.dmg (+ .sha256) and dist/mac/OpenLion.app
 ```
 
 On a Mac, the same tests run with `dotnet build app/OpenLion.Mac.slnx -c Release -warnaserror` and `packaging/engine-requirements-mac.txt`.

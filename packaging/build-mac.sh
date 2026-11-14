@@ -8,10 +8,10 @@
 #
 # Output: dist/OpenLion-<version>-mac.dmg (+ .sha256), and dist/mac/OpenLion.app.
 #
-#   packaging/build-mac.sh 1.5.0
+#   packaging/build-mac.sh 1.6.0
 set -euo pipefail
 
-VERSION="${1:-1.5.0}"
+VERSION="${1:-1.6.0}"
 PY_VERSION="3.12.16"
 PY_BUILD="20261110"
 PY_FILE="cpython-${PY_VERSION}+${PY_BUILD}-aarch64-apple-darwin-install_only.tar.gz"
