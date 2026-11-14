@@ -37,3 +37,33 @@ jobs:
 
       - name: Engine tests
         run: python -m unittest discover -s tests -p "test_*.py"
+
+  mac:
+    # The macOS app: the same Core and engine, its own drive code and window (app/OpenLion.Mac.slnx).
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Engine packages (same pinned wheels as the macOS release)
+        run: "python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r packaging/engine-requirements-mac.txt"
+
+      - name: Build the macOS app (warnings are errors)
+        run: dotnet build app/OpenLion.Mac.slnx -c Release -warnaserror
+
+      - name: App tests (macOS build of Core)
+        run: dotnet test app/tests/OpenLion.Core.Tests -c Release --no-build
+
+      - name: Engine compiles
+        run: python -m compileall -q openlion tests
+
+      - name: Engine tests
+        run: python -m unittest discover -s tests -p "test_*.py"

@@ -19,7 +19,7 @@ public static class FactoryCards
     {
         if (openLionCards.Count == 0)
             return "";
-        var letters = string.Join(" and ", openLionCards.Select(d => d.Root.TrimEnd('\\', '/')));
+        var letters = string.Join(" and ", openLionCards.Select(d => d.DisplayRoot));
         return openLionCards.Count == 1
             ? $"{letters} is a card OpenLion wrote, so it isn't offered as a factory card."
             : $"{letters} are cards OpenLion wrote, so they aren't offered as factory cards.";

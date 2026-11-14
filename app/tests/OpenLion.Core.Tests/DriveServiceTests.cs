@@ -1,5 +1,6 @@
 using OpenLion.Core.Drives;
 
+#if WINDOWS
 namespace OpenLion.Core.Tests;
 
 public class DriveServiceTests
@@ -17,3 +18,4 @@ public class DriveServiceTests
         Assert.False(CardGuard.CheckTarget(sys, drives, null, 0).Allowed);
     }
 }
+#endif

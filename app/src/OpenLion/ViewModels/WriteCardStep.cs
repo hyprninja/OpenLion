@@ -4,10 +4,14 @@ using System.Windows.Input;
 using OpenLion.Core;
 using OpenLion.Core.Cards;
 using OpenLion.Core.Drives;
+using OpenLion.Core.Flow;
 
 namespace OpenLion.ViewModels;
 
 public enum WriteStepPhase { Choosing, Writing, Done, Failed }
+
+/// <summary>Ejecting the card just written, on macOS (see <see cref="Flows.Eject"/>).</summary>
+public enum EjectPhase { None, Ready, Ejecting, Ejected, Failed }
 
 /// <summary>Step 6: write the built maps to a blank card. Every drive is shown with CardGuard's
 /// verdict; the user picks an allowed one and types its drive letter to confirm. The guard runs
@@ -18,7 +22,8 @@ public sealed class WriteCardStep : StepViewModel
     readonly DrivePoller _poller = new();
     CancellationTokenSource? _cts;
     TargetCandidate? _selected;
-    WriteStepPhase _phase;
+    readonly StateMachine<WriteStepPhase> _flow = new(Flows.Write);
+    readonly StateMachine<EjectPhase> _eject = new(Flows.Eject);
     string _confirm = "", _status = "", _detail = "", _error = "";
     double _percent;
 
@@ -29,11 +34,22 @@ public sealed class WriteCardStep : StepViewModel
         WriteCommand = new RelayCommand(() => _ = WriteAsync(), () => CanWrite);
         CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
         AgainCommand = new RelayCommand(() => { Phase = WriteStepPhase.Choosing; Error = ""; _poller.Start(); });
+        EjectCommand = new RelayCommand(() => _ = EjectAsync(), () => IsDone && _eject.State is EjectPhase.Ready or EjectPhase.Failed);
+        _eject.Moved += _ => { Raise(nameof(Eject)); Platform.RequeryCommands(); };
     }
 
     public ICommand WriteCommand { get; }
     public ICommand CancelCommand { get; }
     public ICommand AgainCommand { get; }
+
+    /// <summary>macOS: eject the card just written. On Windows the user ejects it in File Explorer.</summary>
+    public ICommand EjectCommand { get; }
+    public bool CanEject => Platform.CanEject;
+    /// <summary>Where ejecting the written card is in <see cref="Flows.Eject"/>.</summary>
+    public EjectPhase Eject => _eject.State;
+    public string EjectNote { get => _ejectNote; private set => Set(ref _ejectNote, value); }
+    DriveSnapshot? _written;
+    string _ejectNote = "";
 
     public ObservableCollection<TargetCandidate> Targets { get; } = [];
     public bool NoneFound => Targets.Count == 0;
@@ -49,22 +65,23 @@ public sealed class WriteCardStep : StepViewModel
     }
     public bool HasSelection => Selected is not null;
     public string ConfirmPrompt => Selected is null ? "" :
-        $"Everything on {Selected.Letter}: ({Selected.Guard.Target.TotalBytes / 1e9:N1} GB) may be replaced. Type {Selected.Letter} to confirm:";
+        $"Everything on {Selected.Where} ({Selected.Guard.Target.TotalBytes / 1e9:N1} GB) may be replaced. Type {Selected.Letter} to confirm:";
 
     public string ConfirmLetter
     {
         get => _confirm;
-        set { if (Set(ref _confirm, value)) CommandManager.InvalidateRequerySuggested(); }
+        set { if (Set(ref _confirm, value)) Platform.RequeryCommands(); }
     }
 
+    /// <summary>Where the step is in <see cref="Flows.Write"/>.</summary>
     public WriteStepPhase Phase
     {
-        get => _phase;
+        get => _flow.State;
         private set
         {
-            if (!Set(ref _phase, value)) return;
-            Raise(nameof(IsChoosing)); Raise(nameof(IsBusy)); Raise(nameof(IsDone)); Raise(nameof(IsFailed));
-            CommandManager.InvalidateRequerySuggested();
+            if (!_flow.Move(value)) return;
+            Raise(); Raise(nameof(IsChoosing)); Raise(nameof(IsBusy)); Raise(nameof(IsDone)); Raise(nameof(IsFailed));
+            Platform.RequeryCommands();
         }
     }
     public bool IsChoosing => Phase == WriteStepPhase.Choosing;
@@ -125,7 +142,7 @@ public sealed class WriteCardStep : StepViewModel
         Raise(nameof(HasBuild));
         Raise(nameof(BuildText));
         Raise(nameof(OldCopy));
-        CommandManager.InvalidateRequerySuggested();
+        Platform.RequeryCommands();
         if (IsChoosing)
             _poller.Start();
     }
@@ -136,6 +153,28 @@ public sealed class WriteCardStep : StepViewModel
         _cts?.Cancel();
     }
 
+    async Task EjectAsync()
+    {
+        if (_written is not { } card || !Platform.CanEject)
+            return;
+        EjectNote = "";
+        _eject.Move(EjectPhase.Ejecting);
+        try
+        {
+            await Task.Run(() => Platform.Eject(card));
+            AppLog.Write($"write: ejected {card}");
+            EjectNote = "Ejected. You can take the card out now.";
+            _written = null;
+            _eject.Move(EjectPhase.Ejected);
+        }
+        catch (IOException e)
+        {
+            AppLog.Write("write: eject failed: " + e.Message);
+            EjectNote = "The card couldn't be ejected: " + e.Message + " Close any window showing the card and try again.";
+            _eject.Move(EjectPhase.Failed, e.Message);
+        }
+    }
+
     async Task WriteAsync()
     {
         if (!CanWrite || _session.Build is not { } build || Selected is not { } choice || CardRoot is not { } cardRoot)
@@ -144,8 +183,9 @@ public sealed class WriteCardStep : StepViewModel
         _cts = new CancellationTokenSource();
         var target = choice.Guard.Target;
         Phase = WriteStepPhase.Writing;
+        _eject.Move(EjectPhase.None);
         Error = "";
-        Status = $"Writing the new maps to {choice.Letter}:…";
+        Status = $"Writing the new maps to {choice.Where}…";
         Detail = "";
         Percent = 0;
         var progress = new Progress<WriteProgress>(p =>
@@ -160,7 +200,7 @@ public sealed class WriteCardStep : StepViewModel
             Status = p.Phase switch
             {
                 WritePhase.Checking => "Checking the card one last time…",
-                WritePhase.Writing => $"Writing the new maps to {choice.Letter}:…",
+                WritePhase.Writing => $"Writing the new maps to {choice.Where}…",
                 WritePhase.Verifying => "Reading every file back from the card to check it…",
                 _ => "Finishing…",
             };
@@ -172,7 +212,7 @@ public sealed class WriteCardStep : StepViewModel
         {
             var drives = DriveService.GetDrives();
             var now = drives.FirstOrDefault(d => string.Equals(d.Root, target.Root, StringComparison.OrdinalIgnoreCase))
-                      ?? throw new WriteException($"The card at {choice.Letter}: has been removed.");
+                      ?? throw new WriteException($"The card at {choice.Where} has been removed.");
             var r = CardGuard.CheckTarget(now, drives, _session.FactoryRecord, build.Bytes, _session.GuardOptions);
             AppLog.Write($"write: final check of {now}: {(r.Allowed ? "allowed" : string.Join("; ", r.Findings.Select(f => f.Problem)))}");
             return r;
@@ -187,10 +227,14 @@ public sealed class WriteCardStep : StepViewModel
             _session.State.Save();
             AppLog.Write($"write: done, {result.Files} files, {result.Bytes} bytes verified; {result.LabelWarning}");
             Percent = 100;
-            Status = $"Done. The new card ({choice.Letter}:) is written and every file was read back and checked.";
+            Status = $"Done. The new card ({choice.Where}) is written and every file was read back and checked.";
             Detail = $"{result.Files:N0} files, {result.Bytes / 1e6:N0} MB." +
                      (result.LabelWarning is null ? "" : " " + result.LabelWarning) +
                      (build.Partial ? " Remember: this is a TEST build of a small area only." : "");
+            _written = target;
+            EjectNote = "";
+            _eject.Move(EjectPhase.None);
+            _eject.Move(EjectPhase.Ready);
             Phase = WriteStepPhase.Done;
         }
         catch (OperationCanceledException)

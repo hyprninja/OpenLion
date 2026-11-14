@@ -33,9 +33,9 @@ public class CardCopierTests
         Assert.Equal(before.Values.Sum(v => v.Item1), r.TotalBytes);
         foreach (var e in r.Manifest)
         {
-            var copied = Path.Combine(r.CopyRoot, e.Path.Replace('/', '\\'));
+            var copied = Path.Combine(r.CopyRoot, e.Path.Replace('/', Path.DirectorySeparatorChar));
             Assert.Equal(e.Sha256, CardCopier.Sha256File(copied));
-            Assert.Equal(e.Sha256, CardCopier.Sha256File(Path.Combine(t.Sub("card"), e.Path.Replace('/', '\\'))));
+            Assert.Equal(e.Sha256, CardCopier.Sha256File(Path.Combine(t.Sub("card"), e.Path.Replace('/', Path.DirectorySeparatorChar))));
         }
         Assert.Equal(Factory, File.GetLastWriteTime(Path.Combine(r.NavigationPath, "cdrom.txt")));
         Assert.Equal(Factory, Directory.GetLastWriteTime(Path.Combine(r.NavigationPath, "db_ag", "telemat")));

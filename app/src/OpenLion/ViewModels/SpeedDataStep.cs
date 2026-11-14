@@ -76,24 +76,20 @@ public sealed class SpeedZoneRow : ObservableObject
 /// <summary>Step 5: optional government speed limit data, per Australian state and for New Zealand,
 /// for roads OpenStreetMap has no limit for. Only the sources for the countries on the card are
 /// shown: the Australian states with an Australian map, New Zealand with a New Zealand map.</summary>
-public sealed class SpeedDataStep : StepViewModel
+public sealed class SpeedDataStep : ActivityStep
 {
     readonly Session _session;
     readonly HttpClient _http;
-    CancellationTokenSource? _cts;
-    bool _busy, _checking;
-    double? _percent;
-    string _status = "", _detail = "", _error = "";
 
-    public SpeedDataStep(Session session) : base("Speed data")
+    public SpeedDataStep(Session session) : base("Speed data", "speed")
     {
         _session = session;
         _http = OsmDownloader.CreateClient(ErrorReport.AppVersion);
         var saved = (session.State.SpeedZones ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Rows = [.. SpeedZoneSource.All.Select(s => new SpeedZoneRow(this, s, _http, saved.Contains(s.Code)))];
-        DownloadCommand = new RelayCommand(() => _ = DownloadAsync(), () => !IsBusy && Shown.Any(r => r.WantsDownload));
-        CheckCommand = new RelayCommand(() => _ = CheckAsync(), () => !IsBusy && !_checking && Shown.Any(r => r.IsChecked));
-        CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
+        // Download waits for a running check: it needs what the check is still fetching.
+        DownloadCommand = new RelayCommand(() => _ = DownloadAsync(), () => !IsBusy && !IsChecking && Shown.Any(r => r.WantsDownload));
+        CheckCommand = new RelayCommand(() => _ = CheckAsync(), () => !IsBusy && !IsChecking && Shown.Any(r => r.IsChecked));
     }
 
     public ObservableCollection<SpeedZoneRow> Rows { get; }
@@ -108,7 +104,6 @@ public sealed class SpeedDataStep : StepViewModel
     public bool ShowOtherStates => ShowLater || (AustraliaOnCard && SpeedZoneSource.NotOpen.Count > 0);
     public ICommand DownloadCommand { get; }
     public ICommand CheckCommand { get; }
-    public ICommand CancelCommand { get; }
 
     public bool AustraliaOnCard => _session.Countries.Contains(MapCountry.Australia);
     /// <summary>Something can be ticked for the countries on the card.</summary>
@@ -116,19 +111,6 @@ public sealed class SpeedDataStep : StepViewModel
     public bool NoChoices => !HasChoices;
     /// <summary>"Which states?" for Australia, "Which areas?" once New Zealand is on the card.</summary>
     public string ChoiceHeading => _session.Countries.Contains(MapCountry.NewZealand) ? "Which areas?" : "Which states?";
-
-    public bool IsBusy
-    {
-        get => _busy;
-        private set { if (Set(ref _busy, value)) { Raise(nameof(CanGoNext)); Raise(nameof(IsIdle)); } }
-    }
-    public bool IsIdle => !IsBusy;
-    public bool IsIndeterminate => _percent is null;
-    public double Percent => _percent ?? 0;
-    public string Status { get => _status; private set => Set(ref _status, value); }
-    public string Detail { get => _detail; private set => Set(ref _detail, value); }
-    public string Error { get => _error; private set { if (Set(ref _error, value)) Raise(nameof(HasError)); } }
-    public bool HasError => Error.Length > 0;
 
     public bool ShowDownload => Shown.Any(r => r.WantsDownload);
     public string DownloadLabel => Shown.Where(r => r.WantsDownload).All(r => !r.HasCached) ? "Download" : "Download the newer data";
@@ -157,20 +139,12 @@ public sealed class SpeedDataStep : StepViewModel
 
     /// <summary>Optional: carry on with nothing ticked, but a ticked state must be downloaded first.</summary>
     public override bool CanGoNext => !IsBusy && Shown.Where(r => r.IsChecked).All(r => r.HasCached);
-    public override bool IsWorking => IsBusy;
-
-    void SetPercent(double? p)
-    {
-        _percent = p;
-        Raise(nameof(Percent));
-        Raise(nameof(IsIndeterminate));
-    }
 
     void Publish()
     {
         _session.SpeedZones = [.. Shown.Where(r => r.IsChecked && r.Cached is not null).Select(r => r.Cached!)];
         Raise(nameof(CanGoNext)); Raise(nameof(ShowDownload)); Raise(nameof(DownloadLabel));
-        CommandManager.InvalidateRequerySuggested();
+        Platform.RequeryCommands();
     }
 
     internal void OnRowToggled(SpeedZoneRow row)
@@ -179,7 +153,7 @@ public sealed class SpeedDataStep : StepViewModel
         try { _session.State.Save(); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AppLog.Write("speed: state not saved: " + e.Message); }
         AppLog.Write("speed: chosen " + string.Join(",", _session.State.SpeedZones));
-        Error = "";
+        Activity.Dismiss();
         Publish();
         if (row.IsChecked && row.Remote is null)
             _ = CheckAsync();
@@ -199,14 +173,12 @@ public sealed class SpeedDataStep : StepViewModel
             _ = CheckAsync();
     }
 
-    public override void OnLeave() => _cts?.Cancel();
+    public override void OnLeave() => Activity.Cancel();
 
     async Task CheckAsync()
     {
-        if (_checking)
+        if (!Activity.BeginCheck())
             return;
-        _checking = true;
-        Error = "";
         var done = new HashSet<SpeedZoneRow>();
         try
         {
@@ -236,7 +208,7 @@ public sealed class SpeedDataStep : StepViewModel
         }
         finally
         {
-            _checking = false;
+            Activity.EndCheck();
             Publish();
         }
     }
@@ -248,55 +220,46 @@ public sealed class SpeedDataStep : StepViewModel
         var engine = EngineLocator.Locate();
         if (engine is null)
         {
-            Error = "The map engine (Python) wasn't found. Please reinstall OpenLion.";
+            Activity.Fail("The map engine (Python) wasn't found. Please reinstall OpenLion.");
             return;
         }
-        _cts = new CancellationTokenSource();
-        IsBusy = true;
-        Error = "";
+        var downloads = Shown.Where(r => r.WantsDownload).ToList();
+        var ct = Activity.Begin("Downloading speed data…");
         try
         {
-            foreach (var row in Shown.Where(r => r.WantsDownload).ToList())
+            foreach (var row in downloads)
             {
                 var remote = row.Remote!;
-                Status = $"Downloading {row.Title} speed data: {remote.Name}…";
-                Detail = "";
-                SetPercent(null);
+                Activity.Report(null, "", $"Downloading {row.Title} speed data: {remote.Name}…");
                 bool sections = row.Source.EngineFetch is not null;   // the engine counts road sections or signs, not bytes
                 var progress = new Progress<DownloadProgress>(p =>
                 {
                     if (p.Phase == DownloadPhase.Verifying)
-                    {
-                        Status = $"Preparing the {row.Title} speed data{(sections ? "" : " (about a minute)")}…";
-                        Detail = "";
-                        SetPercent(null);
-                        return;
-                    }
-                    SetPercent(p.Fraction * 100);
-                    Detail = sections
-                        ? $"{p.Done:N0} {row.Source.ProgressUnit}"
-                        : $"{p.Done / 1e6:N0}{(p.Total is { } t ? $" of {t / 1e6:N0}" : "")} MB" +
-                          (p.BytesPerSecond > 0 ? $"  ({p.BytesPerSecond / 1e6:N1} MB/s)" : "");
+                        Activity.Report(null, "", $"Preparing the {row.Title} speed data{(sections ? "" : " (about a minute)")}…");
+                    else
+                        Activity.Report(p.Fraction * 100, sections
+                            ? $"{p.Done:N0} {row.Source.ProgressUnit}"
+                            : $"{p.Done / 1e6:N0}{(p.Total is { } t ? $" of {t / 1e6:N0}" : "")} MB" +
+                              (p.BytesPerSecond > 0 ? $"  ({p.BytesPerSecond / 1e6:N1} MB/s)" : ""));
                 });
-                row.Cached = await row.Downloader!.DownloadAsync(remote, engine, progress, _cts.Token);
+                row.Cached = await row.Downloader!.DownloadAsync(remote, engine, progress, ct);
                 row.RemoteText = "This is the latest data.";
                 AppLog.Write($"speed: {row.Source.Code} ready {row.Cached.Path} ({row.Cached.Bytes} bytes) from {remote.FileName}");
             }
+            Activity.Finish();
         }
         catch (OperationCanceledException)
         {
-            Error = "Stopped. A download picks up where it left off next time.";
+            Activity.Stop("Stopped. A download picks up where it left off next time.");
         }
         catch (Exception e) when (e is HttpRequestException or IOException or SpeedZoneException or UnauthorizedAccessException)
         {
             AppLog.Write("speed: download failed: " + e);
-            Error = e is HttpRequestException ? "The download failed: " + e.Message + " Press Download to carry on." : e.Message;
+            Activity.Fail(e is HttpRequestException ? "The download failed: " + e.Message + " Press Download to carry on." : e.Message);
         }
         finally
         {
-            IsBusy = false;
-            Status = "";
-            Detail = "";
+            Activity.Settle();
             Publish();
         }
     }

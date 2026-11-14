@@ -7,13 +7,13 @@
 <p align="center"><b>New maps for your Holden iQ satellite navigation, made from OpenStreetMap.</b></p>
 
 <p align="center">
-  <a href="https://github.com/hyprninja/OpenLion/releases/latest"><b>Download OpenLion for Windows</b></a>
+  <a href="https://github.com/hyprninja/OpenLion/releases/latest"><b>Download OpenLion for Windows or Mac</b></a>
   · <a href="#how-it-works">How it works</a>
   · <a href="#questions">Questions</a>
   · <a href="#technical-documentation">Technical documentation</a>
 </p>
 
-Holden stopped updating the iQ's maps in 2016. Whole suburbs and new roads built since then simply aren't there. OpenLion is a free Windows app that makes a new map card for your car from today's [OpenStreetMap](https://www.openstreetmap.org) data. It copies your factory card, builds fresh maps for Australia, New Zealand or both, and writes them to a spare SD card. Your factory card isn't changed.
+Holden stopped updating the iQ's maps in 2016. Whole suburbs and new roads built since then simply aren't there. OpenLion is a free app for Windows and Mac that makes a new map card for your car from today's [OpenStreetMap](https://www.openstreetmap.org) data. It copies your factory card, builds fresh maps for Australia, New Zealand or both, and writes them to a spare SD card. Your factory card isn't changed.
 
 | Before: factory card | After: OpenLion card |
 |---|---|
@@ -62,7 +62,7 @@ OpenLion checks your card before it builds anything. If your card isn't supporte
 
 ## What you need
 
-- A **Windows 10 or 11 PC (64-bit)** with **8 GB of memory or more** and **about 6 GB of free disk space** (about 2 GB more if you add G-NAF house numbers). More memory and cores make the build faster.
+- A **Windows 10 or 11 PC (64-bit)** or a **Mac with Apple silicon (M1 or later) and macOS 12 or later**, with **8 GB of memory or more** and **about 6 GB of free disk space** (about 2 GB more if you add G-NAF house numbers). More memory and cores make the build faster.
 - Your **factory map card**. OpenLion only reads it. [How to remove the SD card from the iQ](https://www.autoinstruct.com.au/manufacturer/holden/ve-commodore/holden-iq-navigation-upgrade/).
 - A **blank SD card** of 1 to 32 GB, formatted FAT32. A 2 GB card is plenty. Use a full-size card, or a microSD card in a full-size adapter.
 - An **internet connection**. The map download is about 1 GB, plus about 1.9 GB for the optional G-NAF house numbers.
@@ -71,6 +71,7 @@ OpenLion checks your card before it builds anything. If your card isn't supporte
 ## How it works
 
 1. **Download and install** [OpenLion](https://github.com/hyprninja/OpenLion/releases/latest) (`OpenLion-1.5.0.msi`). It installs for your Windows account only and doesn't need administrator rights. Windows may warn that the app is from an unknown publisher, because it isn't code-signed yet. Click **More info**, then **Run anyway**.
+   **On a Mac**, open `OpenLion-1.5.0-mac.dmg` and drag OpenLion to Applications. It isn't notarized by Apple yet, so the first time you open it macOS says it can't check it: open **System Settings › Privacy & Security**, scroll down and click **Open Anyway** next to OpenLion.
 2. **Read and accept the warning.** OpenLion is unofficial, and you use it at your own risk.
 3. **Insert your factory card.** Set its lock switch first if you can. OpenLion copies it to your PC, checks every file, then checks that it understands your card's map format.
 4. **Get the map data.** Choose Australia, New Zealand, or both (the factory card had both). OpenLion downloads the latest OpenStreetMap extract for each from Geofabrik and checks it. If you already have a `.osm.pbf` file, you can pick that instead.
@@ -78,7 +79,7 @@ OpenLion checks your card before it builds anything. If your card isn't supporte
 6. **House numbers (optional, Australia).** Tick the box to add house numbers from G-NAF. OpenLion downloads the latest quarterly release from data.gov.au (about 1.9 GB) and checks it. OpenStreetMap's numbers always come first.
 7. **Voice (optional).** Keep the factory voice or choose Elodie or Jimbo. Press Play to hear each one. Each voice is an 11–15 MB download from this project's releases.
 8. **Build the maps.** This takes about half an hour on a fast PC with plenty of memory, and up to 1½ hours on one with 8 GB. You can leave the PC to it; OpenLion keeps it awake. At the start, OpenLion downloads the latest official speed camera, school zone and level crossing lists (a few MB), and for New Zealand, LINZ's addresses and suburbs (about 30 MB, refreshed once a month).
-9. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter to confirm. OpenLion writes the maps, then reads every file back to check it.
+9. **Write the new card.** Take out the factory card, insert the blank card and type its drive letter (on a Mac, its name) to confirm. OpenLion writes the maps, then reads every file back to check it.
 10. **In the car:** with the car switched off, put the new card in the nav slot. Then start the car and wait for the map. If you chose a new voice, set the unit's language to **English (UK)** in its settings.
 
 If anything isn't right, put your factory card back in. It's exactly as it was.
@@ -94,6 +95,13 @@ OpenLion only ever **reads** the factory card. Before it writes anything, it che
 - Is it a removable SD card of a sensible size, formatted FAT32?
 
 It runs these checks again right before writing, in case cards were swapped. The new maps go to a temporary folder on the card and only become the card's maps once every file has been read back and checked.
+
+### On a Mac
+
+- **Lock the factory card before you insert it.** macOS puts hidden index folders (`.Spotlight-V100`, `.fseventsd`) on any unlocked card it mounts. They don't touch the maps, and OpenLion mounts an unlocked factory card read-only before copying it, but by then macOS may already have added them. A locked card stays exactly as it was.
+- **Formatting the blank card:** in Disk Utility, choose the card, click **Erase**, and pick **MS-DOS (FAT)** with **Master Boot Record**. For small cards Disk Utility may pick FAT16 instead of FAT32; OpenLion then shows the exact Terminal command to format the card as FAT32.
+- macOS keeps file information on FAT cards in hidden `._` files beside every file. OpenLion removes them from the new card, then unmounts and mounts it again so every file is read back from the card itself, not from memory.
+- When the card is written, press **Eject card**, then take it out.
 
 ## Questions
 
@@ -214,17 +222,19 @@ The reports in [`docs/`](docs) describe the format and each part of the build in
 | House numbers: format, OSM, G-NAF | [24](docs/24_house_numbers.md), [25](docs/25_gnaf_house_numbers.md) |
 | Voice packs | [26](docs/26_voice_packs.md) |
 | School zones, level crossings, LINZ addresses and suburbs | [27](docs/27_alerts_linz.md) |
+| The app's state machines: every step's states and moves, as logged in `app.log` | [28](docs/28_app_states.md) |
 
 Not done yet: making the `.fea` smaller, and the other road-sense alerts (blackspots, "check speed").
 
 ## Repository layout
 
 ```
-app/          Windows app (.NET 10, WPF): the wizard, card copy and write, downloads, engine runner
+app/          the app (.NET 10): the wizard, card copy and write, downloads, engine runner; a WPF window
+              for Windows and an Avalonia window for macOS, sharing everything else
 openlion/     the engine: pure-Python (3.9+) readers, writers and the OSM build (osmium for OSM reads)
 tests/        engine unit tests, plus round-trip, re-tiling, region and card checks against your own card copy
 docs/         format reports; docs/reference/manifest_sha256.tsv is the file list + SHA-256 of the reference MY12 card
-packaging/    release build: embedded Python + engine + app → MSI (WiX 6), pinned engine wheels
+packaging/    release builds: embedded Python + engine + app → MSI (WiX 6) and macOS .app/.dmg; pinned engine wheels
 tools/voice/  making voice packs with ElevenLabs (see tools/voice/README.md)
 .github/      CI and the card report issue form
 ```
@@ -240,6 +250,14 @@ The app (`app/src/OpenLion`, with the logic in `app/src/OpenLion.Core`) is a wiz
 
 The installed app is self-contained: the .NET runtime, an embedded Python 3.12 with `osmium` (wheels pinned by SHA-256), and the engine (`openlion/`, the `tests/` checks and the reference manifest) all sit in its folder. Nothing else needs to be installed.
 
+### The Mac app
+
+The Mac app (`app/src/OpenLion.Mac`, solution `app/OpenLion.Mac.slnx`) is an [Avalonia](https://avaloniaui.net) window over the same view models (`app/src/OpenLion/ViewModels`) and the same `OpenLion.Core`. What the two apps need from their window toolkit (file pickers, sounds, timers, "show in Finder/Explorer") is in each app's `Platform.cs`. `OpenLion.Core` builds twice: `net10.0-windows` for Windows, and `net10.0` for macOS, where `Core/Mac/` stands in for the Windows-only files:
+
+- `DriveService` reads volumes with `diskutil`. A card is removable media or in an SD slot, never a disk image; a FAT volume's UUID (made by macOS from its FAT serial number) stands in for the volume serial, so `CardGuard` applies the same rules.
+- `CardWriter` removes macOS's `._` attribute files from the new card, then unmounts and mounts it again before the read-back, so every file is read from the card (Windows reads unbuffered instead). It names the card with `diskutil rename`.
+- `KeepAwake` runs `caffeinate`. The bundled Python and engine are in `OpenLion.app/Contents/Resources`. Working files are in `~/Library/Application Support/OpenLion`.
+
 ### Building and testing
 
 To build the MSI (needs the .NET 10 SDK, WiX 6 and any Python with pip):
@@ -250,7 +268,15 @@ wix extension add -g WixToolset.UI.wixext/6.0.2
 pwsh packaging/build-release.ps1 -Version 1.5.0     # → dist/OpenLion-1.5.0.msi (+ .sha256)
 ```
 
-Tests (CI runs all of these on every push and pull request):
+To build the Mac app (on an Apple silicon Mac with the .NET 10 SDK and the Xcode command line tools):
+
+```bash
+packaging/build-mac.sh 1.5.0     # → dist/OpenLion-1.5.0-mac.dmg (+ .sha256) and dist/mac/OpenLion.app
+```
+
+On a Mac, the same tests run with `dotnet build app/OpenLion.Mac.slnx -c Release -warnaserror` and `packaging/engine-requirements-mac.txt`.
+
+Tests (CI runs all of these on every push and pull request, on Windows and on macOS):
 
 ```powershell
 dotnet build app/OpenLion.slnx -c Release -warnaserror
@@ -263,7 +289,7 @@ Settings for development:
 
 | Variable | Effect |
 |---|---|
-| `OPENLION_HOME` | Keep the app's working files here instead of `%LOCALAPPDATA%\OpenLion` |
+| `OPENLION_HOME` | Keep the app's working files here instead of `%LOCALAPPDATA%\OpenLion` (macOS: `~/Library/Application Support/OpenLion`) |
 | `OPENLION_PYTHON`, `OPENLION_ENGINE` | Python with `osmium` installed, and the folder holding `openlion/` (used when there's no bundled engine next to the app) |
 | `OPENLION_BBOX` | Build only this area, e.g. `148.76 -35.92 149.40 -35.12` (Canberra), for quick test builds; the app marks the result as a test build |
 | `OPENLION_FACTORY_NAV` | A factory `navigation/` copy, so the app tests can run the full compatibility check |

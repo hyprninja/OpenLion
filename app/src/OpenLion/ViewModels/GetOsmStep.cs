@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Net.Http;
 using System.Windows.Input;
-using Microsoft.Win32;
 using OpenLion.Core;
 using OpenLion.Core.Osm;
 using OpenLion.Core.Reports;
@@ -60,18 +59,14 @@ public sealed class CountryOsm : ObservableObject
 
 /// <summary>Step 4: choose the countries, then get each one's OpenStreetMap extract from Geofabrik
 /// (or a file the user has).</summary>
-public sealed class GetOsmStep : StepViewModel
+public sealed class GetOsmStep : ActivityStep
 {
     readonly Session _session;
     readonly HttpClient _http;
     readonly Dictionary<string, CountryOsm> _all = [];
-    CancellationTokenSource? _cts;
     CountryChoice _choice;
-    bool _busy, _checking;
-    double? _percent;
-    string _status = "", _detail = "", _error = "";
 
-    public GetOsmStep(Session session) : base("Get OSM data")
+    public GetOsmStep(Session session) : base("Get OSM data", "osm")
     {
         _session = session;
         _http = OsmDownloader.CreateClient(ErrorReport.AppVersion);
@@ -87,9 +82,9 @@ public sealed class GetOsmStep : StepViewModel
         _choice = Choices.FirstOrDefault(ch => ch.Countries.SequenceEqual(saved)) ?? Choices[0];
         session.Countries = _choice.Countries;
         Rows = [.. _choice.Countries.Select(c => _all[c.Code])];
-        DownloadCommand = new RelayCommand(() => _ = DownloadAsync(), () => !IsBusy && Rows.Any(r => r.WantsDownload));
-        CheckCommand = new RelayCommand(() => _ = CheckAsync(), () => !IsBusy && !_checking);
-        CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
+        // Download waits for a running check: it needs what the check is still fetching.
+        DownloadCommand = new RelayCommand(() => _ = DownloadAsync(), () => !IsBusy && !IsChecking && Rows.Any(r => r.WantsDownload));
+        CheckCommand = new RelayCommand(() => _ = CheckAsync(), () => !IsBusy && !IsChecking);
     }
 
     public IReadOnlyList<CountryChoice> Choices { get; }
@@ -98,7 +93,6 @@ public sealed class GetOsmStep : StepViewModel
 
     public ICommand DownloadCommand { get; }
     public ICommand CheckCommand { get; }
-    public ICommand CancelCommand { get; }
 
     public CountryChoice Choice
     {
@@ -114,26 +108,12 @@ public sealed class GetOsmStep : StepViewModel
             try { _session.State.Save(); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AppLog.Write("osm: state not saved: " + e.Message); }
             AppLog.Write("osm: countries " + string.Join(",", _session.State.Countries));
-            Error = "";
+            Activity.Dismiss();
             Publish();
             if (Rows.Any(r => r.Remote is null))
                 _ = CheckAsync();
         }
     }
-
-    public bool IsBusy
-    {
-        get => _busy;
-        private set { if (Set(ref _busy, value)) { Raise(nameof(CanGoNext)); Raise(nameof(IsIdle)); } }
-    }
-    public bool IsIdle => !IsBusy;
-    public bool IsChecking { get => _checking; private set => Set(ref _checking, value); }
-    public bool IsIndeterminate => _percent is null;
-    public double Percent => _percent ?? 0;
-    public string Status { get => _status; private set => Set(ref _status, value); }
-    public string Detail { get => _detail; private set => Set(ref _detail, value); }
-    public string Error { get => _error; private set { if (Set(ref _error, value)) Raise(nameof(HasError)); } }
-    public bool HasError => Error.Length > 0;
 
     public bool AllCached => Rows.All(r => r.HasCached);
     public bool ShowDownload => Rows.Any(r => r.WantsDownload);
@@ -142,14 +122,6 @@ public sealed class GetOsmStep : StepViewModel
         : "Download the newer data";
 
     public override bool CanGoNext => AllCached && !IsBusy;
-    public override bool IsWorking => IsBusy;
-
-    void SetPercent(double? p)
-    {
-        _percent = p;
-        Raise(nameof(Percent));
-        Raise(nameof(IsIndeterminate));
-    }
 
     /// <summary>Hands the selected extracts to the session and refreshes what depends on them.</summary>
     void Publish()
@@ -157,7 +129,7 @@ public sealed class GetOsmStep : StepViewModel
         _session.Countries = _choice.Countries;
         _session.Osm = AllCached ? [.. Rows.Select(r => r.Cached!)] : null;
         Raise(nameof(AllCached)); Raise(nameof(CanGoNext)); Raise(nameof(ShowDownload)); Raise(nameof(DownloadLabel));
-        CommandManager.InvalidateRequerySuggested();
+        Platform.RequeryCommands();
     }
 
     public override void OnEnter()
@@ -169,14 +141,12 @@ public sealed class GetOsmStep : StepViewModel
             _ = CheckAsync();
     }
 
-    public override void OnLeave() => _cts?.Cancel();
+    public override void OnLeave() => Activity.Cancel();
 
     async Task CheckAsync()
     {
-        if (IsChecking)
+        if (!Activity.BeginCheck())
             return;
-        IsChecking = true;
-        Error = "";
         try
         {
             foreach (var row in Rows.ToList())
@@ -204,7 +174,7 @@ public sealed class GetOsmStep : StepViewModel
         }
         finally
         {
-            IsChecking = false;
+            Activity.EndCheck();
             Publish();
         }
     }
@@ -228,63 +198,51 @@ public sealed class GetOsmStep : StepViewModel
     {
         if (IsBusy)
             return;
-        var dlg = new OpenFileDialog
-        {
-            Title = $"Choose an OpenStreetMap extract for {row.Title}",
-            Filter = "OpenStreetMap extract (*.osm.pbf)|*.osm.pbf|All files|*.*",
-        };
-        if (dlg.ShowDialog() != true)
+        var path = await Platform.PickFileAsync($"Choose an OpenStreetMap extract for {row.Title}",
+            "OpenStreetMap extract (*.osm.pbf)|*.osm.pbf|All files|*.*");
+        if (path is null)
             return;
-        var path = dlg.FileName;
         await RunAsync(row, $"Copying {Path.GetFileName(path)}…", (p, ct) => row.Downloader.ImportAsync(path, p, ct));
     }
 
     async Task<bool> RunAsync(CountryOsm row, string status,
         Func<IProgress<DownloadProgress>, CancellationToken, Task<OsmExtract>> work)
     {
-        _cts = new CancellationTokenSource();
-        IsBusy = true;
-        Error = "";
-        Status = status;
-        Detail = "";
-        SetPercent(null);
+        var ct = Activity.Begin(status);
         var progress = new Progress<DownloadProgress>(p =>
         {
-            SetPercent(p.Fraction * 100);
             var mb = $"{p.Done / 1e6:N0}{(p.Total is { } t ? $" of {t / 1e6:N0}" : "")} MB";
-            Detail = p.Phase switch
-            {
-                DownloadPhase.Verifying => $"Checking the file: {mb}",
-                DownloadPhase.Copying => mb,
-                _ => mb + (p.BytesPerSecond > 0 ? $"  ({p.BytesPerSecond / 1e6:N1} MB/s{Eta(p)})" : ""),
-            };
-            if (p.Phase == DownloadPhase.Verifying)
-                Status = $"Checking the {row.Title} download…";
+            Activity.Report(p.Fraction * 100, p.Phase switch
+                {
+                    DownloadPhase.Verifying => $"Checking the file: {mb}",
+                    DownloadPhase.Copying => mb,
+                    _ => mb + (p.BytesPerSecond > 0 ? $"  ({p.BytesPerSecond / 1e6:N1} MB/s{Eta(p)})" : ""),
+                },
+                p.Phase == DownloadPhase.Verifying ? $"Checking the {row.Title} download…" : null);
         });
         try
         {
-            row.Cached = await work(progress, _cts.Token);
+            row.Cached = await work(progress, ct);
             AppLog.Write($"osm: {row.Country.Code} ready {row.Cached.FileName} ({row.Cached.Bytes} bytes, md5 {row.Cached.Md5 ?? "not checked"})");
             if (row.IsLatest)
                 row.RemoteText = "This is the latest data on Geofabrik.";
+            Activity.Finish();
             return true;
         }
         catch (OperationCanceledException)
         {
-            Error = "Stopped. A download picks up where it left off next time.";
+            Activity.Stop("Stopped. A download picks up where it left off next time.");
         }
         catch (Exception e) when (e is HttpRequestException or IOException or OsmDownloadException or UnauthorizedAccessException)
         {
             AppLog.Write($"osm: {row.Country.Code} failed: " + e);
-            Error = e is HttpRequestException
+            Activity.Fail(e is HttpRequestException
                 ? $"The {row.Title} download failed: " + e.Message + " Press Download to carry on from where it stopped."
-                : e.Message;
+                : e.Message);
         }
         finally
         {
-            IsBusy = false;
-            Status = "";
-            Detail = "";
+            Activity.Settle();
             Publish();
         }
         return false;

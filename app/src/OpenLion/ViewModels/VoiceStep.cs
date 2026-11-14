@@ -1,7 +1,5 @@
 ﻿using System.IO;
-using System.Media;
 using System.Net.Http;
-using System.Windows;
 using System.Windows.Input;
 using OpenLion.Core;
 using OpenLion.Core.Osm;
@@ -51,18 +49,13 @@ public sealed class VoiceOption : ObservableObject
 }
 
 /// <summary>Optional step: keep the factory voice or install a voice pack (UK English prompts).</summary>
-public sealed class VoiceStep : StepViewModel
+public sealed class VoiceStep : ActivityStep
 {
     readonly Session _session;
     readonly VoicePackDownloader _downloader;
-    readonly SoundPlayer _player = new();
-    CancellationTokenSource? _cts;
     VoiceOption _choice;
-    bool _busy;
-    double? _percent;
-    string _status = "", _detail = "", _error = "";
 
-    public VoiceStep(Session session) : base("Voice")
+    public VoiceStep(Session session) : base("Voice", "voice")
     {
         _session = session;
         _downloader = new VoicePackDownloader(OsmDownloader.CreateClient(ErrorReport.AppVersion), AppPaths.VoicesFolder);
@@ -70,13 +63,11 @@ public sealed class VoiceStep : StepViewModel
         _choice = Options.FirstOrDefault(o => o.Pack?.Id == session.State.VoicePack && o.Pack is not null) ?? Options[0];
         _choice.IsSelected = true;
         DownloadCommand = new RelayCommand(() => _ = DownloadAsync(), () => !IsBusy && !Choice.IsReady);
-        CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
-        StopCommand = new RelayCommand(_player.Stop);
+        StopCommand = new RelayCommand(Platform.StopSound);
     }
 
     public IReadOnlyList<VoiceOption> Options { get; }
     public ICommand DownloadCommand { get; }
-    public ICommand CancelCommand { get; }
     public ICommand StopCommand { get; }
 
     public VoiceOption Choice => _choice;
@@ -85,22 +76,10 @@ public sealed class VoiceStep : StepViewModel
     public string DownloadLabel => Choice.Pack is { } p ? $"Download {p.Name} ({p.Bytes / 1e6:N0} MB)" : "";
     public string LanguageNote => VoicePacks.LanguageNote;
 
-    public bool IsBusy
-    {
-        get => _busy;
-        private set { if (Set(ref _busy, value)) { Raise(nameof(IsIdle)); Raise(nameof(CanGoNext)); Raise(nameof(ShowDownload)); } }
-    }
-    public bool IsIdle => !IsBusy;
-    public bool IsIndeterminate => _percent is null;
-    public double Percent => _percent ?? 0;
-    public string Status { get => _status; private set => Set(ref _status, value); }
-    public string Detail { get => _detail; private set => Set(ref _detail, value); }
-    public string Error { get => _error; private set { if (Set(ref _error, value)) Raise(nameof(HasError)); } }
-    public bool HasError => Error.Length > 0;
-
     /// <summary>The factory voice needs nothing; a pack must be downloaded first.</summary>
     public override bool CanGoNext => !IsBusy && Choice.IsReady;
-    public override bool IsWorking => IsBusy;
+
+    protected override void OnActivityChanged() => Raise(nameof(ShowDownload));
 
     internal void Choose(VoiceOption o)
     {
@@ -113,7 +92,7 @@ public sealed class VoiceStep : StepViewModel
         try { _session.State.Save(); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AppLog.Write("voice: state not saved: " + e.Message); }
         AppLog.Write("voice: chose " + (o.Pack?.Id ?? "factory"));
-        Error = "";
+        Activity.Dismiss();
         Publish();
     }
 
@@ -122,7 +101,7 @@ public sealed class VoiceStep : StepViewModel
         _session.Voice = Choice.Pack is { } p && Choice.IsReady ? (p, _downloader.PathFor(p)) : null;
         Raise(nameof(Choice)); Raise(nameof(CustomChosen)); Raise(nameof(ShowDownload)); Raise(nameof(DownloadLabel));
         Raise(nameof(CanGoNext));
-        CommandManager.InvalidateRequerySuggested();
+        Platform.RequeryCommands();
     }
 
     public override void OnEnter()
@@ -134,8 +113,8 @@ public sealed class VoiceStep : StepViewModel
 
     public override void OnLeave()
     {
-        _cts?.Cancel();
-        _player.Stop();
+        Activity.Cancel();
+        Platform.StopSound();
         Publish();
     }
 
@@ -143,36 +122,27 @@ public sealed class VoiceStep : StepViewModel
 
     internal void Play(VoiceOption o)
     {
-        Error = "";
+        Activity.Dismiss();
         try
         {
             Stream? sample;
             if (o.Pack is { } p)
-                sample = Application.GetResourceStream(new Uri($"pack://application:,,,/Assets/Voices/{p.Id}-sample.wav"))?.Stream;
+                sample = Platform.OpenVoiceSample(p.Id);
             else
                 sample = _session.FactoryNavigation is { } nav && VoiceSamples.Stock(nav) is { } wav ? new MemoryStream(wav) : null;
             if (sample is null)
             {
-                Error = o.IsStock ? "The factory voice's clips aren't in your factory card copy, so there's no sample to play."
-                                  : $"There's no sample of {o.Name} in this version of OpenLion.";
+                Activity.Fail(o.IsStock ? "The factory voice's clips aren't in your factory card copy, so there's no sample to play."
+                                        : $"There's no sample of {o.Name} in this version of OpenLion.");
                 return;
             }
-            _player.Stop();
-            _player.Stream = sample;
-            _player.Play();
+            Platform.PlaySound(sample);
         }
         catch (Exception e) when (e is IOException or InvalidOperationException or UriFormatException)
         {
             AppLog.Write("voice: sample failed: " + e.Message);
-            Error = "The sample couldn't be played: " + e.Message;
+            Activity.Fail("The sample couldn't be played: " + e.Message);
         }
-    }
-
-    void SetPercent(double? p)
-    {
-        _percent = p;
-        Raise(nameof(Percent));
-        Raise(nameof(IsIndeterminate));
     }
 
     async Task DownloadAsync()
@@ -180,44 +150,33 @@ public sealed class VoiceStep : StepViewModel
         if (IsBusy || Choice.Pack is not { } pack)
             return;
         var option = Choice;
-        _cts = new CancellationTokenSource();
-        IsBusy = true;
-        Error = "";
-        Status = $"Downloading {pack.Name}…";
-        Detail = "";
-        SetPercent(0);
+        var ct = Activity.Begin($"Downloading {pack.Name}…", percent: 0);
         try
         {
             var progress = new Progress<DownloadProgress>(p =>
             {
                 if (p.Phase == DownloadPhase.Verifying)
-                {
-                    Status = "Checking the download…";
-                    Detail = "";
-                    SetPercent(null);
-                    return;
-                }
-                SetPercent(p.Fraction * 100);
-                Detail = $"{p.Done / 1e6:N1} of {pack.Bytes / 1e6:N1} MB";
+                    Activity.Report(null, "", "Checking the download…");
+                else
+                    Activity.Report(p.Fraction * 100, $"{p.Done / 1e6:N1} of {pack.Bytes / 1e6:N1} MB");
             });
-            var path = await _downloader.DownloadAsync(pack, progress, _cts.Token);
+            var path = await _downloader.DownloadAsync(pack, progress, ct);
             option.IsReady = true;
             AppLog.Write($"voice: downloaded {pack.Id} to {path}");
+            Activity.Finish();
         }
         catch (OperationCanceledException)
         {
-            Error = "Stopped. Press Download to start again.";
+            Activity.Stop("Stopped. Press Download to start again.");
         }
         catch (Exception e) when (e is HttpRequestException or IOException or VoicePackException or UnauthorizedAccessException)
         {
             AppLog.Write("voice: download failed: " + e);
-            Error = e is HttpRequestException ? "The download failed: " + e.Message + " Press Download to try again." : e.Message;
+            Activity.Fail(e is HttpRequestException ? "The download failed: " + e.Message + " Press Download to try again." : e.Message);
         }
         finally
         {
-            IsBusy = false;
-            Status = "";
-            Detail = "";
+            Activity.Settle();
             Publish();
         }
     }

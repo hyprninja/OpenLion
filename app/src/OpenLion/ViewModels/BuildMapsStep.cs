@@ -1,10 +1,9 @@
 ﻿using System.Diagnostics;
 using System.IO;
-using System.Windows;
 using System.Windows.Input;
-using System.Windows.Threading;
 using OpenLion.Core;
 using OpenLion.Core.Engine;
+using OpenLion.Core.Flow;
 using OpenLion.Core.Osm;
 using OpenLion.Core.Reports;
 using OpenLion.Core.Speed;
@@ -29,11 +28,11 @@ public sealed class BuildMapsStep : StepViewModel
     static bool FastPc => Memory >= FastMemory && Environment.ProcessorCount >= 8;
 
     readonly Session _session;
-    readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
+    readonly IUiTimer _timer;
     readonly Stopwatch _clock = new(), _stageClock = new();
     CancellationTokenSource? _cts;
     BuildProgress? _progress;
-    BuildPhase _phase;
+    readonly StateMachine<BuildPhase> _flow = new(Flows.Build);
     double _percent;
     string _status = "", _detail = "", _elapsed = "", _summary = "", _intro = "", _warning = "", _cameraNote = "", _alertNote = "";
     string? _reportPath;
@@ -41,13 +40,13 @@ public sealed class BuildMapsStep : StepViewModel
     public BuildMapsStep(Session session) : base("Build maps")
     {
         _session = session;
-        _timer.Tick += (_, _) => Tick();
+        _timer = Platform.CreateTimer(TimeSpan.FromSeconds(1), Tick);
         StartCommand = new RelayCommand(() => _ = RunAsync(), () => Phase is not BuildPhase.Building and not BuildPhase.Blocked);
         CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
         OpenIssueCommand = new RelayCommand(() => Process.Start(new ProcessStartInfo(ErrorReport.IssueUrl) { UseShellExecute = true }));
-        ShowReportCommand = new RelayCommand(() => Process.Start("explorer.exe", $"/select,\"{_reportPath}\""),
+        ShowReportCommand = new RelayCommand(() => Platform.RevealFile(_reportPath!),
             () => _reportPath is not null);
-        CopySummaryCommand = new RelayCommand(() => Clipboard.SetText(_summary), () => _summary.Length > 0);
+        CopySummaryCommand = new RelayCommand(() => Platform.CopyText(_summary), () => _summary.Length > 0);
     }
 
     public ICommand StartCommand { get; }
@@ -56,15 +55,16 @@ public sealed class BuildMapsStep : StepViewModel
     public ICommand ShowReportCommand { get; }
     public ICommand CopySummaryCommand { get; }
 
+    /// <summary>Where the step is in <see cref="Flows.Build"/>.</summary>
     public BuildPhase Phase
     {
-        get => _phase;
+        get => _flow.State;
         private set
         {
-            if (!Set(ref _phase, value)) return;
-            Raise(nameof(IsBusy)); Raise(nameof(IsReady)); Raise(nameof(IsDone)); Raise(nameof(IsFailed));
+            if (!_flow.Move(value)) return;
+            Raise(); Raise(nameof(IsBusy)); Raise(nameof(IsReady)); Raise(nameof(IsDone)); Raise(nameof(IsFailed));
             Raise(nameof(IsCancelled)); Raise(nameof(CanGoNext)); Raise(nameof(StartLabel)); Raise(nameof(IsIdleOrFailed));
-            CommandManager.InvalidateRequerySuggested();
+            Platform.RequeryCommands();
         }
     }
 
@@ -128,8 +128,9 @@ public sealed class BuildMapsStep : StepViewModel
         Phase = BuildPhase.Ready;
         Intro = osm is null ? "" :
             $"OpenLion will build new maps of {Places} from {_session.DescribeOsm()}{Extras}, using your factory card's copy. " +
-            $"This takes {Duration} on a fast PC (longer on slower ones). You can keep using the PC, " +
-            "and OpenLion stops Windows going to sleep until it's done." +
+            $"This takes {Duration} on a fast {Os.Computer} (longer on slower ones). You can keep using the {Os.Computer}, " +
+            (Os.IsMac ? "and OpenLion stops the Mac going to sleep until it's done (on a laptop, keep the lid open)."
+                      : "and OpenLion stops Windows going to sleep until it's done.") +
             (_session.Countries.Count == 1
                 ? $" Only {Places} will have streets and addresses; the other country on the factory card is left empty."
                 : "");
@@ -181,16 +182,16 @@ public sealed class BuildMapsStep : StepViewModel
             var root = Path.GetPathRoot(Path.GetFullPath(AppPaths.Root))!;
             var free = new DriveInfo(root).AvailableFreeSpace + ExistingBuildBytes();
             if (free < NeededBytes)
-                notes.Add($"Only {free / 1e9:N1} GB free on {root.TrimEnd('\\')}; the build needs about {NeededBytes / 1e9:N1} GB.");
+                notes.Add($"Only {free / 1e9:N1} GB free on {Os.DiskName(root)}; the build needs about {NeededBytes / 1e9:N1} GB.");
         }
         catch (Exception e) when (e is IOException or ArgumentException) { }
         var mem = Memory;
         var gbMem = mem / (double)(1L << 30);
         if (mem < MinimumMemory - (512L << 20))     // "8 GB" PCs report a little under 8
-            notes.Add($"This PC has {gbMem:N0} GB of memory. OpenLion needs about 8 GB; with less, the build may be " +
+            notes.Add($"This {Os.Computer} has {gbMem:N0} GB of memory. OpenLion needs about 8 GB; with less, the build may be " +
                       "very slow or run out of memory. Close other programs before you start.");
         else if (mem < FastMemory)
-            notes.Add($"This PC has {gbMem:N0} GB of memory, so OpenLion builds in its memory-saving mode: one step " +
+            notes.Add($"This {Os.Computer} has {gbMem:N0} GB of memory, so OpenLion builds in its memory-saving mode: one step " +
                       "at a time, which takes longer. Close other programs before you start.");
         if (MapBuild.BboxFromEnvironment() is { } b)
             notes.Add($"OPENLION_BBOX is set: only the test area {string.Join(" ", b)} will be built.");
@@ -225,7 +226,7 @@ public sealed class BuildMapsStep : StepViewModel
         {
             // A build is tied to the factory card it came from; without one the write step would refuse it.
             Warning = "There's no checked copy of your factory card in this session. Go back to Factory card and " +
-                      "copy it, or choose the copy already on this PC.";
+                      $"copy it, or choose the copy already on this {Os.Computer}.";
             AppLog.Write("build: not started, no factory card record");
             return;
         }

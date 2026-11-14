@@ -85,7 +85,7 @@ public static class CardGuard
 
         if (target.PhysicalDiskNumber is null)
             Add(GuardProblem.UnknownPhysicalDisk,
-                "Windows didn't report which disk this volume is on, so it can't be checked safely.");
+                $"{Os.Name} didn't report which disk this volume is on, so it can't be checked safely.");
         else if (others.Any(d => d.PhysicalDiskNumber == target.PhysicalDiskNumber))
             Add(GuardProblem.SharesDiskWithOtherVolume,
                 "This disk has more than one volume on it. Use a card with a single volume.");
@@ -94,7 +94,7 @@ public static class CardGuard
             Add(GuardProblem.NotRemovable, "This is not a removable card.");
 
         if (target.IsSystemDisk)
-            Add(GuardProblem.SystemDisk, "This is the disk Windows runs from.");
+            Add(GuardProblem.SystemDisk, $"This is the disk {Os.Name} runs from.");
 
         if (target.IsReadOnly)
             Add(GuardProblem.WriteProtected,
@@ -111,15 +111,26 @@ public static class CardGuard
         // The iQ unit reads FAT32 cards (the factory card is FAT32).
         if (!string.Equals(target.FileSystem, "FAT32", StringComparison.OrdinalIgnoreCase))
             Add(GuardProblem.NotFat32, target.FileSystem.Length == 0
-                ? "Windows didn't report this card's format. It must be FAT32."
-                : $"This card is formatted {target.FileSystem}, but the iQ unit needs FAT32. In File Explorer, right-click " +
-                  "the card, choose Format…, pick FAT32 and press Start (this erases the card).");
+                ? $"{Os.Name} didn't report this card's format. It must be FAT32."
+                : $"This card is formatted {target.FileSystem}, but the iQ unit needs FAT32. " + FormatHelp(target));
 
         if (target.RootEntryCount > 0 && !options.AllowNonEmpty && !writtenByUs)
             Add(GuardProblem.NotEmpty,
                 "This card has files on it. Use an empty card, or confirm you're OK losing them.");
 
         return new GuardResult(target, f);
+    }
+
+    /// <summary>How to format the card as FAT32 with the operating system's own tools.</summary>
+    static string FormatHelp(DriveSnapshot target)
+    {
+        if (!Os.IsMac)
+            return "In File Explorer, right-click the card, choose Format…, pick FAT32 and press Start (this erases the card).";
+        // Disk Utility's "MS-DOS (FAT)" picks FAT16 for small cards, so give the exact command too.
+        var disk = target.PhysicalDiskNumber is { } n ? $"/dev/disk{n}" : "/dev/diskN";
+        return "In Disk Utility, choose the card, click Erase, and pick MS-DOS (FAT) with Master Boot Record. If it " +
+               $"still isn't FAT32, run this in Terminal: diskutil eraseDisk FAT32 OPENLION MBRFormat {disk} " +
+               "(this erases the card; check the disk number in Disk Utility first).";
     }
 
     static bool SameVolume(DriveSnapshot a, DriveSnapshot b) =>

@@ -42,6 +42,7 @@ public class SecurityTests
         Assert.Throws<InvalidOperationException>(() => AppPaths.EnsureInside(root + "-evil", root));
     }
 
+#if WINDOWS
     [Fact]
     public void UnsignedFileIsReportedUnsigned()
     {
@@ -60,4 +61,15 @@ public class SecurityTests
     [Fact]
     public void MicrosoftSignedDllIsSigned() => // embedded signature (System32 files use catalogs instead)
         Assert.Equal(SignatureState.Signed, Authenticode.Check(typeof(object).Assembly.Location));
+#else
+    [Fact]
+    public void SanitizeRemovesMacUserFolders() // any user's, on the startup disk or another volume
+    {
+        var clean = ErrorReport.Sanitize("a /Users/someone/Library/x b /Volumes/Data/Users/other/osm c ~/notes");
+        Assert.DoesNotContain("someone", clean);
+        Assert.DoesNotContain("other", clean);
+        Assert.Contains("a %USERPROFILE%/Library/x", clean);
+        Assert.Contains("~/notes", clean);
+    }
+#endif
 }

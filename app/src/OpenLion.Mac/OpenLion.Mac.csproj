@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The macOS app. The wizard's view models are shared with the Windows app (..\OpenLion\ViewModels);
+       this project only adds the macOS window (Avalonia) and Platform.cs. Build it on a Mac with
+       OpenLion.Mac.slnx, and package it with packaging/build-mac.sh. -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>OpenLion</AssemblyName>
+    <RootNamespace>OpenLion</RootNamespace>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationIcon>..\OpenLion\Assets\OpenLion.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\OpenLion\ViewModels\*.cs" Link="ViewModels\%(Filename)%(Extension)" />
+    <AvaloniaResource Include="..\OpenLion\Assets\logo-256.png" Link="Assets\logo-256.png" />
+    <AvaloniaResource Include="..\OpenLion\Assets\Voices\*.wav" Link="Assets\Voices\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenLion.Core\OpenLion.Core.csproj" />
+  </ItemGroup>
+
+</Project>
