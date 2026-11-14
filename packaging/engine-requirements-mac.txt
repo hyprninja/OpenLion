@@ -1,0 +1,19 @@
+# Packages bundled into the macOS app's Python 3.12 (Apple silicon), pinned by version and SHA-256:
+# the same versions as engine-requirements.txt (Windows). requests, urllib3, certifi and idna are the
+# very same files; osmium and charset-normalizer have their own macOS wheels.
+# build-mac.sh installs these with pip --require-hashes, so a release fails instead of shipping
+# anything PyPI serves differently.
+# To update: pip download --only-binary=:all: --platform macosx_11_0_arm64 --python-version 3.12
+#   --implementation cp --no-deps -d <dir> <package>==<version>, then sha256 each wheel.
+osmium==4.3.2 \
+    --hash=sha256:ae66a318b8a9ee2463979264156ca4e98713c369e26ff5e3622b177a05073fc1
+requests==2.34.2 \
+    --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
+urllib3==2.8.0 \
+    --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
+certifi==2026.10.23 \
+    --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
+idna==3.20 \
+    --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+charset-normalizer==3.5.2 \
+    --hash=sha256:ed2a239c0ea213acc1908150a3037257083c7c083128f1a4cec2ec4b97dca491

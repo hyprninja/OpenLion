@@ -183,6 +183,7 @@ public static class CardCopier
 
     static string Slash(string rel) => rel.Replace('\\', '/');
 
+#if WINDOWS
     static bool IsInside(string path, string folder)
     {
         var f = folder.TrimEnd('\\') + "\\";
@@ -191,4 +192,26 @@ public static class CardCopier
 
     static bool SameRoot(string a, string b) =>
         string.Equals(Path.GetPathRoot(a)?.TrimEnd('\\'), Path.GetPathRoot(b)?.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+#else
+    // macOS: one folder tree, so "the same drive" means the same mount point. Compared without case,
+    // as macOS volumes usually are: a false "inside" or "same drive" only refuses a copy.
+    internal static bool IsInside(string path, string folder)
+    {
+        var f = folder.TrimEnd('/') + "/";
+        return (path.TrimEnd('/') + "/").StartsWith(f, StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool SameRoot(string a, string b) =>
+        string.Equals(MountPointOf(a), MountPointOf(b), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The mount point a path is on: the longest one that contains it ("/Volumes/CARD", or "/").</summary>
+    internal static string MountPointOf(string path, IEnumerable<string>? mounts = null)
+    {
+        var full = Path.GetFullPath(path);
+        return (mounts ?? DriveInfo.GetDrives().Select(d => d.Name))
+            .Where(m => m == "/" || IsInside(full, m))
+            .OrderByDescending(m => m.Length)
+            .FirstOrDefault() ?? "/";
+    }
+#endif
 }

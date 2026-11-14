@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Windows.Input;
+using System.Windows.Input; // ICommand: part of .NET itself, not WPF
 
 namespace OpenLion.ViewModels;
 
@@ -25,10 +25,17 @@ public sealed class RelayCommand(Action run, Func<bool>? canRun = null) : IComma
 {
     public event EventHandler? CanExecuteChanged
     {
-        add => CommandManager.RequerySuggested += value;
-        remove => CommandManager.RequerySuggested -= value;
+        add => Platform.RequerySuggested += value;
+        remove => Platform.RequerySuggested -= value;
     }
 
     public bool CanExecute(object? parameter) => canRun?.Invoke() ?? true;
     public void Execute(object? parameter) => run();
+}
+
+/// <summary>A timer that ticks on the UI thread (each app's DispatcherTimer, see Platform.CreateTimer).</summary>
+public interface IUiTimer
+{
+    void Start();
+    void Stop();
 }

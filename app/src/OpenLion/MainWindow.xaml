@@ -266,6 +266,8 @@
 
                     <TextBlock Style="{StaticResource Body}" Text="{Binding Error}" Foreground="{StaticResource Accent}"
                                FontWeight="SemiBold" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"/>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Notice}" Foreground="{StaticResource Muted}"
+                               Visibility="{Binding HasNotice, Converter={StaticResource BoolToVis}}"/>
 
                     <WrapPanel Visibility="{Binding IsIdle, Converter={StaticResource BoolToVis}}">
                         <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
@@ -373,6 +375,8 @@
 
                         <TextBlock Style="{StaticResource Body}" Text="{Binding Error}" Foreground="{StaticResource Accent}"
                                    FontWeight="SemiBold" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"/>
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Notice}" Foreground="{StaticResource Muted}"
+                                   Visibility="{Binding HasNotice, Converter={StaticResource BoolToVis}}"/>
 
                         <WrapPanel Visibility="{Binding IsIdle, Converter={StaticResource BoolToVis}}">
                             <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
@@ -447,6 +451,8 @@
 
                         <TextBlock Style="{StaticResource Body}" Text="{Binding Error}" Foreground="{StaticResource Accent}"
                                    FontWeight="SemiBold" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"/>
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding Notice}" Foreground="{StaticResource Muted}"
+                                   Visibility="{Binding HasNotice, Converter={StaticResource BoolToVis}}"/>
 
                         <WrapPanel Visibility="{Binding IsIdle, Converter={StaticResource BoolToVis}}">
                             <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
@@ -535,6 +541,8 @@
 
                     <TextBlock Style="{StaticResource Body}" Text="{Binding Error}" Foreground="{StaticResource Accent}"
                                FontWeight="SemiBold" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"/>
+                    <TextBlock Style="{StaticResource Body}" Text="{Binding Notice}" Foreground="{StaticResource Muted}"
+                               Visibility="{Binding HasNotice, Converter={StaticResource BoolToVis}}"/>
 
                     <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" HorizontalAlignment="Left"
                             Visibility="{Binding ShowDownload, Converter={StaticResource BoolToVis}}"/>

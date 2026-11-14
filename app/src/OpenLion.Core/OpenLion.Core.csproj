@@ -1,11 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- net10.0-windows is the Windows app's build, unchanged. net10.0 is the macOS app's build:
+         the Windows-only files below are left out of it and the Mac/ folder stands in for them. -->
+    <TargetFrameworks>net10.0-windows;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows'">
+    <Compile Remove="Mac\**" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' != 'net10.0-windows'">
+    <Compile Remove="Authenticode.cs;KeepAwake.cs;Drives\DriveService.cs;Drives\NativeMethods.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Known card file lists: a copied card that matches one exactly is "verified". -->

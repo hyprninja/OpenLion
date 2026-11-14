@@ -39,13 +39,15 @@ public sealed class MainViewModel : ObservableObject
         Current.OnEnter();
     }
 
-    void OnStepChanged(object? sender, PropertyChangedEventArgs e) => CommandManager.InvalidateRequerySuggested();
+    void OnStepChanged(object? sender, PropertyChangedEventArgs e) => Platform.RequeryCommands();
 
     void Go(int delta)
     {
+        var from = Current.Title;
         Current.OnLeave();
         Current.IsCurrent = false;
         _index += delta;
+        OpenLion.Core.AppLog.Write($"state: wizard {from} -> {Current.Title}");
         Current.IsCurrent = true;
         Raise(nameof(Current));
         Raise(nameof(Index));

@@ -7,6 +7,9 @@ public sealed record DriveSnapshot
     /// <summary>Drive root, e.g. "E:\".</summary>
     public required string Root { get; init; }
 
+    /// <summary>macOS: the device the volume is mounted from, e.g. "/dev/disk4s1". Null on Windows.</summary>
+    public string? DeviceNode { get; init; }
+
     /// <summary>Volume GUID path, e.g. "\\?\Volume{...}\". Stable while the card stays inserted,
     /// unlike the drive letter. Null if Windows didn't report one.</summary>
     public string? VolumeGuidPath { get; init; }
@@ -45,6 +48,17 @@ public sealed record DriveSnapshot
     /// <summary>Number of files and folders in the root, ignoring Windows' own system folders.</summary>
     public int RootEntryCount { get; init; }
 
-    public override string ToString() =>
-        $"{Root.TrimEnd('\\')}  {(Label.Length > 0 ? Label : "(no label)")}  ({TotalBytes / 1_000_000_000.0:0.0} GB)";
+    /// <summary>True for a Windows drive root ("E:\"); false for a macOS mount point ("/Volumes/CARD").</summary>
+    public bool HasDriveLetter => Root.Length >= 2 && char.IsAsciiLetter(Root[0]) && Root[1] == ':';
+
+    /// <summary>How the drive is named on screen: "E:" on Windows, the volume's name ("NO NAME") on macOS.</summary>
+    public string DisplayRoot => HasDriveLetter ? Root.TrimEnd('\\') :
+        Root.TrimEnd('/') is { Length: > 0 } r ? Path.GetFileName(r) : "/";
+
+    /// <summary>What the user types to confirm writing: the drive letter ("E") on Windows, the volume's name on macOS.</summary>
+    public string ConfirmName => HasDriveLetter ? Root[..1].ToUpperInvariant() : DisplayRoot;
+
+    public override string ToString() => HasDriveLetter || Label.Length == 0 || Label != DisplayRoot
+        ? $"{DisplayRoot}  {(Label.Length > 0 ? Label : "(no label)")}  ({TotalBytes / 1_000_000_000.0:0.0} GB)"
+        : $"{DisplayRoot}  ({TotalBytes / 1_000_000_000.0:0.0} GB)";
 }

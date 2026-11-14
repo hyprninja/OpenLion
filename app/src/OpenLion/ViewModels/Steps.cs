@@ -112,8 +112,11 @@ public sealed record FactoryCandidate(DriveSnapshot Drive, NavigationCard? Card)
         string.Join(Environment.NewLine, Card.Databases.Select(d =>
             $"{d.Folder}: {d.Name}, {d.Area}{(d.FolderExists ? "" : " (folder missing)")}"));
     public string LockHint => Drive.IsReadOnly
-        ? "Write-protected. Good: Windows can't change this card."
-        : "Not write-protected. For extra safety, take the card out, slide its lock switch away from the gold contacts, and put it back.";
+        ? $"Write-protected. Good: {Os.Name} can't change this card."
+        : Os.IsMac
+            ? "Not write-protected. OpenLion mounts it read-only before copying, but macOS may already have put hidden " +
+              "index folders on it. For extra safety, eject it, slide its lock switch away from the gold contacts, and put it back."
+            : "Not write-protected. For extra safety, take the card out, slide its lock switch away from the gold contacts, and put it back.";
 }
 
 public sealed class FactoryCardStep : StepViewModel
@@ -194,7 +197,11 @@ public sealed record TargetCandidate(GuardResult Guard, bool WrittenByOpenLion)
     public string Verdict => !Guard.Allowed ? "Will not write to this drive" :
         WrittenByOpenLion ? "OK to write: an OpenLion card, its old maps will be replaced" : "OK to write";
     public IEnumerable<string> Reasons => Guard.Findings.Select(f => f.Message);
-    public string Letter => Guard.Target.Root[..1].ToUpperInvariant();
+    /// <summary>What the user types to confirm: the drive letter ("E") on Windows, the card's name on macOS.</summary>
+    public string Letter => Guard.Target.ConfirmName;
+
+    /// <summary>The card in a sentence: "E:" on Windows, "“NO NAME”" on macOS.</summary>
+    public string Where => Guard.Target.HasDriveLetter ? Guard.Target.DisplayRoot : $"“{Guard.Target.DisplayRoot}”";
 
     /// <summary>Everything shown for a drive; equal keys mean nothing on screen would change.</summary>
     public static string Key(TargetCandidate t) =>

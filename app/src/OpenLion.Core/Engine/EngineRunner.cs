@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace OpenLion.Core.Engine;
 
-/// <param name="Python">python.exe to run.</param>
+/// <param name="Python">python.exe (Windows) or python3 (macOS) to run.</param>
 /// <param name="EngineRoot">Folder that contains the openlion/ package.</param>
 /// <param name="Bundled">True for the copy shipped with the app, false for a developer setup.</param>
 public sealed record EnginePaths(string Python, string EngineRoot, bool Bundled)
@@ -18,6 +18,27 @@ public static class EngineLocator
     /// <summary>Oldest Python the engine runs on (developer setups; the app bundles 3.12).</summary>
     public static readonly Version MinPython = new(3, 12);
 
+    /// <summary>The bundled interpreter, relative to the app: runtime\python\python.exe on Windows,
+    /// runtime/python/bin/python3 on macOS.</summary>
+    static readonly string[] BundledPython = OperatingSystem.IsWindows()
+        ? ["runtime", "python", "python.exe"]
+        : ["runtime", "python", "bin", "python3"];
+
+    /// <summary>The interpreter's name on PATH.</summary>
+    static string PythonOnPath => OperatingSystem.IsWindows() ? "python.exe" : "python3";
+
+    /// <summary>Where the bundled runtime and engine are: next to the app on Windows; in a macOS app,
+    /// OpenLion.app/Contents/Resources (the app itself is in Contents/MacOS).</summary>
+    static string BundleRoot(string baseDir)
+    {
+        if (OperatingSystem.IsWindows())
+            return baseDir;
+        var resources = Path.GetFullPath(Path.Combine(baseDir, "..", "Resources"));
+        return Path.GetFileName(Path.TrimEndingDirectorySeparator(baseDir)) == "MacOS" && Directory.Exists(resources)
+            ? resources
+            : baseDir;
+    }
+
     /// <summary>
     /// Finds the conversion engine. The bundled copy next to the app (runtime\python\python.exe +
     /// engine\openlion) always wins when it is there, so an installed app can't be redirected.
@@ -28,8 +49,9 @@ public static class EngineLocator
     public static EnginePaths? Locate(string? baseDir = null)
     {
         baseDir ??= AppContext.BaseDirectory;
-        var bundledPy = Path.Combine(baseDir, "runtime", "python", "python.exe");
-        var bundledEngine = Path.Combine(baseDir, "engine");
+        var bundle = BundleRoot(baseDir);
+        var bundledPy = Path.Combine([bundle, .. BundledPython]);
+        var bundledEngine = Path.Combine(bundle, "engine");
         if (File.Exists(bundledPy) && HasPackage(bundledEngine))
             return new EnginePaths(bundledPy, bundledEngine, true);
 
@@ -42,7 +64,7 @@ public static class EngineLocator
         {
             if (HasPackage(dir.FullName))
             {
-                var py = FindOnPath("python.exe");
+                var py = FindOnPath(PythonOnPath);
                 return py is null ? null : new EnginePaths(py, dir.FullName, false);
             }
         }
@@ -53,8 +75,9 @@ public static class EngineLocator
     public static bool HasBundledEngine(string? baseDir = null)
     {
         baseDir ??= AppContext.BaseDirectory;
-        return File.Exists(Path.Combine(baseDir, "runtime", "python", "python.exe")) &&
-               HasPackage(Path.Combine(baseDir, "engine"));
+        var bundle = BundleRoot(baseDir);
+        return File.Exists(Path.Combine([bundle, .. BundledPython])) &&
+               HasPackage(Path.Combine(bundle, "engine"));
     }
 
     static bool HasPackage(string root) => File.Exists(Path.Combine(root, "openlion", "__init__.py"));
@@ -139,6 +162,14 @@ public static class EngineRunner
         psi.Environment["PYTHONPATH"] = engine.EngineRoot;
         psi.Environment["PYTHONIOENCODING"] = "utf-8";
         psi.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
+        if (!OperatingSystem.IsWindows())
+        {
+            // Windows' embedded Python ignores these by design (its ._pth file); here they're cleared so
+            // the user's own Python settings can't change what the engine runs.
+            psi.Environment.Remove("PYTHONHOME");
+            psi.Environment.Remove("PYTHONSTARTUP");
+            psi.Environment["PYTHONNOUSERSITE"] = "1";
+        }
 
         // stdout and stderr are read on separate threads; deliver lines one at a time.
         var gate = new object();

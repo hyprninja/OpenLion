@@ -32,9 +32,11 @@ public static partial class CardWriter
     const FileOptions NoBuffering = (FileOptions)0x20000000; // FILE_FLAG_NO_BUFFERING
     const int Block = 1 << 20;
 
+#if WINDOWS
     [LibraryImport("kernel32.dll", EntryPoint = "SetVolumeLabelW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool SetVolumeLabel(string root, string? label);
+#endif
 
     /// <param name="source">The built navigation/ folder.</param>
     /// <param name="target">The card, as the user chose it.</param>
@@ -122,7 +124,28 @@ public static partial class CardWriter
         foreach (var (src, d) in dirs.OrderByDescending(d => d.dst.Length))
             Directory.SetLastWriteTimeUtc(d, Directory.GetLastWriteTimeUtc(src));
 
+#if !WINDOWS
+        // macOS can't read past its own cache for a single file, so the card is unmounted and mounted
+        // again: that writes out everything, drops what macOS remembers, and the read-back below comes
+        // from the card. Its mount point may change, so every path is moved along with it.
+        ct.ThrowIfCancellationRequested();
+        RemoveAppleDouble(root);
+        var readRoot = RemountForReadBack(target);
+        if (readRoot != root)
+        {
+            string Move(string p) => Path.Combine(readRoot, Path.GetRelativePath(root, p));
+            files = files.Select(f => (f.path, dst: Move(f.dst), f.rel, f.size)).ToList();
+            (partial, rootPartial, final, root) = (Move(partial), Move(rootPartial), Move(final), readRoot);
+        }
+#endif
+
         // 2. read every file back from the card and compare
+#if !WINDOWS
+        var leftOver = Directory.EnumerateFiles(partial, "._*", SearchOption.AllDirectories).FirstOrDefault();
+        if (leftOver is not null)
+            throw new WriteException($"macOS put a hidden attribute file on the card ({Path.GetRelativePath(root, leftOver)}) " +
+                                     "that couldn't be removed. Write the card again.");
+#endif
         done = 0;
         n = 0;
         foreach (var (_, dst, rel, size) in files)
@@ -160,12 +183,33 @@ public static partial class CardWriter
             Directory.Delete(rootPartial);
         }
         string? labelWarning = null;
+#if WINDOWS
         if (label is not null && !string.Equals(new DriveInfo(root).VolumeLabel, label, StringComparison.Ordinal))
         {
             if (!SetVolumeLabel(root, label.Length == 0 ? null : label))
                 labelWarning = $"The card's name couldn't be set to match the factory card (error {Marshal.GetLastPInvokeError()}). " +
                                "This is unlikely to matter.";
         }
+#else
+        // macOS can't remove a FAT label, so a factory card without one leaves the card's name as it is.
+        if (label is { Length: > 0 } && target.DeviceNode is { } device &&
+            DiskUtil.Info(device)?.Str("VolumeName") != label)
+        {
+            try
+            {
+                DiskUtil.Rename(device, label);
+                final = Path.Combine(MacCards.Find(device, target.VolumeSerial)?.Root ?? root, FolderName); // mounted under its new name
+            }
+            catch (IOException e)
+            {
+                labelWarning = $"The card's name couldn't be set to match the factory card ({e.Message}). This is unlikely to matter.";
+            }
+        }
+#endif
+#if !WINDOWS
+        if (RemoveAppleDouble(Path.GetDirectoryName(final)!) > 0)
+            AppLog.Write("write: macOS had added attribute files again after the read-back; removed");
+#endif
         return new WriteResult(final, files.Count, total, target.VolumeSerial, labelWarning);
     }
 
@@ -195,6 +239,62 @@ public static partial class CardWriter
         }
     }
 
+#if !WINDOWS
+    /// <summary>macOS tags every file a program creates with extended attributes (com.apple.provenance),
+    /// and on a FAT card keeps them in a hidden "._name" file beside each file and folder: ._auz.mp0 next
+    /// to auz.mp0. The iQ unit has no use for them and may trip over them, so they are deleted. That also
+    /// deletes the attributes. Returns how many were removed.</summary>
+    static int RemoveAppleDouble(string root)
+    {
+        int n = 0;
+        var opts = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0, IgnoreInaccessible = true };
+        foreach (var f in Directory.EnumerateFiles(root, "._*", opts).ToList())
+        {
+            var rel = Path.GetRelativePath(root, f);
+            if (rel.StartsWith(".fseventsd", StringComparison.Ordinal) || rel.StartsWith(".Spotlight-V100", StringComparison.Ordinal))
+                continue; // macOS's own, while the card is mounted
+            File.Delete(f);
+            n++;
+        }
+        AppLog.Write($"write: removed {n} macOS attribute (._) files from the card");
+        return n;
+    }
+
+    /// <summary>macOS: unmounts and mounts the card again, and returns its mount point. Spotlight may still
+    /// be looking at the new files, so a refused unmount is tried again a few times. If it never works the
+    /// read-back still runs, but some of it may come from memory, and the log says so.</summary>
+    static string RemountForReadBack(DriveSnapshot target)
+    {
+        // Every card from DriveService has its device; only a plain folder (the unit tests) has none.
+        if (target.DeviceNode is null)
+        {
+            AppLog.Write($"write: {target.Root} is not a mounted device, so it isn't remounted before the read-back");
+            return target.Root;
+        }
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return MacCards.Remount(target).Root;
+            }
+            catch (DiskUtilException e) when (attempt < 6)
+            {
+                AppLog.Write($"write: remount attempt {attempt} failed: {e.Message}");
+                Thread.Sleep(TimeSpan.FromSeconds(2));
+            }
+            catch (DiskUtilException e)
+            {
+                if (MacCards.Find(target.DeviceNode, target.VolumeSerial) is { } still)
+                {
+                    AppLog.Write($"write: card couldn't be remounted ({e.Message}); reading back without it");
+                    return still.Root;
+                }
+                throw new WriteException("The card disappeared while it was being checked. Put it back in and write it again.");
+            }
+        }
+    }
+#endif
+
     static bool SameVolume(DriveSnapshot a, DriveSnapshot b) =>
         string.Equals(a.Root, b.Root, StringComparison.OrdinalIgnoreCase) &&
         a.VolumeSerial == b.VolumeSerial &&
@@ -207,6 +307,7 @@ public static partial class CardWriter
     {
         using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         SafeFileHandle h;
+#if WINDOWS
         try
         {
             h = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read, NoBuffering);
@@ -215,6 +316,9 @@ public static partial class CardWriter
         {
             h = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         }
+#else
+        h = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read); // fresh from the card: see RemountForReadBack
+#endif
         void* mem = NativeMemory.AlignedAlloc(Block, 4096); // unbuffered reads need sector-aligned buffers
         try
         {

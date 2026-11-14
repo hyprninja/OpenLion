@@ -127,7 +127,8 @@ public static partial class ErrorReport
         },
         system = new
         {
-            windows = Environment.OSVersion.VersionString,
+            windows = Os.IsMac ? null : Environment.OSVersion.VersionString,
+            macos = Os.IsMac ? System.Runtime.InteropServices.RuntimeInformation.OSDescription : null,
             dotnet = Environment.Version.ToString(),
             cpus = Environment.ProcessorCount,
             memory_gb = Math.Round(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1e9, 1),
@@ -168,7 +169,7 @@ public static partial class ErrorReport
         sb.AppendLine("  " + IssueUrl);
         sb.AppendLine();
         sb.AppendLine("GitHub issues are public. This zip contains NO map data, images, voices or");
-        sb.AppendLine("programs from your card, and your Windows user folder is replaced by %USERPROFILE%.");
+        sb.AppendLine($"programs from your card, and your {Os.Name} user folder is replaced by %USERPROFILE%.");
         sb.AppendLine("It contains only:");
         sb.AppendLine();
         foreach (var (name, why) in contents)
@@ -191,6 +192,8 @@ public static partial class ErrorReport
         }
         // Any other profile path: other separators, doubled backslashes, 8.3 short names (SIMON~1).
         text = UsersPath().Replace(text, "%USERPROFILE%");
+        if (!OperatingSystem.IsWindows())
+            text = MacUsersPath().Replace(text, "%USERPROFILE%");
         var user = Environment.UserName;
         if (user.Length >= 3)
             text = Regex.Replace(text, $@"(?<![\p{{L}}\p{{N}}_]){Regex.Escape(user)}(?![\p{{L}}\p{{N}}_])", "%USERNAME%",
@@ -201,6 +204,10 @@ public static partial class ErrorReport
     /// <summary>A drive letter, "Users" and the next folder name, with \, \\ or / between.</summary>
     [GeneratedRegex(@"[A-Za-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/)[^\\/\s""':;|<>]+", RegexOptions.IgnoreCase)]
     private static partial Regex UsersPath();
+
+    /// <summary>macOS: /Users and the next folder name (/Users/simon), on any volume.</summary>
+    [GeneratedRegex(@"/Users/[^/\s""':;|<>]+", RegexOptions.IgnoreCase)]
+    private static partial Regex MacUsersPath();
 
     static void AddText(ZipArchive zip, string name, string text)
     {

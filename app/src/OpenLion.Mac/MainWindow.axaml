@@ -1,0 +1,720 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:OpenLion.ViewModels"
+        x:Class="OpenLion.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="OpenLion" Width="1040" Height="900" MinWidth="720" MinHeight="500"
+        WindowStartupLocation="CenterScreen" Background="#FAFAF8" FontSize="14">
+    <!-- The macOS window. It follows the Windows app's MainWindow.xaml step for step; the view models
+         behind both are the same (app/src/OpenLion/ViewModels). -->
+    <Window.Resources>
+        <SolidColorBrush x:Key="Accent" Color="#B5121B"/>
+        <SolidColorBrush x:Key="Brand" Color="#0D2644"/>
+        <SolidColorBrush x:Key="Muted" Color="#5F5E5A"/>
+        <SolidColorBrush x:Key="Good" Color="#1E7A3C"/>
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="TextBlock.h1">
+            <Setter Property="FontSize" Value="22"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style Selector="TextBlock.body">
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="LineHeight" Value="20"/>
+        </Style>
+        <Style Selector="TextBlock.wrap"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+        <Style Selector="TextBlock.strong"><Setter Property="FontWeight" Value="SemiBold"/></Style>
+        <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="{StaticResource Muted}"/></Style>
+        <Style Selector="TextBlock.small"><Setter Property="FontSize" Value="12"/></Style>
+        <Style Selector="TextBlock.good"><Setter Property="Foreground" Value="{StaticResource Good}"/></Style>
+        <Style Selector="TextBlock.bad"><Setter Property="Foreground" Value="{StaticResource Accent}"/></Style>
+        <Style Selector="TextBlock.error">
+            <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#DDDCD6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="14"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style Selector="Border.card.good"><Setter Property="BorderBrush" Value="{StaticResource Good}"/></Style>
+        <Style Selector="Border.card.bad">
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+            <Setter Property="BorderThickness" Value="2"/>
+        </Style>
+        <Style Selector="Border.card.goodthick">
+            <Setter Property="BorderBrush" Value="{StaticResource Good}"/>
+            <Setter Property="BorderThickness" Value="2"/>
+        </Style>
+        <Style Selector="Border.card.warn">
+            <Setter Property="BorderBrush" Value="#C9A227"/>
+            <Setter Property="BorderThickness" Value="2"/>
+        </Style>
+        <Style Selector="Border.card.note"><Setter Property="BorderBrush" Value="{StaticResource Muted}"/></Style>
+
+        <Style Selector="Button">
+            <Setter Property="Padding" Value="18,6"/>
+            <Setter Property="MinWidth" Value="100"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="ProgressBar">
+            <Setter Property="Height" Value="10"/>
+            <Setter Property="MinHeight" Value="10"/>
+            <Setter Property="Maximum" Value="100"/>
+        </Style>
+
+        <!-- Lists of cards (drives): a card is chosen by clicking it, and the chosen one gets a dark border. -->
+        <Style Selector="ListBox.cards">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="ListBox.cards ListBoxItem">
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        </Style>
+        <Style Selector="ListBox.cards ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBox.cards ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBox.cards ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBox.cards ListBoxItem:selected Border.card">
+            <Setter Property="BorderBrush" Value="{StaticResource Brand}"/>
+            <Setter Property="BorderThickness" Value="2"/>
+        </Style>
+        <Style Selector="ListBox.plain">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="ListBox.plain ListBoxItem">
+            <Setter Property="Padding" Value="0,2"/>
+        </Style>
+        <Style Selector="ListBox.plain ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+
+        <Style Selector="TextBlock.step">
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="Margin" Value="0,6"/>
+        </Style>
+        <Style Selector="TextBlock.step.current">
+            <Setter Property="Foreground" Value="Black"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+    </Window.Styles>
+
+    <Window.DataTemplates>
+        <!-- Step 1: welcome + disclaimer -->
+        <DataTemplate DataType="vm:WelcomeStep">
+            <DockPanel>
+                <CheckBox DockPanel.Dock="Bottom" IsChecked="{Binding Accepted}" Margin="0,10,0,0">
+                    <TextBlock Classes="wrap strong"
+                               Text="I have read the warning above, I understand the risks, and I accept that I use OpenLion at my own risk."/>
+                </CheckBox>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Classes="h1" Text="New maps for your Holden iQ navigation"/>
+                        <TextBlock Classes="body">
+                            OpenLion builds an up-to-date map card for the Holden iQ sat-nav (VE Commodore Series II and related models)
+                            from OpenStreetMap. It copies your factory SD card to this Mac, replaces the map data with new OpenStreetMap
+                            data, and writes the result to a <Bold>separate, blank SD card</Bold>.
+                        </TextBlock>
+                        <TextBlock Classes="body" Text="You will need:"/>
+                        <TextBlock Classes="body" Margin="16,0,0,10">
+                            • your factory nav SD card<LineBreak/>
+                            • a blank full-size SD card (or microSD in an adapter), 2 to 32 GB<LineBreak/>
+                            • your Mac's SD card slot or a card reader, about 10 GB of free disk space and an internet connection
+                        </TextBlock>
+                        <Border Classes="card bad">
+                            <StackPanel>
+                                <TextBlock Classes="strong bad" Margin="0,0,0,8" Text="Read this before you continue"/>
+                                <TextBlock Classes="body">
+                                    Your factory card is the only way back to the original maps, and it can't be replaced. OpenLion only reads
+                                    it and refuses to write to any card that looks like a factory card, but no software can rule out every
+                                    mistake or hardware fault. Before you insert it, slide the factory card's lock switch to "locked", and keep
+                                    the card safe once it has been copied. (On a Mac this matters even more: macOS puts hidden index folders
+                                    on any unlocked card it sees.)
+                                </TextBlock>
+                                <TextBlock Classes="body">
+                                    OpenLion is unofficial, free software, provided "as is" without warranty of any kind. It is not made,
+                                    supported or endorsed by Holden, General Motors, Continental, HERE/Navteq or Whereis. You use it entirely
+                                    at your own risk. The authors of OpenLion are not responsible for any damage or loss, including an erased
+                                    or damaged factory card, a navigation unit that stops working, or wrong directions. Always follow road
+                                    signs and drive safely; OpenStreetMap data can be incomplete or wrong.
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Classes="body muted small"
+                                   Text="Map data © OpenStreetMap contributors, available under the Open Database License (ODbL)."/>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
+        </DataTemplate>
+
+        <!-- Step 2: factory card -->
+        <DataTemplate DataType="vm:FactoryCardStep">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Classes="h1" Text="Insert your factory card"/>
+                    <TextBlock Classes="body">
+                        Lock the factory card (slide its switch away from the gold contacts), then put it in your Mac's SD card
+                        slot or card reader. OpenLion looks for the iQ navigation folder and shows the card here.
+                    </TextBlock>
+                    <Border Classes="card good" IsVisible="{Binding HasSavedCopy}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Use this copy" Command="{Binding UseSavedCopyCommand}"
+                                    VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            <StackPanel>
+                                <TextBlock Classes="strong" Text="Already copied to this Mac"/>
+                                <TextBlock Classes="wrap muted" Text="{Binding SavedCopyText}" Margin="0,4,0,0"/>
+                                <TextBlock Classes="wrap" Text="No need to insert the factory card again." Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <TextBlock Classes="body muted" Text="Waiting for a factory card…" IsVisible="{Binding NoneFound}"/>
+                    <TextBlock Classes="body muted" Text="{Binding OpenLionCardsNote}" IsVisible="{Binding HasOpenLionCards}"/>
+                </StackPanel>
+                <ListBox Classes="cards" ItemsSource="{Binding Candidates}" SelectedItem="{Binding Selected, Mode=TwoWay}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="vm:FactoryCandidate">
+                            <Border Classes="card">
+                                <StackPanel>
+                                    <TextBlock Classes="strong" Text="{Binding Heading}"/>
+                                    <TextBlock Text="{Binding Version}" Margin="0,4,0,0"/>
+                                    <TextBlock Classes="muted" Text="{Binding Databases}" Margin="0,4,0,0"/>
+                                    <TextBlock Classes="wrap" Text="{Binding LockHint}" Margin="0,6,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </DataTemplate>
+
+        <!-- Step 3: copy + map format check -->
+        <DataTemplate DataType="vm:CopyCardStep">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Classes="h1" Text="Copy your factory card"/>
+                    <TextBlock Classes="body">
+                        OpenLion copies your card to this Mac, checks every file against the card, then checks that it
+                        understands this card's map format. It only reads the card: if it isn't locked, OpenLion first asks
+                        macOS to mount it read-only. This takes a few minutes.
+                    </TextBlock>
+
+                    <ProgressBar Value="{Binding Percent}" Margin="0,6,0,10" IsVisible="{Binding IsBusy}"/>
+                    <TextBlock Classes="body strong" Text="{Binding Status}" IsVisible="{Binding IsBusy}"/>
+                    <TextBlock Classes="body muted" Text="{Binding Detail}" IsVisible="{Binding IsBusy}"/>
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}"/>
+
+                    <!-- Success -->
+                    <Border Classes="card goodthick" IsVisible="{Binding IsSuccess}">
+                        <StackPanel>
+                            <TextBlock Classes="body strong good" Text="{Binding Status}"/>
+                            <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                            <TextBlock Classes="body strong"
+                                       Text="You can now eject the factory card (in Finder, or the ⏏ button next to it) and put it somewhere safe. OpenLion doesn't need it again."/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Failure -->
+                    <Border Classes="card bad" IsVisible="{Binding IsFailed}">
+                        <StackPanel>
+                            <TextBlock Classes="body strong bad" Text="{Binding Status}"/>
+                            <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                            <TextBlock Classes="body"
+                                       Text="Your factory card has not been changed. Please report this so OpenLion can support your card:"/>
+                            <TextBlock Classes="body" Margin="16,0,0,10">
+                                1. Click <Bold>Open GitHub issue</Bold> (you'll need a free GitHub account).<LineBreak/>
+                                2. Fill in your car and card version.<LineBreak/>
+                                3. Click <Bold>Show report file</Bold> and drag the zip into the issue.
+                            </TextBlock>
+                            <TextBlock Classes="body muted small">
+                                The report contains no map data: only your card's version files, a list of file names and
+                                checksums, and what went wrong. GitHub issues are public, so you can open the zip and check it first.
+                            </TextBlock>
+                            <WrapPanel>
+                                <Button Content="Open GitHub issue" Command="{Binding OpenIssueCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Show report file" Command="{Binding ShowReportCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" Margin="0,0,8,6"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Classes="body" Text="{Binding Status}" IsVisible="{Binding IsCancelled}"/>
+                    <Button Content="Try again" Command="{Binding StartCommand}" IsVisible="{Binding CanRetry}"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 4: OSM data -->
+        <DataTemplate DataType="vm:GetOsmStep">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Classes="h1" Text="Get the OpenStreetMap data"/>
+                    <TextBlock Classes="body">
+                        The new maps are made from OpenStreetMap, the free map built by volunteers. OpenLion downloads
+                        each country's extract from Geofabrik, which updates them every day.
+                    </TextBlock>
+
+                    <TextBlock Classes="strong" Margin="0,4,0,6" Text="Which maps do you want on the card?"/>
+                    <ListBox Classes="plain" ItemsSource="{Binding Choices}" SelectedItem="{Binding Choice, Mode=TwoWay}"
+                             IsEnabled="{Binding IsIdle}" Margin="0,0,0,10"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="vm:CountryChoice">
+                                <RadioButton IsChecked="{Binding $parent[ListBoxItem].IsSelected, Mode=OneWay}"
+                                             IsHitTestVisible="False" VerticalContentAlignment="Center">
+                                    <TextBlock Classes="wrap">
+                                        <Run Text="{Binding Label}" FontWeight="SemiBold"/>
+                                        <Run Text="  "/>
+                                        <Run Text="{Binding Note}" Foreground="{StaticResource Muted}"/>
+                                    </TextBlock>
+                                </RadioButton>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <ItemsControl ItemsSource="{Binding Rows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="vm:CountryOsm">
+                                <Border Classes="card">
+                                    <StackPanel>
+                                        <TextBlock Classes="strong" Margin="0,0,0,4" Text="{Binding Title}"/>
+                                        <TextBlock Classes="wrap muted" Classes.good="{Binding HasCached}" Text="{Binding CachedText}"/>
+                                        <TextBlock Classes="wrap" Text="{Binding RemoteText}" Margin="0,8,0,0"/>
+                                        <Button Content="Use a file I already have…" Command="{Binding ImportCommand}" Margin="0,10,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <StackPanel IsVisible="{Binding IsBusy}" Margin="0,4,0,10">
+                        <TextBlock Classes="body strong" Text="{Binding Status}"/>
+                        <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Margin="0,0,0,8"/>
+                        <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                        <Button Content="Cancel" Command="{Binding CancelCommand}"/>
+                    </StackPanel>
+
+                    <TextBlock Classes="body error" Text="{Binding Error}" IsVisible="{Binding HasError}"/>
+                    <TextBlock Classes="body muted" Text="{Binding Notice}" IsVisible="{Binding HasNotice}"/>
+
+                    <WrapPanel IsVisible="{Binding IsIdle}">
+                        <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
+                                IsVisible="{Binding ShowDownload}"/>
+                        <Button Content="Check again" Command="{Binding CheckCommand}" Margin="0,0,8,6"/>
+                    </WrapPanel>
+
+                    <TextBlock Classes="body muted small" Margin="0,10,0,0">
+                        Map data © OpenStreetMap contributors, available under the Open Database License (ODbL).
+                        Extracts provided by Geofabrik GmbH.
+                    </TextBlock>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 5: optional speed zone data per state -->
+        <DataTemplate DataType="vm:SpeedDataStep">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Classes="h1" Text="Add extra speed limits (optional)"/>
+                    <TextBlock Classes="body">
+                        OpenStreetMap only has speed limits for about a third of roads. Some governments publish their
+                        official speed limits as open data. Tick one and OpenLion fills in the speed limits OpenStreetMap
+                        is missing there. Where OpenStreetMap already has a limit, it's kept.
+                    </TextBlock>
+                    <TextBlock Classes="body muted">
+                        School zones, shopping strips and other part-time limits are left out, because the data doesn't say
+                        when they apply. Always follow the road signs.
+                    </TextBlock>
+
+                    <Border Classes="card" IsVisible="{Binding NoChoices}">
+                        <TextBlock Classes="wrap"
+                                   Text="There's no speed limit data to add for the maps on this card. Press Next to carry on."/>
+                    </Border>
+
+                    <StackPanel IsVisible="{Binding HasChoices}">
+                        <TextBlock Classes="strong" Margin="0,4,0,4" Text="{Binding ChoiceHeading}"/>
+                        <TextBlock Classes="body" Margin="0,0,0,8" Text="{Binding AvailableNote}"/>
+                        <ItemsControl ItemsSource="{Binding AvailableRows}" IsEnabled="{Binding IsIdle}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:SpeedZoneRow">
+                                    <Border Classes="card" Padding="12,5" Margin="0,0,0,4">
+                                        <StackPanel>
+                                            <CheckBox IsChecked="{Binding IsChecked}" IsEnabled="{Binding IsAvailable}"
+                                                      VerticalContentAlignment="Center">
+                                                <TextBlock Classes="wrap">
+                                                    <Run Text="{Binding Title}" FontWeight="SemiBold"/>
+                                                    <Run Text="  "/>
+                                                    <Run Text="{Binding Note}" Foreground="{StaticResource Muted}"/>
+                                                </TextBlock>
+                                            </CheckBox>
+                                            <StackPanel Margin="28,2,0,2" IsVisible="{Binding ShowDetails}">
+                                                <TextBlock Classes="wrap muted" Classes.good="{Binding HasCached}" Text="{Binding CachedText}"/>
+                                                <TextBlock Classes="wrap" Text="{Binding RemoteText}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Border Classes="card" Padding="12,8" IsVisible="{Binding ShowOtherStates}">
+                            <StackPanel>
+                                <WrapPanel Margin="0,0,0,4" IsVisible="{Binding ShowLater}">
+                                    <TextBlock Classes="muted" Margin="0,2,12,2" VerticalAlignment="Center"
+                                               Text="Coming in a future version:"/>
+                                    <ItemsControl ItemsSource="{Binding LaterRows}" Focusable="False">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="vm:SpeedZoneRow">
+                                                <CheckBox IsEnabled="False" Margin="0,2,12,2" Content="{Binding Title}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </WrapPanel>
+                                <TextBlock Classes="wrap muted" Text="{Binding NotOpenNote}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel IsVisible="{Binding IsBusy}" Margin="0,4,0,10">
+                            <TextBlock Classes="body strong" Text="{Binding Status}"/>
+                            <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Margin="0,0,0,8"/>
+                            <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                            <Button Content="Cancel" Command="{Binding CancelCommand}"/>
+                        </StackPanel>
+
+                        <TextBlock Classes="body error" Text="{Binding Error}" IsVisible="{Binding HasError}"/>
+                        <TextBlock Classes="body muted" Text="{Binding Notice}" IsVisible="{Binding HasNotice}"/>
+
+                        <WrapPanel IsVisible="{Binding IsIdle}">
+                            <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
+                                    IsVisible="{Binding ShowDownload}"/>
+                            <Button Content="Check again" Command="{Binding CheckCommand}" Margin="0,0,8,6"/>
+                        </WrapPanel>
+
+                        <TextBlock Classes="body muted small" Margin="0,10,0,0" Text="{Binding Credits}"/>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 6: house numbers from G-NAF (optional) -->
+        <DataTemplate DataType="vm:HouseNumbersStep">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Classes="h1" Text="House numbers"/>
+                    <TextBlock Classes="body">
+                        OpenStreetMap has house numbers on about a third of Australia's streets. The Australian
+                        government's address file, G-NAF, lists every address in the country. OpenLion uses
+                        OpenStreetMap's numbers first and fills the rest from G-NAF, so address search can take you
+                        to a house number on far more streets (about three quarters of them).
+                    </TextBlock>
+
+                    <TextBlock Classes="body" IsVisible="{Binding NoAustralia}">
+                        G-NAF only covers Australia, and Australia isn't on this card, so there's nothing to choose here.
+                        New Zealand's house numbers and suburbs come from LINZ automatically when the maps are built.
+                        Press Next.
+                    </TextBlock>
+
+                    <StackPanel IsVisible="{Binding AustraliaOnCard}">
+                        <CheckBox IsChecked="{Binding Wanted}" IsEnabled="{Binding IsIdle}" Margin="0,4,0,10"
+                                  VerticalContentAlignment="Center">
+                            <TextBlock Classes="wrap">
+                                <Run Text="Add house numbers from G-NAF" FontWeight="SemiBold"/>
+                                <Run Text="  "/>
+                                <Run Text="About 1.9 GB to download, updated every three months. Adds a few minutes to the build."
+                                     Foreground="{StaticResource Muted}"/>
+                            </TextBlock>
+                        </CheckBox>
+
+                        <Border Classes="card" IsVisible="{Binding Wanted}">
+                            <StackPanel>
+                                <TextBlock Classes="strong" Margin="0,0,0,4" Text="G-NAF, Australia's national address file"/>
+                                <TextBlock Classes="wrap muted" Classes.good="{Binding HasCached}" Text="{Binding CachedText}"/>
+                                <TextBlock Classes="wrap" Text="{Binding RemoteText}" Margin="0,8,0,0"/>
+                                <Button Content="Use a file I already have…" Command="{Binding ImportCommand}" Margin="0,10,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel IsVisible="{Binding IsBusy}" Margin="0,4,0,10">
+                            <TextBlock Classes="body strong" Text="{Binding Status}"/>
+                            <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Margin="0,0,0,8"/>
+                            <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                            <Button Content="Cancel" Command="{Binding CancelCommand}"/>
+                        </StackPanel>
+
+                        <TextBlock Classes="body error" Text="{Binding Error}" IsVisible="{Binding HasError}"/>
+                        <TextBlock Classes="body muted" Text="{Binding Notice}" IsVisible="{Binding HasNotice}"/>
+
+                        <WrapPanel IsVisible="{Binding IsIdle}">
+                            <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" Margin="0,0,8,6"
+                                    IsVisible="{Binding ShowDownload}"/>
+                            <Button Content="Check again" Command="{Binding CheckCommand}" Margin="0,0,8,6"
+                                    IsVisible="{Binding Wanted}"/>
+                        </WrapPanel>
+
+                        <TextBlock Classes="body muted small" Margin="0,10,0,0" Text="{Binding Credit}"/>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 7: voice (optional) -->
+        <DataTemplate DataType="vm:VoiceStep">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Classes="h1" Text="Voice"/>
+                    <TextBlock Classes="body">
+                        Keep the voice your unit came with, or give it a new one. Press Play to hear each voice
+                        saying a few instructions, the way the unit would say them.
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding Options}" IsEnabled="{Binding IsIdle}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="vm:VoiceOption">
+                                <Border Classes="card" Padding="12,8" Margin="0,0,0,6">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel>
+                                            <RadioButton IsChecked="{Binding IsSelected}" VerticalContentAlignment="Center"
+                                                         AutomationProperties.Name="{Binding Name}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Classes="strong" Text="{Binding Name}"/>
+                                                    <TextBlock Classes="strong bad small" Text="Contains swearing" Margin="10,1,0,0"
+                                                               VerticalAlignment="Center" IsVisible="{Binding IsExplicit}"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                            <TextBlock Classes="wrap" Text="{Binding Description}" Margin="28,4,0,0"/>
+                                            <TextBlock Classes="wrap muted" Classes.good="{Binding IsReady}" Text="{Binding StatusText}"
+                                                       Margin="28,4,0,0" IsVisible="{Binding !IsStock}"/>
+                                            <TextBlock Classes="wrap muted small" Text="{Binding Credit}" Margin="28,4,0,0"
+                                                       IsVisible="{Binding HasCredit}"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="▶ Play" Command="{Binding PlayCommand}"
+                                                VerticalAlignment="Top" Margin="12,0,0,0"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Content="Stop playing" Command="{Binding StopCommand}" Margin="0,2,0,10"/>
+
+                    <Border Classes="card" IsVisible="{Binding CustomChosen}">
+                        <TextBlock Classes="wrap strong" Text="{Binding LanguageNote}"/>
+                    </Border>
+
+                    <StackPanel IsVisible="{Binding IsBusy}" Margin="0,4,0,10">
+                        <TextBlock Classes="body strong" Text="{Binding Status}"/>
+                        <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" Margin="0,0,0,8"/>
+                        <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                        <Button Content="Cancel" Command="{Binding CancelCommand}"/>
+                    </StackPanel>
+
+                    <TextBlock Classes="body error" Text="{Binding Error}" IsVisible="{Binding HasError}"/>
+                    <TextBlock Classes="body muted" Text="{Binding Notice}" IsVisible="{Binding HasNotice}"/>
+
+                    <Button Content="{Binding DownloadLabel}" Command="{Binding DownloadCommand}" IsVisible="{Binding ShowDownload}"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 8: build -->
+        <DataTemplate DataType="vm:BuildMapsStep">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Classes="h1" Text="Build the new maps"/>
+                    <TextBlock Classes="body" Text="{Binding Intro}" IsVisible="{Binding IsReady}"/>
+
+                    <!-- Speed camera sources: before, during and after the build -->
+                    <Border Classes="card note" IsVisible="{Binding HasCameraNote}">
+                        <StackPanel>
+                            <TextBlock Classes="body strong" Text="Speed cameras"/>
+                            <TextBlock Classes="wrap" Text="{Binding CameraNote}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- School zones, level crossings and New Zealand's LINZ data: before, during and after -->
+                    <Border Classes="card note" IsVisible="{Binding HasAlertNote}">
+                        <StackPanel>
+                            <TextBlock Classes="body strong" Text="School zones and level crossings"/>
+                            <TextBlock Classes="wrap" Text="{Binding AlertNote}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card warn" IsVisible="{Binding HasWarning}">
+                        <TextBlock Classes="wrap" Text="{Binding Warning}"/>
+                    </Border>
+
+                    <!-- Running -->
+                    <StackPanel IsVisible="{Binding IsBusy}">
+                        <TextBlock Classes="body strong" Text="{Binding Status}"/>
+                        <ProgressBar Value="{Binding Percent}" Margin="0,0,0,8"/>
+                        <TextBlock Classes="body muted">
+                            <Run Text="{Binding Detail}"/><Run Text="  ·  "/><Run Text="{Binding Elapsed}"/>
+                        </TextBlock>
+                        <TextBlock Classes="body muted"
+                                   Text="The bar moves by the usual time of each stage, so it may pause or jump."/>
+                        <Button Content="Cancel" Command="{Binding CancelCommand}"/>
+                    </StackPanel>
+
+                    <!-- Done -->
+                    <Border Classes="card goodthick" IsVisible="{Binding IsDone}">
+                        <StackPanel>
+                            <TextBlock Classes="body strong good" Text="{Binding Status}"/>
+                            <TextBlock Classes="wrap muted" Text="{Binding Detail}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Failed -->
+                    <Border Classes="card bad" IsVisible="{Binding IsFailed}">
+                        <StackPanel>
+                            <TextBlock Classes="body strong bad" Text="{Binding Status}"/>
+                            <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                            <TextBlock Classes="body">
+                                Your factory card has not been changed. If it fails again, please report it: click
+                                <Bold>Open GitHub issue</Bold>, then <Bold>Show report file</Bold> and drag the zip into the issue.
+                                The report contains no map data.
+                            </TextBlock>
+                            <WrapPanel>
+                                <Button Content="Open GitHub issue" Command="{Binding OpenIssueCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Show report file" Command="{Binding ShowReportCommand}" Margin="0,0,8,6"/>
+                                <Button Content="Copy summary" Command="{Binding CopySummaryCommand}" Margin="0,0,8,6"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Classes="body" Text="{Binding Status}" IsVisible="{Binding IsCancelled}"/>
+                    <Button Content="{Binding StartLabel}" Command="{Binding StartCommand}" IsVisible="{Binding IsIdleOrFailed}"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DataTemplate>
+
+        <!-- Step 9: write card -->
+        <DataTemplate DataType="vm:WriteCardStep">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Classes="h1" Text="Write the new card"/>
+                    <TextBlock Classes="body strong" Text="{Binding BuildText}"/>
+                    <Border Classes="card" IsVisible="{Binding OldCopy}">
+                        <TextBlock Classes="wrap bad" Text="{Binding OldCopyText}"/>
+                    </Border>
+                    <StackPanel IsVisible="{Binding IsChoosing}">
+                        <TextBlock Classes="body">
+                            Eject the factory card and put it somewhere safe. Then insert a blank FAT32 SD card (in Disk Utility:
+                            Erase, MS-DOS (FAT), Master Boot Record). OpenLion checks every drive and only writes to one that is
+                            clearly a spare card. Click the card to choose it.
+                        </TextBlock>
+                        <TextBlock Classes="body muted" Text="Waiting for a blank card…" IsVisible="{Binding NoneFound}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Confirm and write -->
+                <StackPanel DockPanel.Dock="Bottom" IsVisible="{Binding IsChoosing}">
+                    <StackPanel IsVisible="{Binding HasSelection}" Margin="0,6,0,0">
+                        <TextBlock Classes="body strong" Text="{Binding ConfirmPrompt}"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox Text="{Binding ConfirmLetter}" Width="180" FontSize="16" VerticalContentAlignment="Center"/>
+                            <Button Classes="accent" Content="Write card" Command="{Binding WriteCommand}" Margin="10,0,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Writing / done / failed -->
+                <StackPanel DockPanel.Dock="Bottom" IsVisible="{Binding IsBusy}">
+                    <TextBlock Classes="body strong" Text="{Binding Status}"/>
+                    <ProgressBar Value="{Binding Percent}" Margin="0,0,0,8"/>
+                    <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                    <TextBlock Classes="body" Text="Don't remove the card until this finishes."/>
+                    <Button Content="Cancel" Command="{Binding CancelCommand}"/>
+                </StackPanel>
+                <Border DockPanel.Dock="Bottom" Classes="card goodthick" IsVisible="{Binding IsDone}">
+                    <StackPanel>
+                        <TextBlock Classes="body strong good" Text="{Binding Status}"/>
+                        <TextBlock Classes="body muted" Text="{Binding Detail}"/>
+                        <TextBlock Classes="body strong" Text="Next:"/>
+                        <TextBlock Classes="body" Margin="16,0,0,0">
+                            1. Eject the card before you take it out: press Eject card below, or the ⏏ button next to it in Finder.<LineBreak/>
+                            2. With the car switched off, put the new card in the nav slot. Then start the car and wait for the map.<LineBreak/>
+                            3. Check a street built after 2010, plan a route and try an address search.<LineBreak/>
+                            4. If anything is wrong, put the factory card back: it's unchanged.
+                        </TextBlock>
+                        <StackPanel Orientation="Horizontal" Spacing="12" IsVisible="{Binding CanEject}">
+                            <Button Content="Eject card" Command="{Binding EjectCommand}"/>
+                            <TextBlock Classes="wrap strong" VerticalAlignment="Center" Text="{Binding EjectNote}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <StackPanel DockPanel.Dock="Bottom" IsVisible="{Binding IsFailed}">
+                    <TextBlock Classes="body error" Text="{Binding Error}"/>
+                    <Button Content="Try again" Command="{Binding AgainCommand}"/>
+                </StackPanel>
+
+                <ListBox Classes="cards" ItemsSource="{Binding Targets}" SelectedItem="{Binding Selected, Mode=TwoWay}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         IsEnabled="{Binding IsChoosing}" IsVisible="{Binding IsChoosing}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="vm:TargetCandidate">
+                            <Border Classes="card">
+                                <StackPanel>
+                                    <TextBlock Classes="strong" Text="{Binding Heading}"/>
+                                    <TextBlock Classes="strong bad" Classes.good="{Binding Allowed}" Text="{Binding Verdict}" Margin="0,4,0,4"/>
+                                    <ItemsControl ItemsSource="{Binding Reasons}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="x:String">
+                                                <TextBlock Classes="wrap" Text="{Binding StringFormat='• {0}'}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </DataTemplate>
+    </Window.DataTemplates>
+
+    <DockPanel>
+        <!-- Step list -->
+        <Border DockPanel.Dock="Left" Width="200" Background="#F1EFE8" BorderBrush="#DDDCD6" BorderThickness="0,0,1,0">
+            <StackPanel Margin="16,20">
+                <StackPanel Margin="0,0,0,24">
+                    <Image Source="/Assets/logo-256.png" Width="120" Height="120" HorizontalAlignment="Center"
+                           RenderOptions.BitmapInterpolationMode="HighQuality"/>
+                    <TextBlock Text="OpenLion" FontSize="20" FontWeight="Bold" Foreground="{StaticResource Brand}"
+                               HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                </StackPanel>
+                <ItemsControl ItemsSource="{Binding Steps}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:StepViewModel">
+                            <TextBlock Classes="step" Classes.current="{Binding IsCurrent}" Text="{Binding Title}"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+
+        <!-- Buttons -->
+        <Border DockPanel.Dock="Bottom" BorderBrush="#DDDCD6" BorderThickness="0,1,0,0" Padding="24,12">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Back" Command="{Binding BackCommand}" Margin="0,0,10,0"/>
+                <Button Classes="accent" Content="Next" Command="{Binding NextCommand}" IsDefault="True"/>
+            </StackPanel>
+        </Border>
+
+        <ContentControl Content="{Binding Current}" Margin="28,24,28,12"/>
+    </DockPanel>
+</Window>

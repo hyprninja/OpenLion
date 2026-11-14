@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.IO;
-using System.Windows;
 using System.Windows.Input;
 using OpenLion.Core;
 using OpenLion.Core.Cards;
 using OpenLion.Core.Drives;
 using OpenLion.Core.Engine;
+using OpenLion.Core.Flow;
 using OpenLion.Core.Reports;
 
 namespace OpenLion.ViewModels;
@@ -17,8 +17,8 @@ public enum CopyPhase { Waiting, Copying, Checking, Verified, Failed, Cancelled 
 public sealed class CopyCardStep : StepViewModel
 {
     readonly Session _session;
+    readonly StateMachine<CopyPhase> _flow = new(Flows.Copy);
     CancellationTokenSource? _cts;
-    CopyPhase _phase;
     double _percent;
     string _status = "";
     string _detail = "";
@@ -32,9 +32,9 @@ public sealed class CopyCardStep : StepViewModel
         StartCommand = new RelayCommand(() => _ = RunAsync(), () => !IsBusy);
         CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
         OpenIssueCommand = new RelayCommand(() => Open(ErrorReport.IssueUrl));
-        ShowReportCommand = new RelayCommand(() => Process.Start("explorer.exe", $"/select,\"{_reportPath}\""),
+        ShowReportCommand = new RelayCommand(() => Platform.RevealFile(_reportPath!),
             () => _reportPath is not null);
-        CopySummaryCommand = new RelayCommand(() => Clipboard.SetText(_summary), () => _summary.Length > 0);
+        CopySummaryCommand = new RelayCommand(() => Platform.CopyText(_summary), () => _summary.Length > 0);
     }
 
     public ICommand StartCommand { get; }
@@ -43,13 +43,14 @@ public sealed class CopyCardStep : StepViewModel
     public ICommand ShowReportCommand { get; }
     public ICommand CopySummaryCommand { get; }
 
+    /// <summary>Where the step is in <see cref="Flows.Copy"/>.</summary>
     public CopyPhase Phase
     {
-        get => _phase;
+        get => _flow.State;
         private set
         {
-            if (!Set(ref _phase, value)) return;
-            Raise(nameof(IsBusy)); Raise(nameof(IsFailed)); Raise(nameof(IsSuccess));
+            if (!_flow.Move(value)) return;
+            Raise(); Raise(nameof(IsBusy)); Raise(nameof(IsFailed)); Raise(nameof(IsSuccess));
             Raise(nameof(CanRetry)); Raise(nameof(IsCancelled)); Raise(nameof(CanGoNext));
         }
     }
@@ -96,7 +97,7 @@ public sealed class CopyCardStep : StepViewModel
         {
             // 1. Copy and verify
             Phase = CopyPhase.Copying;
-            Status = $"Copying your card ({drive.Root.TrimEnd('\\')}) to this PC…";
+            Status = $"Copying your card ({drive.DisplayRoot}) to this {Os.Computer}…";
             var copyProgress = new Progress<CopyProgress>(p =>
             {
                 Percent = p.BytesTotal == 0 ? 0 : 50.0 * p.BytesDone / p.BytesTotal;
@@ -104,7 +105,8 @@ public sealed class CopyCardStep : StepViewModel
             });
             var dest = AppPaths.EnsureInside(AppPaths.CardCopyFolder(drive), AppPaths.CardsFolder);
             AppLog.Write($"copy: {drive} -> {dest}");
-            copy = await Task.Run(() => CardCopier.Copy(drive.Root, dest, copyProgress, ct), ct);
+            var source = await Task.Run(() => Platform.PrepareFactoryCard(drive), ct);
+            copy = await Task.Run(() => CardCopier.Copy(source.Root, dest, copyProgress, ct), ct);
             var known = KnownCards.Identify(copy.Manifest);
             AppLog.Write($"copy: done, {copy.Manifest.Count} files, {copy.TotalBytes} bytes; known card: {known}");
 

@@ -237,7 +237,7 @@ public sealed class OsmDownloader(HttpClient http, string folder, MapCountry? co
         var free = new DriveInfo(root).AvailableFreeSpace;
         if (free < bytes)
             throw new OsmDownloadException(
-                $"Not enough disk space: {bytes / 1e9:N1} GB needed on {root.TrimEnd('\\')}, {free / 1e9:N1} GB free.");
+                $"Not enough disk space: {bytes / 1e9:N1} GB needed on {Os.DiskName(root)}, {free / 1e9:N1} GB free.");
     }
 
     static async Task Pump(Stream src, Stream dst, long start, long? total, DownloadPhase phase,

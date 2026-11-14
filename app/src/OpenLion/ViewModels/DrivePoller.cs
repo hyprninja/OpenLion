@@ -1,4 +1,3 @@
-using System.Windows.Threading;
 using OpenLion.Core.Drives;
 
 namespace OpenLion.ViewModels;
@@ -7,12 +6,12 @@ namespace OpenLion.ViewModels;
 /// not freeze the window) and hands the result to the UI thread.</summary>
 public sealed class DrivePoller
 {
-    readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(2) };
+    readonly IUiTimer _timer;
     bool _busy;
 
     public event Action<IReadOnlyList<DriveSnapshot>>? Updated;
 
-    public DrivePoller() => _timer.Tick += async (_, _) => await PollAsync();
+    public DrivePoller() => _timer = Platform.CreateTimer(TimeSpan.FromSeconds(2), async () => await PollAsync());
 
     public void Start()
     {

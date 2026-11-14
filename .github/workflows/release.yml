@@ -1,0 +1,67 @@
+name: Release build
+
+# Builds the Windows installer (OpenLion-<version>.msi) with packaging/build-release.ps1 when a version tag
+# is pushed (v1.6.0 builds 1.6.0), or by hand from the Actions tab. WiX needs Windows, so the MSI is built
+# here; the macOS .dmg is built on a Mac with packaging/build-mac.sh. The installer is kept as this run's
+# artifact; attaching it to the GitHub release stays a separate, deliberate step.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 1.6.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      # From the tag (v1.6.0 -> 1.6.0) or the form; passed as data, never pasted into the script.
+      TAG: ${{ github.ref_name }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $v = if ($env:INPUT_VERSION) { $env:INPUT_VERSION } else { $env:TAG -replace '^v', '' }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Not a version: '$v'" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: WiX 6
+        shell: pwsh
+        run: |
+          dotnet tool install -g wix --version 6.0.2
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+
+      - name: WiX UI extension
+        shell: pwsh
+        run: wix extension add -g WixToolset.UI.wixext/6.0.2
+
+      - name: Build the MSI
+        shell: pwsh
+        run: pwsh packaging/build-release.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenLion-${{ steps.version.outputs.version }}-windows
+          path: |
+            dist/OpenLion-${{ steps.version.outputs.version }}.msi
+            dist/OpenLion-${{ steps.version.outputs.version }}.msi.sha256
+          if-no-files-found: error

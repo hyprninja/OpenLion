@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OpenLion.Core/OpenLion.Core.csproj" />
+    <Project Path="src/OpenLion.Mac/OpenLion.Mac.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OpenLion.Core.Tests/OpenLion.Core.Tests.csproj" />
+  </Folder>
+</Solution>
