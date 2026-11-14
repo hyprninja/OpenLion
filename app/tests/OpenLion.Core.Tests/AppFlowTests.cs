@@ -60,7 +60,8 @@ public partial class AppFlowTests
                 sb.Append("Logged as `osm`, `speed`, `gnaf` and `voice`, one for each step that runs it.\n\n");
             sb.Append("```mermaid\n").Append(f.ToMermaid()).Append("```\n\n");
         }
-        return sb.ToString().TrimEnd() + "\n";
+        // The raw string above takes this file's line endings, which are CRLF in a Windows checkout.
+        return sb.ToString().ReplaceLineEndings("\n").TrimEnd() + "\n";
     }
 
     [Fact]
