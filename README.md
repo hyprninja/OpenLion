@@ -223,6 +223,7 @@ The reports in [`docs/`](docs) describe the format and each part of the build in
 | Voice packs | [26](docs/26_voice_packs.md) |
 | School zones, level crossings, LINZ addresses and suburbs | [27](docs/27_alerts_linz.md) |
 | The app's state machines: every step's states and moves, as logged in `app.log` | [28](docs/28_app_states.md) |
+| VY/VZ map disc (CARiN, VDO Dayton PC5400): format, and an experimental command-line rebuild not yet in the app or tested in a car | [29](docs/29_vz_map_disc.md) |
 
 Not done yet: making the `.fea` smaller, and the other road-sense alerts (blackspots, "check speed").
 
