@@ -45,7 +45,7 @@ The file is a whole number of **512-byte pages**. It is cut into units laid end 
 
 - **Zlib units** (`78 DA`, level 9) unpack to exactly `nn × 512 − 8` bytes, and their padding is all zeros.
 - **Stored units** are their own logical form.
-- **0x0E units** keep their first few hundred bytes plain (section table, chain pointers, first records), and then switch to a dense packed stream. This codec isn't decoded yet. It appears only in tables that also have zlib units (see the table below). So the head unit picks the codec per unit, and **a writer can use zlib everywhere and never needs to produce 0x0E**.
+- **0x0E units** keep their first few hundred bytes plain (section table, chain pointers, first records), and then switch to a dense packed stream. This codec isn't decoded yet. It appears only in tables that also have zlib units (see the table below). So the head unit picks the codec per unit, and **a writer can use zlib everywhere and never needs to produce 0x0E** — the rebuilt discs boot and are read through to the map screen, so zlib is accepted on every table the rebuild writes (see [30](30_protection_and_rebuild.md)).
 - **Table 5** units are extension pages. Their address field points at the unit they extend (owner ≠ self), and they hold no header-relative data of their own.
 - The volume header at offset 0 says one page but runs on into a second page that has no header. `units()` folds headerless pages into the unit before them. This only happens once.
 

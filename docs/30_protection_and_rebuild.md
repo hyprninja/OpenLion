@@ -155,11 +155,24 @@ the same record. The fix skips further entries of the same road, so the chain al
 moves to a different road and closes. `tools/carin_check.py` (below) flags the old
 behaviour as `node_list_no_close` and now reports 0 on the rebuilt disc.
 
-## What this changes
+## Full-Australia with the fix
 
-- A rebuild must keep the factory file size and put `TPD/` immediately after `carindb`; `carin_iso` does the latter, and `--keep-factory-poi` makes the former true for Melbourne-sized builds.
-- `tools/carin_check.py` is the regression gate: factory image → 0 problems, and a build must reach the same.
-- Disc 9 (`disc9_melbourne_fixed.iso`) is the first rebuilt disc that passes it.
+Disc 10 (`disc10_full_au_fixed.iso`): the Geofabrik Australia extract, 2,177,471 drivable OSM roads, 1,702,375 nodes, 35,464 tiles (largest 33,495 B), factory POI layer and routing block kept, `carindb` 191,195,136 bytes, `TPD/` flush after it. `tools/carin_check.py`: **0 problems** over 74,729 units; all 50,113 zlib units round-trip identically. The pre-fix full-AU build (disc 8) carried exactly 46 `node_list_no_close` — the same defect at scale, now gone. Both disc 8 and disc 10 keep the factory geometry rule, so the expected in-car outcome is disc 9's behaviour across the whole country.
+
+## Appendix: the screens, as photographed
+
+Transcribed from the four photos of the Melbourne test (disc 5), via OCR — kept here because the exact wording is diagnostic evidence:
+
+1. **First load** — full-screen warning over a plain background: `Attention!` / `Only use this system when it is safe to do so. It is more important to keep your eyes on the road and your hands on the wheel.` / `Due to constantly changing traffic conditions, we unfortunately cannot guarantee a 100% precision under all circumstances.` Single button `OK`.
+2. **Start Menu** (after OK) — two-column menu grid: `Navigation | Trip computer`, `Map | Info`, `Settings | Emergency`, `TV/Video | Stand-by`, and `C-IQ` on its own row below. No map.
+3. **1st load map view** — title bar `Navigation`; a blank pale map field with faint banding, **no roads, no labels, no scale**; the only drawn feature is a cursor (dark ring with pale cyan halo and a blue arrow). Status bar left→right: `12:16 PM`, an hourglass, a red `2`, a red battery icon, a slashed-`e` (no-signal style) icon, an aeroplane icon, a right-arrow-and-dot, and an empty `--:--h` readout. Pronounced LCD moiré from the photo.
+4. **Reload cd 2nd time** — `Note` / `No data carrier in navigation computer!` / `Please insert data carrier.` with `OK`.
 
 - The protection question is narrowed to a single empirical test in the car (disc 2 of the [29](29_vz_map_disc.md) plan). No further format work is blocked on it.
 - The pipeline is reproducible from a fresh Geofabrik extract with two cache-building calls and one `carin_build` command; nothing depends on state from an earlier OpenLion build beyond what those calls produce.
+## What this changes
+
+- The C-IQ licence layer is untouched by a rebuild; `TPD/` must sit immediately after `carindb`, and `carindb`'s size is free.
+- `carin_build --keep-factory-poi` keeps the factory POI layer and routing block byte for byte instead of dropping them; use it for every build until OSM POIs and routing exist.
+- The self-loop node-list fix is mandatory; `tools/carin_check.py` is the regression gate — factory image and every build must report 0 problems.
+- Melbourne-sized builds land on the exact factory `carindb` size, so the whole disc geometry is factory-identical.

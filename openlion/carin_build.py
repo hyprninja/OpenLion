@@ -42,6 +42,7 @@ class Factory:
         self.units = carin.units(db)
         self.by = {u.off: u for u in self.units}
         self.root = carin.decode(db, self.by[0xC00])
+        self._grids = {}
 
     def raw(self, addr):
         u = self.by[(addr >> 8) << 8]
@@ -86,8 +87,6 @@ class Factory:
         ix, iy = (x - cn.OX - cx * cell) // sub, (y - cn.OY - cy * cell) // sub
         e = struct.unpack_from(">H", b, o0 + 2 * (ix * sn + iy))[0]
         return struct.unpack_from(">I", b, e)[0] if e else None
-
-    _grids = {}
 
     def grid_cached(self, i):
         if i not in self._grids:
