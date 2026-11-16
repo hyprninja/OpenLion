@@ -301,3 +301,5 @@ This explains B without the saved-destination theory, which stays untested.
 
 Disc G (`discG_melbourne_zlib_grids.iso`) is F with zlib grids; its only stored grids are the factory's own, unchanged, at their factory addresses (POI and background), as on every disc that loaded. `carin_check` clean, tile validator 0 errors, search walk 612,254 road links with 0 errors. F was withdrawn before burning.
 
+**Saved-destination theory: ruled out.** B and D were retried after cancelling guidance and clearing the destination with the original disc; both were still refused. The stored-grid rule above is the only explanation left that covers B, D and E.
+
