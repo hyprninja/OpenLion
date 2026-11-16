@@ -196,7 +196,7 @@ Nobody on the project has a VY/VZ, so the test discs go out in one batch. Each o
 | Disc | Contents | If it works | If it fails |
 |---|---|---|---|
 | 1 control | the owner's own image, unchanged | the unit reads CD-Rs | the unit won't take CD-Rs at all: nothing else can be tested this way |
-| 2 label test | factory data, "muirs highway" renamed "openlion test" in two map tiles (2 sectors) | changed map data is accepted | the disc is checked against its contents: stop here |
-| 3 rebuild | OSM roads and search, Nov 2026 | done | if 1 and 2 work, the rebuild has a format mistake: note exactly what the unit did and when |
+| 2 label test | factory data, "muirs highway" renamed "openlion test" in two map tiles (2 sectors) | changed map data is accepted — **passed 2026-11-16** | the disc is checked against its contents: stop here |
+| 3 rebuild | OSM roads and search, Nov 2026 | done | **failed 2026-11-16 on the first full-AU build**: the unit showed "Wrong or defected media". See [30](30_protection_and_rebuild.md#disc-3-rejected-isolating-why). If 1 and 2 work, the rebuild has a format mistake: note exactly what the unit did and when |
 
 Muirs Highway runs between Manjimup and Mount Barker in WA. The label shows when the map is scrolled there, but disc 2 has done its job just by working normally.

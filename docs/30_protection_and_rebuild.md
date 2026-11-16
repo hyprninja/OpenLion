@@ -54,6 +54,46 @@ The new `carindb` lands on the same size by coincidence of layout (the freed map
 
 One note for future runs: `carin_build` needs a Python with `pyosmium` (`pip install osmium`); the system Python 3.9 on this Mac was fine with osmium 4.x from PyPI.
 
+## Disc 3 rejected: isolating why
+
+The first full-AU rebuild was burned and the unit answered **"Wrong or defected media"** — i.e. it refused the medium before drawing anything. The label test (disc 2) still works, so changed map bytes are fine. That leaves three things the full-AU disc changed at once:
+
+1. **map content** — rebuilt roads, search, no POI layer, no house numbers;
+2. **`carindb` size** — 95,392,768 → 178,578,432 bytes (+83,185,664);
+3. **licence geometry** — `carindb` grew, so `TPD/` moved from LBA 46,942 to 87,560 and the PVD volume size changed (46,960 → 87,578 sectors).
+
+What was ruled out offline on the rejected image:
+
+| Check | Result on disc 3 |
+|---|---|
+| ISO 9660 structure | valid: two identical primary descriptors, volume space = 87,578, both path tables and every directory record updated for the moved `TPD` |
+| Licensing bytes (0x1F–0x28) | byte-identical to the factory, at their original offsets |
+| `DAYTON`, `TPD/…` | byte-identical; `TPD3.DIC` is plain text (`TPD-UPI acCIQ_au 13 /acCIQ_au.04.I_20030926`) |
+| Every tile re-parsed and re-serialised | 35,458 tiles, 0 mismatches |
+| Every road layer's grid → cell → tile chain | 0 bad addresses |
+| Any unit's intra-unit u16 offsets > 64 KiB | none |
+
+So the medium is well-formed; the unit is rejecting something it expects and doesn't find.
+
+## The isolation discs
+
+Three discs were built from the working factory image so each changes exactly one thing:
+
+| Disc | Change vs factory | Isolates |
+|---|---|---|
+| 4 `disc4_tpd_moved.iso` | 4,096 zero sectors inserted between `carindb` and `TPD/` — map data byte-identical, licence files at LBA 51,038 | licence files' absolute position |
+| 6 `disc6_grown_factory.iso` | factory `carindb` bytes unchanged, grown to 178,578,432 with a 0x05 extension chain; same sector count (87,728) and `TPD` LBA (87,561) as disc 3 | `carindb` size / disc geometry, with factory content |
+| 5 `disc5_melbourne_rebuild.iso` | the Melbourne rebuild: rebuilt content, `carindb` exactly factory size, nothing moved | rebuilt content at factory geometry |
+
+| Outcome | Means |
+|---|---|
+| 6 boots | size and licence position are fine → disc 3's fault is in the rebuilt content |
+| 6 fails, 4 boots | the unit ties something to `carindb`'s length or the volume size; full-AU must then be made to fit the factory file size |
+| 4 fails | the unit expects `TPD/` at its factory position; a rebuild that changes size must keep the licence files pinned |
+
+Disc 5 separates "the rebuild is wrong everywhere" from "the rebuild is wrong only at full scale".
+
+
 ## What this changes
 
 - The protection question is narrowed to a single empirical test in the car (disc 2 of the [29](29_vz_map_disc.md) plan). No further format work is blocked on it.
