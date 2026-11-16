@@ -32,8 +32,12 @@ DEFAULT_NAME = {0x0C: "petrol station", 0x0E: "car park", 0x17: "atm"}
 
 MAX_LINK = 150 / 0.02          # 150 m in CARiN units (1 unit is about 2 cm)
 CELL = 8192                    # road index cell (~165 m)
-POI_RECORDS_PER_TILE = 900     # 0x06 tiles stay under 32 KB (28 B a record)
-UNIT_BYTES = 30000
+POI_RECORDS_PER_TILE = 850     # the factory's largest POI tile (24 KB at 28 B a record)
+UNIT_BYTES = 24000
+# when a smallest-size POI tile still holds too many, the most useful are kept
+PRIORITY = (0x0C, 0x29, 0x2A, 0x2E, 0x34, 0x33, 0x35, 0x15, 0x1F, 0x0E, 0x0D, 0x2C, 0x30,
+            0x17, 0x2D, 0x16, 0x39, 0x14, 0x20, 0x31, 0x24, 0x2B, 0x19, 0x38, 0x1A, 0x1D,
+            0x28, 0x23, 0x26, 0x25, 0x27, 0x32, 0x37, 0x22, 0x21, 0x3C, 0x2F, 0x3D)
 
 
 class Poi:
@@ -249,6 +253,12 @@ def build(net, tiles, on_disc, chain_of, point_labels, states, cache, cell, prog
     missing = link(pois, tiles, chain_of)
     pois = [p for p in pois if p.link]
     report["no street-level piece found"] += missing
+    # tiles first: a tile that can't be split below the grid's smallest cell keeps its
+    # 850 most useful POIs, and the rest leave the disc entirely (map and search)
+    ptiles, thinned = make_tiles(pois, cell, cell // 32)
+    gone = {id(p) for p in thinned}
+    pois = [p for p in pois if id(p) not in gone]
+    report["thinned from over-full tiles"] = len(thinned)
     # index order: category, place, name; one trie per (place, category)
     groups = collections.defaultdict(list)
     for p in pois:
@@ -269,7 +279,6 @@ def build(net, tiles, on_disc, chain_of, point_labels, states, cache, cell, prog
         for lo, hi in cs.leaves(tr):
             spans[(lo, hi)] = (grp[lo].s0_unit, grp[lo].s0_off, hi - lo)
         links[(place, state)].append((cat, trie.add(tr, spans.__getitem__)))
-    ptiles = make_tiles(pois, cell, cell // 32)
     report["written"] = len(pois)
     report["home state"] = sum(1 for p in pois if states is None or p.state in states)
     return units + trie.units + ptiles, [t.key for t in ptiles], links, report
@@ -306,8 +315,15 @@ def make_tiles(pois, cell, min_size):
         by_cell[((p.x - cn.OX) // cell, (p.y - cn.OY) // cell)].append(p)
     tiles = []
 
+    dropped = []
+
     def split(x0, y0, s, ps):
         if len(ps) <= POI_RECORDS_PER_TILE or s <= min_size:
+            if len(ps) > POI_RECORDS_PER_TILE:       # can't split further: thin it
+                rank = {c: i for i, c in enumerate(PRIORITY)}
+                ps = sorted(ps, key=lambda p: (rank.get(p.cat, len(PRIORITY)), p.name))
+                dropped.extend(ps[POI_RECORDS_PER_TILE:])
+                ps = ps[:POI_RECORDS_PER_TILE]
             t = PoiTile((x0, y0, s))
             t.pois = sorted(ps, key=lambda p: (p.y, p.x))
             tiles.append(t)
@@ -321,4 +337,4 @@ def make_tiles(pois, cell, min_size):
 
     for (cx, cy), ps in by_cell.items():
         split(cn.OX + cx * cell, cn.OY + cy * cell, cell, ps)
-    return tiles
+    return tiles, dropped

@@ -334,3 +334,17 @@ Each place gets one POI list per category (0x0C s3 → 0x11 → 0x10). The natio
 
 The POI work also exposed a road-merging bug: when the forward walk stopped before reaching the road it started from (the 64-road cap or the ring rule), that road was dropped from the map (182 street-level roads in Melbourne). Every road now lands in exactly one merged road; `tests/test_carin_build.Chains` covers it.
 
+## Review of H before burning: grids pinned to their factory slots
+
+An outside review of every image (Fable) pointed out what the tables above don't separate: all five discs that worked keep every grid at its factory address in its factory slot sizes, with a root unit byte-identical to the factory's, and **no disc that moved the street-level grid has ever drawn a street-level road** (5, 7, 10, 11, 12 loaded without it; 3, B, D, E were refused). The "stored grid at a new address" rule fits the refusals but was fitted after the fact, and disc 11 (factory child lists, grid moved) shows the child-list bug can't be the whole story for the missing street level.
+
+The reason it matters: nothing on the factory disc points at a grid's units 2-11. The root points at unit 1 only, so the unit must find the rest by arithmetic. The factory's detail grid is ten 48-page units and a 33-page one; H as first built had compressed units of 1, 1, 3, 3, 2, 4, 7, 7, 1, 1, 1 pages (Victoria in units 6-7), and its POI grid 2, 5, 1 pages. G's are all one page, so G can't settle this either.
+
+So every build now writes all five grids (detail, POI, levels 1-3) **at their factory addresses, in their factory slot sizes, stored like the factory's** (`assemble` pins them; grid sizes depend only on the cell layout, which comes from the factory, so they fit exactly). The root then needs no patching at all and comes out byte-identical to the factory's.
+
+Also from the review:
+- One POI tile held 2,154 POIs (60 KB); the factory's largest holds 850. A POI tile can't be split below the grid's smallest cell, so an over-full one keeps its 850 most useful POIs by category (`carin_poi.PRIORITY`: fuel, hospitals, police, pharmacies, transport, accommodation first; shops and real estate last) and the rest leave the disc, map and search alike (1,304 on the Victoria disc).
+- `assemble` now refuses any unit we write that unpacks to more than 32 KB (the factory's ceiling for its road, search and POI tables; its background tables have zlib units up to 45 KB, kept as they are). A street-search unit at 34 KB tripped it: index leaves are now split by size as well as count (`make_trie(..., weight, max_weight)`).
+
+Rebuilt H (`discH_victoria_osm_pois.iso`): root byte-identical to the factory's; all five grids at factory addresses, slots and codec; nothing we write over 32 KB; largest POI tile 850 records; nothing past the licensing block; `carin_check` 0 problems; tile validator 0 errors; search walk 339,660 streets, 1,334,408 road links, 0 errors; POI walk 91,556 POIs reachable on the map and 91,410 through place search, 0 errors.
+

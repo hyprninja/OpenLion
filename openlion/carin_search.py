@@ -22,7 +22,8 @@ from . import carin_tile as ct
 
 START = 0x1200
 MAX_LEAF = 250
-UNIT_BYTES = 30000
+UNIT_BYTES = 24000          # estimate; assemble enforces the real 32 KB ceiling
+LEAF_BYTES = 20000          # a leaf heavier than this is split by the next letter
 TRIE_UNIT_ENTRIES = 2700
 NONE = 0x7FFF
 
@@ -33,18 +34,21 @@ def _chars(s):
 
 # ---- tries --------------------------------------------------------------------
 
-def make_trie(names, lo, hi, depth=0):
-    """Sorted names[lo:hi] -> [(char code, leaf, (lo, hi) | children)]."""
+def make_trie(names, lo, hi, depth=0, weight=None, max_weight=None):
+    """Sorted names[lo:hi] -> [(char code, leaf, (lo, hi) | children)]. A leaf holds at
+    most MAX_LEAF names and, given weight (bytes per name) and max_weight, at most that
+    many bytes, so it always fits in one record unit."""
     out, i = [], lo
     while i < hi:
         ch = ord(names[i][depth]) if depth < len(names[i]) else 0
         j = i
         while j < hi and (ord(names[j][depth]) if depth < len(names[j]) else 0) == ch:
             j += 1
-        if j - i <= MAX_LEAF or depth >= 8 or ch == 0:
+        heavy = weight is not None and sum(weight[i:j]) > max_weight
+        if ch == 0 or j - i == 1 or (j - i <= MAX_LEAF and not heavy) or (depth >= 8 and not heavy):
             out.append((ch, 1, (i, j)))
         else:
-            out.append((ch, 0, make_trie(names, i, j, depth + 1)))
+            out.append((ch, 0, make_trie(names, i, j, depth + 1, weight, max_weight)))
         i = j
     return out
 
@@ -243,7 +247,7 @@ def build(factory, net, tiles, labels, poi_links=None):
     nat_names = [n for n, _r in nat]
     nat_recs = [(n, 0x0002, "", r) for n, r in nat]
     est = lambda r: 8 + 4 + 24 * len(r[3]) + len(r[0]) + 1
-    nat_trie = make_trie(nat_names, 0, len(nat_names))
+    nat_trie = make_trie(nat_names, 0, len(nat_names), 0, [est(r) for r in nat_recs], LEAF_BYTES)
     nat_units, nat_leaf = pack_records(nat_recs, nat_trie, 0x0E, "t0e-all", est)
     nat_slice = trie_f.add(nat_trie, nat_leaf)
     units += nat_units
@@ -257,7 +261,7 @@ def build(factory, net, tiles, labels, poi_links=None):
         lst.sort()
         names = [nm for nm, _r in lst]
         recs = [(nm, 0x0002, "", r) for nm, r in lst]
-        tr = make_trie(names, 0, len(names))
+        tr = make_trie(names, 0, len(names), 0, [est(r) for r in recs], LEAF_BYTES)
         pu, pleaf = pack_records(recs, tr, 0x0E, ("t0e", place, state), est, place_pool)
         sl = trie_f.add(tr, pleaf)
         units += pu

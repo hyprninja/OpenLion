@@ -488,6 +488,10 @@ class Blob:
         return self.data_fn(addr, unit_header)
 
 
+def size_of(u):
+    return u.size_bytes()
+
+
 def assemble(factory, units, fixed, start):
     """Lay out units from `start`, filling up to each reserved range in `fixed`
     (sorted (lo, hi) pairs, e.g. the POI slab, the routing block and the background
@@ -511,10 +515,19 @@ def assemble(factory, units, fixed, start):
 
     place = {}
 
+    # units pinned to a factory address and slot (the grids): reserved like the fixed
+    # ranges, written by us rather than copied
+    pinned = [u for u in units if getattr(u, "pin", None)]
+    units = [u for u in units if not getattr(u, "pin", None)]
+    fixed = sorted(list(fixed) + [(u.pin[0], u.pin[0] + u.pin[1] * PAGE) for u in pinned])
+
     def layout():
         place.clear()
         pos = start
         order = []
+        for u in pinned:
+            place[u.key] = u.pin
+            order.append(("unit", u.pin[0], u))
         ri = 0
         for u in units:
             p = est[u.key]
@@ -538,9 +551,19 @@ def assemble(factory, units, fixed, start):
         pos, p = place[key]
         return (pos >> 8) << 8 | p
 
-    # pass 0: sizes with dummy addresses
-    for u in units:
+    # pass 0: sizes with dummy addresses; nothing may unpack to more than the factory's
+    # 32 KB (for the stored and zlib codecs)
+    for u in units + pinned:
         place[u.key] = (0, 1)
+    for u in units + pinned:
+        size = u.size_bytes()
+        if size > MAX_LOGICAL:
+            raise RuntimeError(f"a table {u.table:#04x} unit unpacks to {size:,} bytes; no factory "
+                               f"unit in these codecs exceeds {MAX_LOGICAL:,}")
+    for u in pinned:
+        est[u.key] = u.pin[1]
+        if -(-size_of(u) // PAGE) > u.pin[1]:
+            raise RuntimeError(f"{u.key} doesn't fit its factory slot of {u.pin[1]} pages")
     for u in units:
         h, body, pl, codec = encode(u, lambda k: 0x01000101)
         est[u.key] = -(-(8 + len(body)) // PAGE) + (1 if codec == carin.ZLIB and (8 + len(body)) % PAGE > PAGE - 64 else 0)
@@ -552,6 +575,9 @@ def assemble(factory, units, fixed, start):
                 continue
             h, body, pl, codec = encode(u, addr)
             need = -(-(8 + len(body)) // PAGE)
+            if getattr(u, "pin", None):
+                enc[u.key] = (body, pl, codec)
+                continue
             if need > est[u.key]:
                 est[u.key] = need
                 grew = True
@@ -778,6 +804,16 @@ def main(argv=None):
     # always lands before the licensing block; road tiles and street lists follow
     first = (0x08, 0x09, 0x0C, 0x0D, 0x0F)
     units = [u for u in units if u.table in first] + [u for u in units if u.table not in first]
+    # every grid at its factory address, in its factory slot sizes, stored like the
+    # factory's: then the root is the factory's own, and the unit never has to find a
+    # grid's later units anywhere a factory disc doesn't put them (docs/30)
+    for entry, gs in grids.items():
+        slots = factory.grid_cached(entry)[2]
+        if len(slots) != len(gs):
+            raise RuntimeError(f"root entry {entry}: {len(gs)} grid units, factory has {len(slots)}")
+        for g, off in zip(gs, slots):
+            g.pin = (off, factory.by[off].pages)
+            g.compress = g.force_zlib = False
     fixed = [(factory.background_start(), len(db))]
     if a.keep_factory_poi:
         poi = factory.span({0x06, 0x10, 0x11}, roots=(1,))
@@ -791,6 +827,7 @@ def main(argv=None):
     grid_addr = {e: [(place[g.key][0] >> 8) << 8 | place[g.key][1] for g in gs] for e, gs in grids.items()}
     new = bytearray(new)
     new[0xC00:0xE00] = patch_root(factory, new, grid_addr)
+    log("root unit identical to the factory's: " + str(new[0xC00:0xE00] == db[0xC00:0xE00]))
     new = carin_search.patch_fixed(factory, new, place)
     over = sum(1 for pos, _p in place.values() if pos >= len(db))
     log(f"carindb: {len(new):,} bytes ({len(db):,} before); {over:,} units past the licensing block")
