@@ -108,6 +108,36 @@ Three discs were built from the working factory image so each changes exactly on
 
 Disc 5 separates "the rebuild is wrong everywhere" from "the rebuild is wrong only at full scale".
 
+## What the isolation discs found
+
+All three ran in the car:
+
+| Disc | Result | Reading |
+|---|---|---|
+| 4 — licence files moved +4,096 sectors, factory map bytes | **would not load** | the unit does not find `TPD/` where it moved it |
+| 6 — factory map bytes, `carindb` grown to 178,578,432, licence files where disc 3 put them | **works perfectly** — map paints, zoom in and out, position cursor | `carindb` size is irrelevant, and so is the absolute disc position of `TPD/` |
+| 5 — rebuilt Melbourne content at factory size | boots to the map, then **hard-locked on zoom**; the unit had to be unplugged | the rebuilt *content* breaks it |
+
+That pins the geometry rule: **`TPD/` must sit immediately after `carindb`.** The factory and disc 6 both do; disc 4's 8 MB gap breaks it. `carin_iso.replace_db` already splices them contiguously, so nothing there needs changing — disc 3's rejection was its content, not the move.
+
+Disc 6 also shows why the factory data is the wrong end point: it is 2004 data, so anything built since — the Hopper's Crossing estates included — is simply absent. Expected, not a fault.
+
+### Tile-layer audit of the rebuild
+
+With in-tile references decoded correctly (every one is an **absolute byte offset**, and node references legitimately land in s5 *or* s6), the rebuilt tiles pass every invariant the factory passes:
+
+| Check | Factory | Rebuild |
+|---|---|---|
+| road → node offsets in range, 8/16-byte aligned | clean | clean |
+| shape lists monotonic, fence at section end | clean | clean |
+| per-node circular road lists close | clean | clean |
+| s6 partner back-references (tile **and** offset) | clean | clean |
+| grid cell sub-grid size vs section size | clean | clean |
+| per-tile maxima roads / nodes / edges / shapes | 632 / 381 / 59 / 702 | 646 / 442 / 65 / 1,952 |
+| worst tile size | — | 33,495 B (limit 64 KB) |
+
+The corruption is therefore not in the tile record graph. The remaining difference between disc 5 and the working disc 6 is the tables the build dropped — which is what disc 7 (`--keep-factory-poi`) tests.
+
 
 ## What this changes
 
