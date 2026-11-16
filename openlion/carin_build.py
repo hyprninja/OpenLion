@@ -298,6 +298,8 @@ def build_levels(net, labels, factory, states=None):
                                  and net.name[o] == net.name[s] and net.refs[o] == net.refs[s]
                                  and net.urban[o] == net.urban[s] and labels(o) == labels(s))
             chains = merge_chains(net, segs, same)
+            lv.on_disc = set(segs)                     # every road the street level holds
+            lv.chain_of = {m: first for first, ch in chains.items() for m in ch}
         else:
             chains = merge_chains(net, segs)
         segs = sorted(chains)
@@ -383,6 +385,20 @@ def merge_chains(net, segs, same=None):
         # keep one orientation so the class's direction bits stay right
         return o if net.a[o] == n else None
 
+    def grow(first):
+        chain = [first]
+        used.add(first)
+        cur = first
+        while True:
+            o = through(net.b[cur], cur)
+            # the factory has no road whose ends meet: a ring stops one short of closing
+            if o is None or len(chain) >= 64 or net.b[o] == net.a[first]:
+                break
+            chain.append(o)
+            used.add(o)
+            cur = o
+        out[first] = chain
+
     for s in segs:
         if s in used:
             continue
@@ -399,18 +415,11 @@ def merge_chains(net, segs, same=None):
                 break
             seen.add(o)
             first = o
-        chain = [first]
-        used.add(first)
-        cur = first
-        while True:
-            o = through(net.b[cur], cur)
-            # the factory has no road whose ends meet: a ring stops one short of closing
-            if o is None or len(chain) >= 64 or net.b[o] == net.a[first]:
-                break
-            chain.append(o)
-            used.add(o)
-            cur = o
-        out[first] = chain
+        grow(first)
+        # the forward walk can stop before it gets back to s (64-road cap, ring rule):
+        # whatever it didn't reach starts chains of its own, so no road is ever dropped
+        while s not in used:
+            grow(next(m for m in seen if m not in used))
     return out
 
 
@@ -607,7 +616,9 @@ def make_labels(net, boundaries):
     """segment -> (suburb, state) from OSM admin areas (levels 9 and 4)."""
     from . import osm_names
     if boundaries is None:
-        return lambda s: ("", "")
+        none = lambda s: ("", "")
+        none.point = lambda x5, y5: ("", "")
+        return none
     loc = osm_names.Localities(boundaries)
     states = [a for a in boundaries if a.level == 4]
     st_idx = osm_names.AreaIndex(states, cell=50000)
@@ -632,10 +643,18 @@ def make_labels(net, boundaries):
         state = cn.ascii_name(states[j].name) if j is not None else ""
         cache[s] = (place, state)
         return cache[s]
+
+    def point(x5, y5):
+        """(suburb, state) at a point in deg * 1e5 (POIs)."""
+        i = loc.find(x5, y5)
+        j = st_idx.find(x5, y5)
+        return (cn.ascii_name(loc.loc[i].name) if i is not None else "",
+                cn.ascii_name(states[j].name) if j is not None else "")
+    labels.point = point
     return labels
 
 
-def build_db(factory, net, labels, keep_poi=False, states=None):
+def build_db(factory, net, labels, keep_poi=False, states=None, poi_cache=None):
     levels, tiles, node_levels = build_levels(net, labels, factory, states)
     for rec in tiles.values():
         rec.prepare(net, labels, node_levels)
@@ -678,11 +697,24 @@ def build_db(factory, net, labels, keep_poi=False, states=None):
         units += g + cells
     # POI layer: every cell empty (or, with keep_poi, the factory's own POI layer
     # is preserved byte for byte and root entry 1 keeps the factory address)
-    if not keep_poi:
+    poi_links = {}
+    if poi_cache is not None:
+        from . import carin_poi
+        lv = levels[6]
+        poi_cell = factory.grid_cached(1)[0]
+        pu, ptiles, poi_links, report = carin_poi.build(
+            net, tiles, lambda seg: seg in lv.on_disc, lambda seg: lv.chain_of[seg], labels.point,
+            states, poi_cache, poi_cell, progress=log)
+        log("POIs: " + ", ".join(f"{k} {v:,}" for k, v in report.items()))
+        g, cells = make_grid("poi", poi_cell, ptiles)
+        grids[1] = g
+        units += pu + g + cells
+    elif not keep_poi:
         poi_cell = factory.grid_cached(1)[0]
         g, cells = make_grid("poi", poi_cell, [])
         grids[1] = g
         units += g + cells
+    build_db.poi_links = poi_links
     return units, grids, tiles
 
 
@@ -706,6 +738,8 @@ def main(argv=None):
     ap.add_argument("--keep-factory-poi", action="store_true",
                     help="keep the factory POI layer (0x06/0x10/0x11) byte for byte at its "
                          "factory offset, instead of an empty POI layer")
+    ap.add_argument("--pois", help="pois2_AU.pickle from an OpenLion build: current OSM POIs "
+                    "replace the factory ones (each linked to the road it sits on)")
     ap.add_argument("--states", help="state disc: full street detail only for these states, "
                     "e.g. VIC or VIC,TAS (needs --boundaries); major roads stay national")
     ap.add_argument("--stored-tiles", action="store_true",
@@ -733,9 +767,13 @@ def main(argv=None):
         states = {STATES[x.strip().upper()] for x in a.states.split(",")}
         log(f"state disc: street detail for {', '.join(sorted(states))}; elsewhere roads of "
             f"group {STATE_DISC_NATIONAL_GROUP} or above")
-    units, grids, tiles = build_db(factory, net, labels, keep_poi=a.keep_factory_poi, states=states)
+    if a.pois and a.keep_factory_poi:
+        raise SystemExit("--pois replaces the factory POIs; don't combine it with --keep-factory-poi")
+    poi_cache = pickle.load(open(a.pois, "rb")) if a.pois else None
+    units, grids, tiles = build_db(factory, net, labels, keep_poi=a.keep_factory_poi, states=states,
+                                   poi_cache=poi_cache)
     from . import carin_search
-    units += carin_search.build(factory, net, tiles, labels)
+    units += carin_search.build(factory, net, tiles, labels, build_db.poi_links)
     # what the unit reads at start-up (grids, cells, search directory) goes first, so it
     # always lands before the licensing block; road tiles and street lists follow
     first = (0x08, 0x09, 0x0C, 0x0D, 0x0F)

@@ -125,8 +125,10 @@ class RecordUnit:
             nruns = sum(len(r[3]) for r in self.recs)
             sstart = s2 + 24 * nruns
         else:
-            s2, nruns = 0, 0
-            sstart = s1 + 20 * n
+            # places: s2 is the POI-link section (s3 on the disc), 12 bytes a link
+            s2 = s1 + 20 * n
+            nruns = sum(len(r[3][5]) for r in self.recs)
+            sstart = s2 + 12 * nruns
         return n, s1, s2, nruns, sstart
 
     def strings(self):
@@ -151,7 +153,8 @@ class RecordUnit:
         if self.table == 0x0E:
             struct.pack_into(">HHHHHH", out, 8, 0x28, n, s1, n, s2, nruns)
         else:
-            struct.pack_into(">HHHH", out, 8, 0x28, n, s1, n)
+            # s0, s1, s2 empty, s3 = POI links per category (factory layout)
+            struct.pack_into(">HHHHHHHH", out, 8, 0x28, n, s1, n, 0, 0, s2 if nruns else 0, nruns)
         struct.pack_into(">II", out, 0x20, addr(self.next) if self.next else 0,
                          addr(self.prev) if self.prev else 0)
         sp = lambda s: sstart + pool[s] if s else 0
@@ -166,9 +169,13 @@ class RecordUnit:
                     run += 1
             else:
                 struct.pack_into(">HHHH", out, 0x28 + 8 * i, sp(name), flags, sp(area), s1 + 20 * i)
-                trie_key, toff, tcnt, tkey, roff = payload
-                struct.pack_into(">IHHHHIHH", out, s1 + 20 * i, addr(trie_key), toff, tcnt, 0, 0,
+                trie_key, toff, tcnt, tkey, roff, pois = payload
+                first = s2 + 12 * run if pois else 0
+                struct.pack_into(">IHHHHIHH", out, s1 + 20 * i, addr(trie_key), toff, tcnt, first, len(pois),
                                  addr(tkey) if tkey else 0, roff, 0)
+                for cat, (pk, po, pc) in pois:
+                    struct.pack_into(">IHHHH", out, s2 + 12 * run, addr(pk), po, pc, cat, 0)
+                    run += 1
         return bytes(out) + sbytes
 
 
@@ -222,7 +229,9 @@ def collect(net, tiles):
     return streets
 
 
-def build(factory, net, tiles, labels):
+def build(factory, net, tiles, labels, poi_links=None):
+    """poi_links: {(place, state): [(category, (0x11 unit, offset, count))]} from carin_poi."""
+    poi_links = poi_links or {}
     streets = collect(net, tiles)
     by_place = collections.defaultdict(list)
     for (nm, place, state), runs in streets.items():
@@ -261,10 +270,11 @@ def build(factory, net, tiles, labels):
         a.next, b.prev = b.key, a.key
     place_rows.sort()
     p_names = [" *"] + [p for p, *_r in place_rows]
-    p_recs = [(" *", 0x0000, " ", (nat_slice[0], nat_slice[1], nat_slice[2], None, 0))]
-    p_recs += [(p, 0x0002, st, (sl[0], sl[1], sl[2], tk, ro)) for p, st, sl, tk, ro in place_rows]
+    p_recs = [(" *", 0x0000, " ", (nat_slice[0], nat_slice[1], nat_slice[2], None, 0, []))]
+    p_recs += [(p, 0x0002, st, (sl[0], sl[1], sl[2], tk, ro, poi_links.get((p, st), [])))
+               for p, st, sl, tk, ro in place_rows]
     p_trie = make_trie(p_names, 0, len(p_names))
-    p_units, p_leaf = pack_records(p_recs, p_trie, 0x0C, "t0c", lambda r: 8 + 20 + len(r[0]) + len(r[2]) + 2)
+    p_units, p_leaf = pack_records(p_recs, p_trie, 0x0C, "t0c", lambda r: 8 + 20 + 12 * len(r[3][5]) + len(r[0]) + len(r[2]) + 2)
     for a, b in zip(p_units, p_units[1:]):
         a.next, b.prev = b.key, a.key
     trie_d = TrieWriter(0x0D, "t0d")

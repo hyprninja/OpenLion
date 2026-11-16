@@ -127,6 +127,28 @@ class Tiles(unittest.TestCase):
         self.assertEqual(cn.factory_class(0x8B01), 0x8B11)   # slip roads are one-way
 
 
+class Chains(unittest.TestCase):
+    def test_no_road_dropped(self):
+        # a ring of 70 same-class roads: the 64-road cap and the ring rule both stop the
+        # forward walk early; every road must still be in exactly one merged road
+        net = cn.Net()
+        pts = [net.add_node(*P(1000 + 50 * i, 1000 + (i % 2) * 3)) for i in range(70)]
+        tags = {"highway": "residential", "name": "Ring Road"}
+        for i in range(70):
+            a, b = pts[i], pts[(i + 1) % 70]
+            if net.x[a] > net.x[b]:
+                a, b = b, a
+            net.add_seg(a, b, [], tags, 0)
+        net.finish()
+        segs = list(range(net.n_segs))
+        for start in (segs, list(reversed(segs)), segs[35:] + segs[:35]):
+            ch = cb.merge_chains(net, start)
+            got = [m for v in ch.values() for m in v]
+            self.assertEqual(sorted(got), segs)
+            for v in ch.values():
+                self.assertNotEqual(net.a[v[0]], net.b[v[-1]])   # no self-loops
+
+
 class Grid(unittest.TestCase):
     def test_cell_unit(self):
         cell = 0x180000
