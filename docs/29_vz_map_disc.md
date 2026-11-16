@@ -132,6 +132,15 @@ Header after the bbox: `0x54 u32` the tile's house-number unit (0x04, detail onl
 | s10 | 8 B | `u32 own address, u16 road offset, u16 end (0/1)`, about 13% of roads on levels 1-3. Meaning not settled (probably turn handling); the writer leaves it empty |
 | s14 | 4 B | name entries `u16 string offset, u16 flags` (0x200 place, 0x208/0x20A street name, 0x10/0x11 route number), then NUL-terminated, deduplicated strings |
 
+**Every in-tile reference is an absolute byte offset from the unit's first byte, not an
+index**: `next road at A`, `first shape point`, `first road`, and the node fields all
+hold offsets, and a node record's own position is what the road's node field points at.
+Node references legitimately land in s5 (interior nodes) or s6 (edge nodes); shape
+references land in s7 and 8/16/6-byte alignment follows the record size. Reading these
+as section indices makes the whole factory disc look broken — `tools/carin_check.py`
+validates them as offsets.
+
+
 Road class (+10): the high byte looks like a typical speed in m/s with bit 7 marking urban roads (`0x16` Muirs Highway, `0x86` suburban street), the low byte a category nibble with bits 4-5 for direction.
 
 ### House numbers (0x04)

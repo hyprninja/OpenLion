@@ -168,8 +168,14 @@ class TileRec:
         # next-road links round each node (circular, in road order)
         nxt = {}
         for k, lst in self.inc.items():
+            n = len(lst)
             for j, (i, e) in enumerate(lst):
-                ni, ne = lst[(j + 1) % len(lst)]
+                step = 1
+                # a road whose two ends meet at this node occupies two entries;
+                # pointing one entry at the other would leave the list unclosed
+                while step < n and lst[(j + step) % n][0] == i:
+                    step += 1
+                ni, ne = lst[(j + step) % n]
                 nxt[(i, e)] = road_off(ni)
         # names
         if detail:

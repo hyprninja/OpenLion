@@ -138,8 +138,28 @@ With in-tile references decoded correctly (every one is an **absolute byte offse
 
 The corruption is therefore not in the tile record graph. The remaining difference between disc 5 and the working disc 6 is the tables the build dropped — which is what disc 7 (`--keep-factory-poi`) tests.
 
+These audits are reproducible: `python tools/carin_check.py <image>` walks every tile, grid cell and search leaf of a disc image and reports section, reference, circular-list, partner-link and range violations (exit status 1 when it finds any). It knows the reference conventions in [29](29_vz_map_disc.md#map-tile-header-table-000x03): absolute byte offsets, node refs into s5 or s6.
+
+
+### The defect: self-loop roads left their node list unclosed
+
+The factory has **no** road whose two ends are the same node, across 228,703 roads. The
+rebuild produced 7 (128 over full Australia), and for 59 of them both next-road pointers
+aimed back at the same record: the node's circular list never closes, so anything
+walking "next road at this node" — the renderer included — loops on the spot. That fits
+the disc 5 hard lock, which came on zoom.
+
+`carin_write` built the links as `lst[(j + 1) % len(lst)]`. When a road's two ends meet
+at one node it occupies two entries in that node's list, and "next" from the first is
+the same record. The fix skips further entries of the same road, so the chain always
+moves to a different road and closes. `tools/carin_check.py` (below) flags the old
+behaviour as `node_list_no_close` and now reports 0 on the rebuilt disc.
 
 ## What this changes
+
+- A rebuild must keep the factory file size and put `TPD/` immediately after `carindb`; `carin_iso` does the latter, and `--keep-factory-poi` makes the former true for Melbourne-sized builds.
+- `tools/carin_check.py` is the regression gate: factory image → 0 problems, and a build must reach the same.
+- Disc 9 (`disc9_melbourne_fixed.iso`) is the first rebuilt disc that passes it.
 
 - The protection question is narrowed to a single empirical test in the car (disc 2 of the [29](29_vz_map_disc.md) plan). No further format work is blocked on it.
 - The pipeline is reproducible from a fresh Geofabrik extract with two cache-building calls and one `carin_build` command; nothing depends on state from an earlier OpenLion build beyond what those calls produce.
