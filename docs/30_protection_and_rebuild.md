@@ -244,3 +244,28 @@ What all four share, and the factory never does:
 
 Also asked of the tester: does destination search work on the untouched factory disc? If it locks there too, the search lock is the unit, not the rebuild.
 
+## Batch A-D results
+
+| Disc | Loads | Below 1 km | Search |
+|---|---|---|---|
+| A, compressed detail grid | yes | roads as original | works |
+| B, detail grid moved inside the file | **"Wrong or defected media"**, no Navigation or Map in the menu | — | — |
+| C, compressed street-level tiles | yes | roads as original | works |
+| D, Melbourne, factory-shaped (stored tiles) | **"Wrong or defected media"** | — | — |
+
+**A and C clear both compression suspects**: the unit reads zlib grid units and zlib street-level tiles like the factory's own, so stored units buy nothing and cost space.
+
+**B and D, the saved destination.** The unit had a destination set from earlier testing (photographed: Mount Barker, WA / Muirs Highway). The 245 house-number units B overwrote belong to 239 tiles at 114.9-118.3°E, 32.0-35.2°S, which takes in Mount Barker (117.7°E, 34.6°S); the Melbourne discs have no WA roads at all. A unit that restores its destination at start-up by following a pointer into the disc would find damaged or foreign data on both, and calling that a defective medium fits. The destination may also be behind disc 3's rejection (it may have been set during the disc 2 label test, which was on the Muirs Highway) and behind the "no street level, search locks" state on 7, 10 and 12.
+
+D is also the only disc ever tested with large stored street-level tiles (2,480 over 4 pages; the factory's largest is 2 pages), which could be a second, independent cause.
+
+**Next batch**, each tried after cancelling guidance and clearing the destination with the original disc: B and D again, and E, which is D with zlib street-level tiles (38 small ones stored, as the factory does). E passes `carin_check`, the tile validator (0 errors) and the search walk (612,254 road links, 0 errors).
+
+| B | D | E | Reading |
+|---|---|---|---|
+| loads | loads | loads | the saved destination was the cause; any grid address works inside the file |
+| loads | refused | loads | destination for B; large stored tiles for D |
+| refused | — | — | B's own change is the cause (the 0x04 block start, or the grid's address) |
+
+**For users:** whatever the result, a destination or route saved against the old map can make a new disc look defective. The finished product must tell owners to cancel guidance and clear saved destinations before switching discs, and to re-enter address-book entries afterwards.
+
