@@ -303,3 +303,17 @@ Disc G (`discG_melbourne_zlib_grids.iso`) is F with zlib grids; its only stored 
 
 **Saved-destination theory: ruled out.** B and D were retried after cancelling guidance and clearing the destination with the original disc; both were still refused. The stored-grid rule above is the only explanation left that covers B, D and E.
 
+## Fitting the map: state discs
+
+Disc 11 showed the unit can't read past the licensing block, so everything must fit in the space before the background block: 77.6 MB with the factory POI slab kept, 85.3 MB without it.
+
+Lossless savings first: merging street-level roads that pass through a node no other road touches, when name, route numbers, class, suburb and urban/rural all match (2.18 M → 1.93 M roads); suburbs sharing street-search units instead of one mostly empty unit each; a larger street-level tile budget (largest tile 23 KB, under the 32 KB ceiling). All of Australia went from 164 MB to 148 MB of `carindb`, still about 53 MB over. For scale, the factory fitted about 1.06 M street-level roads in 32.7 MB using the 0x0E codec (about 31 B a road); OSM has twice the roads and zlib manages about 50 B a road.
+
+So: **one state per disc** (`carin_build --states VIC`). Street detail for every road in the state (by the OSM state boundary its midpoint falls in), plus every road level 3 carries nationwide (`STATE_DISC_NATIONAL_GROUP = 2`), so every coarse tile has street-level tiles under it as on the factory; with group 1 instead, 523 level-3 tiles outside Victoria had nothing under them. The three coarse levels are national. Search follows the street level: full suburbs and streets for the state, major roads elsewhere.
+
+| Disc | Street-level roads | New data | Free before the background block |
+|---|---|---|---|
+| Victoria | 690,946 | 52.4 MB | 25.1 MB (+7.7 MB if the factory POIs are replaced) |
+
+The Victoria build passes `carin_check`, the tile validator, the search walk (304,577 street entries, 1,160,486 road links, 0 errors), has no relocated stored grid, exact child lists, and the POI, background and licence ranges byte-identical. The spare room goes to current OSM POIs (one state per disc, not several states sharing).
+

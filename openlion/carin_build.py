@@ -251,7 +251,18 @@ class LevelInfo:
         self.cell, self.root_entry = cell, root_entry
 
 
-def build_levels(net, labels, factory):
+STATES = {"VIC": "victoria", "NSW": "new south wales", "QLD": "queensland", "SA": "south australia",
+          "WA": "western australia", "TAS": "tasmania", "NT": "northern territory",
+          "ACT": "australian capital territory", "JBT": "jervis bay territory"}
+# on a state disc, roads of this group or more important keep street detail nationwide;
+# 2 = everything level 3 carries, so every coarse tile has street-level tiles under it
+# (the factory has no coarse tile without them)
+STATE_DISC_NATIONAL_GROUP = 2
+
+
+def build_levels(net, labels, factory, states=None):
+    """states: set of state names (as in STATES' values) whose every road gets street
+    detail; None for all of Australia. The coarse levels are national either way."""
     root_entry = {1: 2, 2: 3, 3: 4, 6: 0}
     levels = {}
     for num, table, maxg, max_size, _min, detail, budget in cw.LEVELS:
@@ -278,7 +289,17 @@ def build_levels(net, labels, factory):
     for num in (6, 3, 2, 1):
         lv = levels[num]
         segs = [s for s in range(net.n_segs) if net.group[s] <= lv.max_group]
-        chains = merge_chains(net, segs) if not lv.detail else {s: [s] for s in segs}
+        if lv.detail and states is not None:
+            segs = [s for s in segs if net.group[s] <= STATE_DISC_NATIONAL_GROUP or labels(s)[1] in states]
+        if lv.detail:
+            # street level: merge only where nothing a driver or the search would see
+            # changes (name, route numbers, class, suburb, urban/rural)
+            same = lambda o, s: (net.cls[o] == net.cls[s] and net.group[o] == net.group[s]
+                                 and net.name[o] == net.name[s] and net.refs[o] == net.refs[s]
+                                 and net.urban[o] == net.urban[s] and labels(o) == labels(s))
+            chains = merge_chains(net, segs, same)
+        else:
+            chains = merge_chains(net, segs)
         segs = sorted(chains)
         if not lv.detail:
             for s in segs:
@@ -339,10 +360,12 @@ def build_levels(net, labels, factory):
     return levels, tiles, node_levels
 
 
-def merge_chains(net, segs):
-    """Overview levels: join roads that meet end to end at a node no other road of the
-    level touches, when they carry the same class. Returns {first seg: [segs in order,
-    each oriented as stored]} with the chain running from the first seg's a end."""
+def merge_chains(net, segs, same=None):
+    """Join roads that meet end to end at a node no other road of the level touches, when
+    same(o, s) says they match (default: same class and group). Returns {first seg: [segs
+    in order, each oriented as stored]} with the chain running from the first seg's a end."""
+    if same is None:
+        same = lambda o, s: net.cls[o] == net.cls[s] and net.group[o] == net.group[s]
     ends = collections.defaultdict(list)
     for s in segs:
         ends[net.a[s]].append(s)
@@ -355,7 +378,7 @@ def merge_chains(net, segs):
         if len(lst) != 2:
             return None
         o = lst[0] if lst[1] == s else lst[1]
-        if o == s or o in used or net.cls[o] != net.cls[s] or net.group[o] != net.group[s]:
+        if o == s or o in used or not same(o, s):
             return None
         # keep one orientation so the class's direction bits stay right
         return o if net.a[o] == n else None
@@ -372,8 +395,7 @@ def merge_chains(net, segs):
             if len(lst) != 2:
                 break
             o = lst[0] if lst[1] == first else lst[1]
-            if o in seen or o in used or net.b[o] != n or net.cls[o] != net.cls[first] \
-                    or net.group[o] != net.group[first]:
+            if o in seen or o in used or net.b[o] != n or not same(o, first):
                 break
             seen.add(o)
             first = o
@@ -613,8 +635,8 @@ def make_labels(net, boundaries):
     return labels
 
 
-def build_db(factory, net, labels, keep_poi=False):
-    levels, tiles, node_levels = build_levels(net, labels, factory)
+def build_db(factory, net, labels, keep_poi=False, states=None):
+    levels, tiles, node_levels = build_levels(net, labels, factory, states)
     for rec in tiles.values():
         rec.prepare(net, labels, node_levels)
     # boundary node offsets, for the partner pointers
@@ -684,6 +706,8 @@ def main(argv=None):
     ap.add_argument("--keep-factory-poi", action="store_true",
                     help="keep the factory POI layer (0x06/0x10/0x11) byte for byte at its "
                          "factory offset, instead of an empty POI layer")
+    ap.add_argument("--states", help="state disc: full street detail only for these states, "
+                    "e.g. VIC or VIC,TAS (needs --boundaries); major roads stay national")
     ap.add_argument("--stored-tiles", action="store_true",
                     help="store street-level tiles uncompressed (factory: 502 stored, 2 zlib)")
     ap.add_argument("--detail-tol", type=float, default=DETAIL_SHAPE_TOL,
@@ -704,7 +728,12 @@ def main(argv=None):
     log(f"network: {net.n_segs:,} roads, {len(net.x):,} nodes")
     boundaries = pickle.load(open(a.boundaries, "rb")) if a.boundaries else None
     labels = make_labels(net, boundaries)
-    units, grids, tiles = build_db(factory, net, labels, keep_poi=a.keep_factory_poi)
+    states = None
+    if a.states:
+        states = {STATES[x.strip().upper()] for x in a.states.split(",")}
+        log(f"state disc: street detail for {', '.join(sorted(states))}; elsewhere roads of "
+            f"group {STATE_DISC_NATIONAL_GROUP} or above")
+    units, grids, tiles = build_db(factory, net, labels, keep_poi=a.keep_factory_poi, states=states)
     from . import carin_search
     units += carin_search.build(factory, net, tiles, labels)
     # what the unit reads at start-up (grids, cells, search directory) goes first, so it

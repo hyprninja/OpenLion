@@ -172,11 +172,13 @@ class RecordUnit:
         return bytes(out) + sbytes
 
 
-def pack_records(recs, trie, table, prefix, est):
+def pack_records(recs, trie, table, prefix, est, pool=None):
     """Sorted records -> record units, every trie leaf inside one unit. Returns
-    (units, leaf_target)."""
+    (new units, leaf_target). With a pool (a dict kept by the caller), consecutive calls
+    keep filling the same unit instead of each starting a mostly empty one."""
     units, where = [], {}
-    cur, size = None, 0
+    pool = pool if pool is not None else {}
+    cur, size = pool.get("cur"), pool.get("size", 0)
     for lo, hi in leaves(trie):
         add = sum(est(recs[i]) for i in range(lo, hi))
         if cur is None or (size + add > UNIT_BYTES and cur.recs):
@@ -189,6 +191,7 @@ def pack_records(recs, trie, table, prefix, est):
             first = off if first is None else first
         where[(lo, hi)] = (cur.key, first, hi - lo)
         size += add
+    pool["cur"], pool["size"] = cur, size
     return units, where.__getitem__
 
 
@@ -237,6 +240,7 @@ def build(factory, net, tiles, labels):
     units += nat_units
     # places
     place_rows = []
+    place_pool = {}          # suburbs share street units instead of one each
     all_street_units = list(nat_units)
     for (place, state), lst in sorted(by_place.items()):
         if not place:
@@ -245,7 +249,7 @@ def build(factory, net, tiles, labels):
         names = [nm for nm, _r in lst]
         recs = [(nm, 0x0002, "", r) for nm, r in lst]
         tr = make_trie(names, 0, len(names))
-        pu, pleaf = pack_records(recs, tr, 0x0E, ("t0e", place, state), est)
+        pu, pleaf = pack_records(recs, tr, 0x0E, ("t0e", place, state), est, place_pool)
         sl = trie_f.add(tr, pleaf)
         units += pu
         all_street_units += pu
