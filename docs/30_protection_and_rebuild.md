@@ -75,7 +75,22 @@ What was ruled out offline on the rejected image:
 
 So the medium is well-formed; the unit is rejecting something it expects and doesn't find.
 
-## The isolation discs
+## The Melbourne disc in the car
+
+The Melbourne rebuild (factory-size `carindb`, nothing moved) went in next. The unit **accepted it**: warning, Start Menu, Navigation — no media error. It reached the map screen, drew the position cursor, and then sat with the hourglass spinning over an essentially blank map field (no roads drawn); it did not lock up. On a later reload the unit reported "No data carrier in navigation computer!", which may be the drive or the unit giving up rather than a format fault.
+
+Accepted-but-blank is a different failure from disc 3's outright rejection, and it rules the container out: the ISO, the licensing block, the root and the directory units are all read fine. What the rebuilt disc *lacks* compared with the factory are whole tables: 0x04 (routing / house numbers, 4,150 units), 0x06 (per-tile network, 683), 0x10 (POI records, 573) and 0x11 (POI index, 30). Everything the build did write validates offline (tiles, grids, lookups), so the hang is most plausibly the unit initialising a subsystem whose table no longer exists.
+
+Both dropped tables live in perfectly contiguous factory blocks, so the build now has `--keep-factory-poi`, which reserves them like the background block:
+
+| Block | Extent | Contents |
+|---|---|---|
+| POI slab | `0x1DB2800`–`0x2520C00` | tables 0x11, 0x10, 0x06, the POI grid (3 × 0x08) and its 804 cells — nothing else |
+| Routing | `0x4609C00`–`0x4A9FA00` | table 0x04 and one 0x08 |
+
+With the flag, the rebuild keeps both blocks byte for byte at their factory offsets, skips the empty-POI grid, and leaves root entry 1 pointing at the factory POI grid (the rebuilt search already writes zero POI links). A Melbourne build with the flag is `disc7_melbourne_keep_poi.iso`: `carindb` lands on exactly the factory size again, so the whole disc geometry is unchanged, and the kept POIs are the 2004 factory ones — stale but structurally real. Verification: all reserved ranges byte-identical, only root entries 0/2/3/4 patched, all 8,438 zlib units round-trip, 16 tests pass, tile/grid audit clean.
+
+
 
 Three discs were built from the working factory image so each changes exactly one thing:
 

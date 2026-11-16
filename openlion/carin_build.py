@@ -109,6 +109,33 @@ class Factory:
                         lo = min(lo, (t >> 8) << 8)
         return lo
 
+    def span(self, tables, roots=()):
+        """(lo, hi) extent of every unit of the given tables, plus the 0x08/0x09
+        grid-and-cell chains reachable from the root entries in `roots`."""
+        lo = hi = None
+        def add(o, s):
+            nonlocal lo, hi
+            lo = o if lo is None else min(lo, o)
+            hi = s if hi is None else max(hi, s)
+        for u in self.units:
+            if u.table in tables:
+                add(u.off, u.off + u.size)
+        cells = []
+        for i in roots:
+            a = self.layer(i)[0]
+            off = (a >> 8) << 8
+            while off in self.by and self.by[off].table == 0x08:
+                add(off, off + self.by[off].size)
+                b = self.raw(off)
+                s, c = struct.unpack_from(">HH", b, 8)
+                cells += struct.unpack_from(f">{c}I", b, s)
+                off += self.by[off].size
+        for ca in set(cells):
+            u = self.by.get((ca >> 8) << 8)
+            if u and u.table == 0x09:
+                add(u.off, u.off + u.size)
+        return (lo, hi)
+
 
 def carin_world():
     return cn.WORLD
@@ -402,9 +429,11 @@ class Blob:
         return self.data_fn(addr, unit_header)
 
 
-def assemble(factory, units, fixed_lo, fixed_hi, start):
-    """Lay out units from `start`, filling up to fixed_lo, then after fixed_hi. Returns
-    the new carindb. Units: objects with key, table, size_bytes(), logical(addr, hdr)."""
+def assemble(factory, units, fixed, start):
+    """Lay out units from `start`, filling up to each reserved range in `fixed`
+    (sorted (lo, hi) pairs, e.g. the POI slab, the routing block and the background
+    block) and resuming after it. Returns the new carindb. Units: objects with
+    key, table, size_bytes(), logical(addr, hdr)."""
     db = factory.db
     est = {}          # key -> pages on disc
     enc = {}
@@ -427,17 +456,20 @@ def assemble(factory, units, fixed_lo, fixed_hi, start):
         place.clear()
         pos = start
         order = []
+        ri = 0
         for u in units:
             p = est[u.key]
-            if pos < fixed_lo and pos + p * PAGE > fixed_lo:
-                order.append(("fill", pos, (fixed_lo - pos) // PAGE))
-                pos = fixed_hi
+            while ri < len(fixed) and pos < fixed[ri][0] and pos + p * PAGE > fixed[ri][0]:
+                order.append(("fill", pos, (fixed[ri][0] - pos) // PAGE))
+                pos = fixed[ri][1]
+                ri += 1
             place[u.key] = (pos, p)
             order.append(("unit", pos, u))
             pos += p * PAGE
-        if pos < fixed_lo:
-            order.append(("fill", pos, (fixed_lo - pos) // PAGE))
-            pos = fixed_hi
+        while ri < len(fixed) and pos < fixed[ri][0]:
+            order.append(("fill", pos, (fixed[ri][0] - pos) // PAGE))
+            pos = fixed[ri][1]
+            ri += 1
         return order, pos
 
     def addr(key):
@@ -469,7 +501,8 @@ def assemble(factory, units, fixed_lo, fixed_hi, start):
         raise RuntimeError("layout did not settle")
     out = bytearray(db[:start])
     out += bytes(max(end, len(db)) - start)
-    out[fixed_lo:fixed_hi] = db[fixed_lo:fixed_hi]
+    for lo, hi in fixed:
+        out[lo:hi] = db[lo:hi]
     prev = None
     for kind, pos, u in order:
         if kind == "fill":
@@ -486,7 +519,7 @@ def assemble(factory, units, fixed_lo, fixed_hi, start):
         out[pos:pos + 8] = struct.pack(">IHH", addr(u.key), u.table, c)
         out[pos + 8:pos + 8 + len(body)] = body
         prev = pos
-    if end > fixed_hi:
+    if end > len(db):
         # overflow went after the fixed block; the file ends where the last unit does
         del out[end:]
     return bytes(out), place
@@ -548,7 +581,7 @@ def make_labels(net, boundaries):
     return labels
 
 
-def build_db(factory, net, labels):
+def build_db(factory, net, labels, keep_poi=False):
     levels, tiles, node_levels = build_levels(net, labels, factory)
     for rec in tiles.values():
         rec.prepare(net, labels, node_levels)
@@ -588,11 +621,13 @@ def build_db(factory, net, labels):
         g, cells = make_grid(num, lv.cell, [k for k in tiles if k[0] == num])
         grids[lv.root_entry] = g
         units += g + cells
-    # POI layer: every cell empty
-    poi_cell = factory.grid_cached(1)[0]
-    g, cells = make_grid("poi", poi_cell, [])
-    grids[1] = g
-    units += g + cells
+    # POI layer: every cell empty (or, with keep_poi, the factory's own POI layer
+    # is preserved byte for byte and root entry 1 keeps the factory address)
+    if not keep_poi:
+        poi_cell = factory.grid_cached(1)[0]
+        g, cells = make_grid("poi", poi_cell, [])
+        grids[1] = g
+        units += g + cells
     return units, grids, tiles
 
 
@@ -612,6 +647,9 @@ def main(argv=None):
     ap.add_argument("--boundaries", help="boundaries3_AU.pickle (suburb and state names)")
     ap.add_argument("--bbox", nargs=4, type=float, help="lon0 lat0 lon1 lat1 (test builds)")
     ap.add_argument("--db-only", action="store_true", help="write carindb instead of an ISO")
+    ap.add_argument("--keep-factory-poi", action="store_true",
+                    help="keep the factory POI layer (0x06/0x10/0x11) and routing block (0x04) "
+                         "byte for byte at their factory offsets, instead of an empty POI layer")
     a = ap.parse_args(argv)
     img = open(a.iso, "rb").read()
     _f, db = carin.read_db(img)
@@ -624,12 +662,18 @@ def main(argv=None):
     log(f"network: {net.n_segs:,} roads, {len(net.x):,} nodes")
     boundaries = pickle.load(open(a.boundaries, "rb")) if a.boundaries else None
     labels = make_labels(net, boundaries)
-    units, grids, tiles = build_db(factory, net, labels)
+    units, grids, tiles = build_db(factory, net, labels, keep_poi=a.keep_factory_poi)
     from . import carin_search
     units += carin_search.build(factory, net, tiles, labels)
-    fixed_lo = factory.background_start()
-    log(f"laying out {len(units):,} units; fixed block from {fixed_lo:#x}")
-    new, place = assemble(factory, units, fixed_lo, len(db), carin_search.START)
+    fixed = [(factory.background_start(), len(db))]
+    if a.keep_factory_poi:
+        poi = factory.span({0x06, 0x10, 0x11}, roots=(1,))
+        rout = factory.span({0x04})
+        fixed += [poi, rout]
+        log(f"keeping factory POI layer {poi[0]:#x}..{poi[1]:#x} and routing block {rout[0]:#x}..{rout[1]:#x}")
+    fixed.sort()
+    log(f"laying out {len(units):,} units; fixed block from {fixed[0][0]:#x}")
+    new, place = assemble(factory, units, fixed, carin_search.START)
     grid_addr = {e: [(place[g.key][0] >> 8) << 8 | place[g.key][1] for g in gs] for e, gs in grids.items()}
     new = bytearray(new)
     new[0xC00:0xE00] = patch_root(factory, new, grid_addr)
