@@ -102,21 +102,29 @@ class Tiles(unittest.TestCase):
 
     def test_overview_levels(self):
         net, tiles, addr = self.build()
-        # an untagged primary road is group 2: level 3 only (levels 1 and 2 hold groups 0 and 0-1)
-        # but levels 1 and 2 still get a tile there, empty, so every tile has a parent
-        for lv in (1, 2):
-            cover = [k for k in tiles if k[0] == lv]
-            self.assertEqual(len(cover), 1)
-            self.assertEqual(tiles[cover[0]].pieces, [])
+        # an untagged primary road is group 2: level 3 only (levels 1 and 2 hold groups 0 and 0-1).
+        # A coarse tile with no roads never occurs on the factory disc, so levels 1 and 2 get
+        # none here and the level-3 tile keeps parent 0; every detail tile has a parent
+        self.assertEqual([k for k in tiles if k[0] in (1, 2)], [])
         for key, rec in tiles.items():
-            if key[0] != 1:
+            if key[0] == 6:
                 self.assertIsNotNone(rec.parent, key)
         lv3 = [k for k in tiles if k[0] == 3]
         self.assertEqual(len(lv3), 1)
         b = tiles[lv3[0]].logical(net, addr, struct.pack(">IHH", 0, 3, 0))
         t = ct.parse(b, False)
         self.assertEqual(t.nroads, 1)                    # the main road, merged into one
-        self.assertTrue(t.n8 >= 1)                       # lists its level-3 children
+        self.assertTrue(t.n8 >= 1)                       # lists its detail children
+        # 0x5C: the smallest detail tile under it, not its own size
+        smallest = min(k[1][2] for k in tiles if k[0] == 6)
+        self.assertEqual(struct.unpack_from(">I", b, 0x5C)[0], smallest)
+
+    def test_class_codes_are_factory_codes(self):
+        net = tiny_net()
+        for c in net.cls:
+            self.assertIn(c & 0xFF, cn.FACTORY_CLASSES[c >> 8])
+        self.assertEqual(cn.factory_class(0x910C), 0x8B0C)   # two-way stays two-way
+        self.assertEqual(cn.factory_class(0x8B01), 0x8B11)   # slip roads are one-way
 
 
 class Grid(unittest.TestCase):

@@ -52,6 +52,7 @@ class TileRec:
         self.parent = None
         self.hn_key = None        # house-number unit key (detail)
         self.head_extra = None    # detail: 0x60..0x74 copied from the factory tile here
+        self.finest_child = None  # overview: smallest finer-level tile under this one
         self._layout = None
 
     # -- build the static part once (everything but addresses) ---------------------
@@ -271,8 +272,10 @@ class TileRec:
             extra = self.head_extra or struct.pack(">IIIII", 0x808, 0x808, 0x808, 0x0167000A, 0x00010000)
             head = struct.pack(">II", addr(self.hn_key) if self.hn_key else 0, parent) + struct.pack(">I", 0) + extra
         else:
-            head = struct.pack(">IIIIIIII", 0, parent, size, OVERVIEW_CONST, OVERVIEW_CONST,
-                               OVERVIEW_CONST, 0, 0x00010000)
+            # 0x5C: the smallest tile of the next finer level under this one (the factory's
+            # value on 83-96% of coarse tiles; when it differs it is smaller, never larger)
+            head = struct.pack(">IIIIIIII", 0, parent, self.finest_child or size, OVERVIEW_CONST,
+                               OVERVIEW_CONST, OVERVIEW_CONST, 0, 0x00010000)
         t.head = head
         return ct.write(t, unit_header)
 

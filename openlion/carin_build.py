@@ -310,6 +310,10 @@ def build_levels(net, labels, factory):
         big = max(((sum(len(p.pts) for p in r.pieces) * 6 + len(r.pieces) * 40, k) for k, r in recs.items()),
                   default=(0, None))
         log(f"level {num}: {len(segs):,} roads, {len(leaves):,} tiles, heaviest ~{big[0]:,} B at {big[1]}")
+    # a coarse tile with no roads never occurs on the factory disc: drop any the cover
+    # pass made; the tiles under them keep parent 0, as 0.2-2.7% of factory tiles do
+    for key in [k for k, r in tiles.items() if k[0] != 6 and not r.pieces]:
+        del tiles[key]
     # parents and children
     finer = {1: 2, 2: 3, 3: 6}
     for num, fnum in finer.items():
@@ -318,11 +322,14 @@ def build_levels(net, labels, factory):
                 continue
             x0, y0, s = key[1]
             p = locs[num].find(x0 + s // 2, y0 + s // 2)
-            if p is not None:
+            if p is not None and (num, p) in tiles:
                 rec.parent = (num, p)
             # every coarser tile this one overlaps lists it as a child
             for ckey in overlapping(locs[num], key[1]):
-                tiles[(num, ckey)].children.append(key)
+                c = tiles.get((num, ckey))
+                if c is not None:
+                    c.children.append(key)
+                    c.finest_child = min(c.finest_child or s, s)
     for rec in tiles.values():
         rec.children.sort()
     return levels, tiles, node_levels
@@ -394,9 +401,12 @@ def chain_ends(net, chain):
 
 
 def overlapping(loc, rect):
+    """Leaves of `loc` that overlap rect. Probes every loc.min cell inside rect, at a step
+    no bigger than rect itself (a rect smaller than loc.min used to be probed outside
+    itself and could be listed under the wrong coarse tile)."""
     x0, y0, s = rect
     out = set()
-    step = loc.min
+    step = min(loc.min, s)
     for x in range(x0, x0 + s, step):
         for y in range(y0, y0 + s, step):
             k = loc.find(x + step // 2, y + step // 2)

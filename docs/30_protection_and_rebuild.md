@@ -269,3 +269,19 @@ D is also the only disc ever tested with large stored street-level tiles (2,480 
 
 **For users:** whatever the result, a destination or route saved against the old map can make a new disc look defective. The finished product must tell owners to cancel guidance and clear saved destinations before switching discs, and to re-enter address-book entries afterwards.
 
+## More than one thing wrong: an audit of disc E against the factory
+
+While B, D and E are tested, disc E was compared with the factory field by field, looking for faults independent of the start-up question.
+
+**Grid order** (explanation 3 for B): grid after its tiles is harmless (discs 5, 7, 10 load with it). Grid after its own cells occurs on exactly one readable disc, B; disc 11 also has it but its grid is unreadable. Still open for B.
+
+**Child lists were wrong on every rebuild.** `overlapping()` probed for the coarse tiles above a finer tile at the coarse level's minimum tile size. A street-level tile smaller than that step was probed outside itself: on disc E, 1,442 of 2,672 street-level tiles were missing from their level-3 tile's child list and as many were listed under the wrong level-3 tile (disc 7: 1,524 of 2,846). Levels 1 and 2 were unaffected. If the unit reaches street level through these lists, this alone explains "no roads below 1 km" on discs 5, 7, 10 and 12. The probe step is now never bigger than the tile; every coarse tile now lists exactly the finer tiles under it.
+
+**Coarse-tile 0x5C is not the tile's size.** On the factory it is the size of the smallest finer-level tile under the tile (83-96% of coarse tiles, and smaller still on the rest, never larger). The rebuild wrote the tile's own size, which matches about 5% of factory level-3 tiles. Now: the smallest finer tile under it.
+
+**Road class codes outside the factory's set.** 6% of disc E's roads (24,007 of 377,257) carried codes that appear nowhere on the factory: `0x8B14`, `0x910C`, `0x8B01`, `0x1601`, `0x2011`. `carin_net.factory_class` now snaps every code to one the factory uses: direction never changes (a two-way road stays two-way) except that a slip road with no direction becomes one-way forwards; the road's form is kept before its speed. `0x8B14` becomes `0x9114`, `0x910C` becomes `0x8B0C`, `0x8B01` becomes `0x8B11`.
+
+**No empty coarse tiles.** The factory never has a level 1-3 tile without roads; the parent-cover pass made a few. They are dropped, and the tiles under them keep parent 0 as some factory tiles do.
+
+Disc F (`discF_melbourne_child_fix.iso`) is disc E with these four fixes: `carin_check` clean, tile validator 0 errors, search walk 612,254 road links with 0 errors, every coarse tile's child list and 0x5C as above. The tester was asked to burn F instead of E if E isn't burned yet.
+
