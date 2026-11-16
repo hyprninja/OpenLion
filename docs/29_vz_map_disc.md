@@ -156,7 +156,64 @@ One unit per detail tile, one 10-byte record per road in tile order: `u16 left f
 
 ### POIs
 
-0x06 POI tiles (30-byte records: `u32 0x10 unit, u16 offset, u16 x, u16 y, category ...`), 0x10 POI records (40 B: `i32 x, i32 y`, 2 x u16, 5 x u16 name offsets: name, street, suburb, city or state, country, ...) and 0x11 POI search index. POIs point at their detail tile (about 140,000 references), so they can't survive a road rebuild unchanged.
+The POI layer reuses the trie and record patterns of the search tables. All offsets are from the unit's first header byte.
+
+**Chain.** Root entry 1 → POI grid (0x08: 128 × 128 cells of 0x300000, three units) → cells (0x09, as for roads) → POI tiles (0x06) → POI units (0x10) → road links into street-level tiles (0x00).
+
+**0x06 POI tile.** `(0x20, n)`, `u32 0`, bbox `4 × i32` at 0x10, then n records of 28 bytes from 0x20:
+
+| Off | Field |
+|---|---|
+| 0 | u32 address of the 0x10 unit |
+| 4 | u16 offset of the POI's name record (s0) in that unit |
+| 6, 8 | u16 x, y in 64-unit steps from the bbox minimum |
+| 10 | u16 category |
+| 12 | u16 brand code (car dealers, fuel, hotels only; 0 elsewhere) |
+| 14, 16 | 0 |
+| 18 | u16 running number (mostly town centres; 0 on 54,085 of 67,820 factory records) |
+| 20-27 | 0 |
+
+**0x10 POI units.** Grouped by category, sorted by name, chained by next/prev addresses at 0x20/0x24 like the street units. Sections: s0 `(0x28, n)` 8-byte name records `(u16 name, u16 0x0002, u16 suburb, u16 detail record)`; s1 n × 40-byte detail records; s4 8-byte road links; then strings.
+
+| Off | Detail record field |
+|---|---|
+| 0, 4 | i32 x, y (absolute) |
+| 8, 10 | u16 first road link (s4), u16 link count |
+| 12 | u16 brand ("toyota"; 1.5% of POIs) |
+| 14, 16, 18, 20 | u16 street, city, state, country |
+| 22 | u32, almost always 0 (35 of 46,248 sampled: a 0x10 address) |
+| 26 | u16 house number |
+| 28 | 0 |
+| 30 | u16, binary, 11% of POIs (not decoded; 0 is the common value) |
+| 32, 34 | u16 phone ("+61891921250"), postcode |
+| 36, 38 | 0 |
+
+Road link (8 bytes): `u32 street-level tile, u16 road offset, u16 side/flag`. These are the ~140,000 references into the factory's road tiles, which is why the factory POIs can't be kept usefully on a rebuilt disc.
+
+**0x11 POI index.** `(0x0C, n)` trie entries, the same 12-byte form as 0x0D/0x0F: `u32 unit, u8 char, u8 leaf, u16 offset, u16 count, u16 0`. Leaves point at 0x10 name records.
+
+**Links into the index.**
+- 0x0A country record, s3: 12-byte `(u32 0x11 unit, u16 offset, u16 count, u16 category, u16 country name)`; the factory has four national lists, categories 0x1A, 0x23, 0x34, 0x3C.
+- 0x0C place, s3: 12-byte `(u32 0x11 unit, u16 offset, u16 count, u16 category, u16 offset of the place's brand lists in s5)`: one letter index per category per place.
+- 0x0C, s5: 12-byte brand lists `(u32 0x11 unit, u16 offset, u16 count, u16 brand name, u16 0)` ("mobil", "mobil quix").
+
+**Categories** (named from the factory's own POIs; the names and icons live in the unit's firmware):
+
+| Code | Category | Code | Category | Code | Category |
+|---|---|---|---|---|---|
+| 0x0C | petrol station | 0x22 | cultural centre | 0x2E | pharmacy |
+| 0x0D | car rental | 0x23 | sport (pools, racecourses, marinas) | 0x2F | shopping |
+| 0x0E | parking | 0x24 | place of worship | 0x30 | town / suburb centre |
+| 0x14 | sight, viewpoint | 0x25 | monument, memorial | 0x31 | cinema, theatre |
+| 0x15 | hotel, motel | 0x26 | amusement, leisure | 0x32 | golf course |
+| 0x16 | restaurant | 0x27 | beach, zoo, natural attraction | 0x33 | railway station |
+| 0x17 | bank | 0x28 | convention / exhibition centre | 0x34 | airport |
+| 0x19 | library | 0x29 | hospital | 0x35 | ferry terminal |
+| 0x1A | courthouse | 0x2A | police | 0x37 | marina |
+| 0x1D | embassy, consulate | 0x2B | town hall, government | 0x38 | school |
+| 0x1F | tourist information | 0x2C | post office | 0x39 | café |
+| 0x20 | gallery, antiques | 0x2D | doctor, medical centre | 0x3C | car dealer, repairs |
+| 0x21 | concert hall | | | 0x3D | real estate, business |
 
 ## What `carin.py` does
 
