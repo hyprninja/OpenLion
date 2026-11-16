@@ -27,6 +27,11 @@ PAGE = carin.PAGE
 # No house numbers yet: detail tiles carry no 0x04 unit (address 0), as 2,297 factory
 # tiles do. Set True to write one "no numbers" record per road instead.
 WITH_HOUSE_NUMBERS = False
+# no unit on the factory disc unpacks to more than 32 KB (search units reach it exactly)
+MAX_LOGICAL = 32768
+# store street-level tiles uncompressed, as the factory does with every one it doesn't
+# 0x0E-encode (502 stored, 2 zlib); off by default because it roughly triples their size
+STORED_TILES = False
 # detail-level shape tolerance in tile steps (1 step = 64 units, about 1.3 m)
 DETAIL_SHAPE_TOL = 1.5
 EMPTY = "empty"
@@ -195,6 +200,7 @@ class GridUnit:
     """0x08: a run of cell-unit addresses (x-major over the world)."""
 
     PER_UNIT = 6140
+    compress = False          # the factory stores every 0x08 unit (23 of 23)
 
     def __init__(self, layer, part, cell, keys):
         self.key = ("grid", layer, part)
@@ -541,6 +547,7 @@ class TileUnit:
         self.rec, self.net = rec, net
         self.key = rec.key
         self.table = rec.level.table
+        self.compress = not (STORED_TILES and rec.level.detail)
 
     def size_bytes(self):
         return self.rec.size_bytes
@@ -613,8 +620,9 @@ def build_db(factory, net, labels, keep_poi=False):
                 rec.head_extra = factory.raw(fa)[0x60:0x74]
     big = max(rec.size_bytes for rec in tiles.values())
     log(f"tiles: {len(tiles):,}, largest {big:,} bytes")
-    if big > 0xFFF0:
-        raise RuntimeError("a tile is over 64 KB; lower the level budget")
+    if big > MAX_LOGICAL:
+        raise RuntimeError(f"a tile is {big:,} bytes; no factory unit unpacks to more than "
+                           f"{MAX_LOGICAL:,}. Lower the level budget or simplify harder")
     units = []
     hns = []
     for num in (1, 2, 3, 6):
@@ -651,6 +659,7 @@ def patch_root(factory, db, grids):
 
 
 def main(argv=None):
+    global STORED_TILES, DETAIL_SHAPE_TOL
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("iso")
     ap.add_argument("out")
@@ -661,10 +670,15 @@ def main(argv=None):
     ap.add_argument("--keep-factory-poi", action="store_true",
                     help="keep the factory POI layer (0x06/0x10/0x11) byte for byte at its "
                          "factory offset, instead of an empty POI layer")
+    ap.add_argument("--stored-tiles", action="store_true",
+                    help="store street-level tiles uncompressed (factory: 502 stored, 2 zlib)")
+    ap.add_argument("--detail-tol", type=float, default=DETAIL_SHAPE_TOL,
+                    help="detail shape tolerance in tile steps of about 1.3 m (default %(default)s)")
     ap.add_argument("--allow-overflow", action="store_true",
                     help="let units go past the licensing block when the map doesn't fit "
                          "before it (discs 3 and 10 did this and the unit rejected disc 3)")
     a = ap.parse_args(argv)
+    STORED_TILES, DETAIL_SHAPE_TOL = a.stored_tiles, a.detail_tol
     img = open(a.iso, "rb").read()
     _f, db = carin.read_db(img)
     factory = Factory(db)

@@ -214,3 +214,33 @@ Disc 12 (`disc12_full_au_all_fixes.iso`): 2,177,292 roads, 35,624 tiles, `carind
 - The kept factory POIs point at 2004 detail-tile addresses (about 140,000 references) that now land in rebuilt data. Until they're retargeted or dropped, navigating to a POI may read garbage.
 - If disc 11 is rejected, the full-AU build must shrink from 164 MB to 85 MB (94 MB without the background layers): the street search's all-Australia list duplicates every per-suburb entry (about half of its 35 MB), and detail tiles are 110+ MB.
 
+## Discs 7, 10, 11 and 12 in the car
+
+All four: **load, no roads below 1 km scale, destination search hard-locks** (the unit has to be unplugged; the screen stays on after ignition off).
+
+Disc 11 is the decisive one. It is the factory map with only the detail grid moved past the licensing block, so its tiles, cells and search are factory, yet it loses the street level exactly as the rebuilds do. A search of the whole factory database finds no second pointer to the detail grid (its address appears only in the root and in the grid's own unit header), so the unit reaches it through root entry 0 alone, and moving it is what broke street level. Disc 7 shows the same symptom with nothing past the licensing block, so location past the block can't be the only cause.
+
+What all four share, and the factory never does:
+
+| | Factory | Discs 7/10/12 | Disc 11 |
+|---|---|---|---|
+| detail grid at its factory address | yes | no | no |
+| grid units (0x08) compressed | never (23 of 23 stored) | all | no |
+| street-level tiles compressed | 2 of 6,454 | nearly all | no (factory) |
+| largest unit, unpacked | 32,768 B (search); tiles 24,576 B | up to 33,792 B (disc 7) | factory |
+
+## Batch A-D: one change each
+
+`tools/carin_probe.py` makes factory discs with one change (the `far` mode reproduces disc 11 byte for byte). Each of A-C was checked: `carin_check` clean, 2,000 random detail lookups identical to the factory, and every unit decodes to the factory's content.
+
+| Disc | Change | If street level disappears |
+|---|---|---|
+| A `discA_factory_zlib_grid` | detail grid zlib-compressed in place | the unit can't read compressed grids |
+| B `discB_factory_grid_moved_inside` | detail grid moved inside the file (over the start of the 0x04 block; house numbers lost for 239 tiles in south-west WA) | the grid's address matters, not "past the licensing block" |
+| C `discC_factory_zlib_tiles` | the 502 stored detail tiles zlib-compressed in place (check Parkdale and the Bacchus Marsh-Geelong road area) | the unit can't read compressed street-level tiles |
+| D `discD_melbourne_factory_shaped` | Melbourne rebuild shaped like the factory: grids and street-level tiles stored, no unit over 32 KB (largest tile 27,875 B), nothing past the licensing block, every fix so far | (the first candidate; A-C explain it either way) |
+
+`carin_build` changes for D: grid units are always stored; a build stops if any unit would unpack to more than 32 KB; `--stored-tiles` stores street-level tiles (Melbourne still fits the factory size); `--detail-tol` sets the detail shape tolerance.
+
+Also asked of the tester: does destination search work on the untouched factory disc? If it locks there too, the search lock is the unit, not the rebuild.
+
