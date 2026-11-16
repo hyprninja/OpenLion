@@ -200,7 +200,11 @@ class GridUnit:
     """0x08: a run of cell-unit addresses (x-major over the world)."""
 
     PER_UNIT = 6140
-    compress = False          # the factory stores every 0x08 unit (23 of 23)
+    # Always zlib. The factory stores its grids, but a stored grid at any address the
+    # factory doesn't use was refused by the unit on all three discs that had one (B, D,
+    # E), while compressed grids loaded on every disc that had them (5, 7, 10, 12, A).
+    compress = True
+    force_zlib = True
 
     def __init__(self, layer, part, cell, keys):
         self.key = ("grid", layer, part)
@@ -470,7 +474,7 @@ def assemble(factory, units, fixed, start):
         data = data.ljust(pages_l * PAGE, b"\0")
         if getattr(u, "compress", True):
             body = zlib.compress(data[8:], 9)
-            if 8 + len(body) < len(data) - PAGE:
+            if 8 + len(body) < len(data) - PAGE or getattr(u, "force_zlib", False):
                 return data[:8], body, pages_l, carin.ZLIB
         return data[:8], data[8:], pages_l, carin.STORED
 

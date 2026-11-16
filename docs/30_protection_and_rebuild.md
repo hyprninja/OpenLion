@@ -285,3 +285,19 @@ While B, D and E are tested, disc E was compared with the factory field by field
 
 Disc F (`discF_melbourne_child_fix.iso`) is disc E with these four fixes: `carin_check` clean, tile validator 0 errors, search walk 612,254 road links with 0 errors, every coarse tile's child list and 0x5C as above. The tester was asked to burn F instead of E if E isn't burned yet.
 
+## Disc E refused: what separates refused discs from loading ones
+
+E (Melbourne, zlib street-level tiles) was refused like D, so D's large stored tiles were not the cause. Every tested disc was then scored on a dozen properties against its outcome (`/tmp` analysis, reproduced here):
+
+| Property | Refused: 3, B, D, E | Loaded: 1, 2, 5, 6, 7, 10, 11, 12, A, C |
+|---|---|---|
+| a stored 0x08 grid unit at a readable address where the factory has none | B, D, E | none |
+| the POI grid (root entry 1) past the licensing block | 3 | none |
+| zlib 0x08 grid units | 3 | 5, 7, 10, 12, A |
+
+No single property splits all four refused discs from the rest; these two together do, with no exceptions. B's grid was a byte copy of the factory's (stored) placed at a new address; D and E used `GridUnit.compress = False` ("store like the factory"), added after disc 7. Every rebuild that loaded had zlib grids, and A showed a zlib grid works in the factory position. Why the unit objects to a relocated stored grid isn't known; the rule is enough: **grid units are always zlib** (`force_zlib`, even when compression saves less than a page). Disc 3's cause can't recur: the POI layer is kept in place, start-up units are laid out first, and overflow past the licensing block is an error.
+
+This explains B without the saved-destination theory, which stays untested.
+
+Disc G (`discG_melbourne_zlib_grids.iso`) is F with zlib grids; its only stored grids are the factory's own, unchanged, at their factory addresses (POI and background), as on every disc that loaded. `carin_check` clean, tile validator 0 errors, search walk 612,254 road links with 0 errors. F was withdrawn before burning.
+
