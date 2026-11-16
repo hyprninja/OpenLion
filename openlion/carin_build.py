@@ -260,7 +260,10 @@ def build_levels(net, labels, factory):
 
     tiles = {}            # key -> TileRec
     locs = {}
-    for num in (1, 2, 3, 6):
+    # finest first: each coarser level must cover every tile of the level below it, so
+    # zooming out always finds a parent (the factory leaves 0.2% of detail tiles without one)
+    cover = ()
+    for num in (6, 3, 2, 1):
         lv = levels[num]
         segs = [s for s in range(net.n_segs) if net.group[s] <= lv.max_group]
         chains = merge_chains(net, segs) if not lv.detail else {s: [s] for s in segs}
@@ -276,7 +279,9 @@ def build_levels(net, labels, factory):
                 pts = simplify(pts, {1: 24, 2: 12, 3: 6}[num] * cn.Q)
             lines[s] = pts
         leaves = cn.make_tiles(lines.values(), cn.Level(num, lv.table, lv.max_group, lv.cell,
-                                                        lv.max_size, lv.min_size, lv.detail, lv.budget))
+                                                        lv.max_size, lv.min_size, lv.detail, lv.budget),
+                               cover)
+        cover = [(x0 + sz // 2, y0 + sz // 2) for x0, y0, sz in leaves]
         loc = cn.Locator(leaves, lv.max_size, lv.min_size)
         locs[num] = loc
         recs = {r: cw.TileRec(lv, r) for r in leaves}

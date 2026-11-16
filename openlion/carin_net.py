@@ -235,10 +235,15 @@ def cells_on_line(x1, y1, x2, y2, m):
     return out
 
 
-def make_tiles(lines, lv):
-    """Quadtree leaves for a level from the weight of each polyline's points."""
+def make_tiles(lines, lv, cover=()):
+    """Quadtree leaves for a level from the weight of each polyline's points.
+    cover: extra points that must fall inside some leaf even with no roads there (the
+    centres of the finer level's tiles, so every finer tile has a parent, as on the
+    factory disc)."""
     pts = collections.defaultdict(float)     # (x // min, y // min) -> weight
     m = lv.min_size
+    for x, y in cover:
+        pts[((x - OX) // m, (y - OY) // m)] += 0.001
     base = (32 + 20 + 24) if lv.detail else (26 + 20)
     for allp in lines:
         w = (base + 6 * (len(allp) - 2)) / len(allp)

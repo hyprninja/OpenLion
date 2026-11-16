@@ -103,7 +103,14 @@ class Tiles(unittest.TestCase):
     def test_overview_levels(self):
         net, tiles, addr = self.build()
         # an untagged primary road is group 2: level 3 only (levels 1 and 2 hold groups 0 and 0-1)
-        self.assertEqual([k for k in tiles if k[0] in (1, 2)], [])
+        # but levels 1 and 2 still get a tile there, empty, so every tile has a parent
+        for lv in (1, 2):
+            cover = [k for k in tiles if k[0] == lv]
+            self.assertEqual(len(cover), 1)
+            self.assertEqual(tiles[cover[0]].pieces, [])
+        for key, rec in tiles.items():
+            if key[0] != 1:
+                self.assertIsNotNone(rec.parent, key)
         lv3 = [k for k in tiles if k[0] == 3]
         self.assertEqual(len(lv3), 1)
         b = tiles[lv3[0]].logical(net, addr, struct.pack(">IHH", 0, 3, 0))
