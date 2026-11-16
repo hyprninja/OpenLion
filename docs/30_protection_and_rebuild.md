@@ -317,3 +317,20 @@ So: **one state per disc** (`carin_build --states VIC`). Street detail for every
 
 The Victoria build passes `carin_check`, the tile validator, the search walk (304,577 street entries, 1,160,486 road links, 0 errors), has no relocated stored grid, exact child lists, and the POI, background and licence ranges byte-identical. The spare room goes to current OSM POIs (one state per disc, not several states sharing).
 
+## Current OSM POIs on a state disc (`--pois`)
+
+`carin_build --states VIC --pois pois2_AU.pickle` replaces the factory POIs (which link to the 2004 road tiles) with the POIs of the OpenLion build's POI cache, mapped onto the 38 CARiN categories (`carin_poi.CATEGORY`; parks, toilets, cemeteries, bus stations and rest areas have no matching factory category and are left out).
+
+Every factory POI has at least one road link (137,196 POIs, none with zero), so every POI written links to the road it actually sits on: the nearest drivable road in the whole OSM network within 150 m. In the disc's state every road is on the disc; interstate, a POI is written only when its own road is one of the roads the state disc carries nationwide. A POI one street back from a highway is left off, because its road isn't on the disc.
+
+Each place gets one POI list per category (0x0C s3 → 0x11 → 0x10). The national lists (0x0A s3) and per-brand lists (0x0C s5) are written empty.
+
+| Victoria disc | |
+|---|---|
+| POIs written | 92,860 (45,922 in Victoria, 46,938 interstate on carried roads) |
+| Left off | 86,498 interstate whose road isn't on the disc; 29,412 more than 150 m from any road; 66,619 in uncarried categories; 17,694 unnamed |
+| Space | 27.1 MB still free before the background block; nothing past the licensing block |
+| Checks | `carin_check` 0 problems; tile validator 0 errors; search walk 339,660 streets, 1,334,408 road links, 0 errors; POI walk: all 92,860 reachable on the map, 92,714 through place search, every road link valid (13 within rounding of the 150 m limit), 0 errors |
+
+The POI work also exposed a road-merging bug: when the forward walk stopped before reaching the road it started from (the 64-road cap or the ring rule), that road was dropped from the map (182 street-level roads in Melbourne). Every road now lands in exactly one merged road; `tests/test_carin_build.Chains` covers it.
+
