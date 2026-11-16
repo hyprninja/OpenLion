@@ -118,7 +118,7 @@ All three ran in the car:
 | 6 — factory map bytes, `carindb` grown to 178,578,432, licence files where disc 3 put them | **works perfectly** — map paints, zoom in and out, position cursor | `carindb` size is irrelevant, and so is the absolute disc position of `TPD/` |
 | 5 — rebuilt Melbourne content at factory size | boots to the map, then **hard-locked on zoom**; the unit had to be unplugged | the rebuilt *content* breaks it |
 
-That pins the geometry rule: **`TPD/` must sit immediately after `carindb`.** The factory and disc 6 both do; disc 4's 8 MB gap breaks it. `carin_iso.replace_db` already splices them contiguously, so nothing there needs changing — disc 3's rejection was its content, not the move.
+*Correction (review, below): disc 4 didn't move the licence files, it blanked them, so it says nothing about where `TPD/` may sit. Disc 6 is the clean geometry result: `carindb` grown, `TPD/` moved with its directory updated, and it works.*
 
 Disc 6 also shows why the factory data is the wrong end point: it is 2004 data, so anything built since — the Hopper's Crossing estates included — is simply absent. Expected, not a fault.
 
@@ -172,7 +172,45 @@ Transcribed from the four photos of the Melbourne test (disc 5), via OCR — kep
 - The pipeline is reproducible from a fresh Geofabrik extract with two cache-building calls and one `carin_build` command; nothing depends on state from an earlier OpenLion build beyond what those calls produce.
 ## What this changes
 
-- The C-IQ licence layer is untouched by a rebuild; `TPD/` must sit immediately after `carindb`, and `carindb`'s size is free.
-- `carin_build --keep-factory-poi` keeps the factory POI layer and routing block byte for byte instead of dropping them; use it for every build until OSM POIs and routing exist.
+- The C-IQ licence layer is untouched by a rebuild. `carindb`'s size is free, and `TPD/` can move as long as its directory entries follow it (disc 6).
+- `carin_build --keep-factory-poi` keeps the factory POI layer byte for byte instead of dropping it. (Table 0x04 is house numbers for the factory's own tiles, not routing; rebuilt tiles don't reference it, so it is no longer reserved.)
 - The self-loop node-list fix is mandatory; `tools/carin_check.py` is the regression gate — factory image and every build must report 0 problems.
 - Melbourne-sized builds land on the exact factory `carindb` size, so the whole disc geometry is factory-identical.
+
+## Review (2026-11-16, later)
+
+A pass over every disc and every change since doc 29, before the next batch.
+
+**Disc 4 tested the wrong thing.** Its directory entries for `TPD/` still point at LBA 46,943, which on that image is now zeros; the real licence bytes sit 4,096 sectors further on, where nothing points. The unit read blank licence files and rejected the disc, as it would any corrupted licence. So disc 4 says nothing about *where* `TPD/` may sit, and "`TPD/` must sit immediately after `carindb`" doesn't follow. Disc 6 is the clean geometry result: `carindb` grown to 178 MB, `TPD/` moved with its directory updated, works perfectly.
+
+**The pattern behind disc 3's rejection.** `tools/carin_check.py`-clean images, grouped by whether the unit must follow a pointer past the licensing block (the factory end of `carindb`, 0x5AF9400):
+
+| Disc | Root-referenced grids past the licensing block | Units past it | In the car |
+|---|---|---|---|
+| 3 (full AU) | levels 0, 1, 2, 3, 4 | 34,586 | rejected at load |
+| 5, 7, 9 (Melbourne) | none | 0 | loads |
+| 6 (factory, grown) | none | 638 (filler, unreferenced) | works |
+| 10 (full AU, self-loop fix) | levels 0, 2, 3, 4 | 37,744 | not yet tested |
+
+Disc 6 proves the unit tolerates a large file, not that it reads data out there: nothing it uses was past the block. Disc 11 tests exactly that.
+
+**Disc 11 (`tools/carin_probe_far.py`).** The factory disc with one change: the detail-road grid (root entry 0, eleven 0x08 units) copied to just past the licensing block, root entry 0 pointing at the copy. Inside the factory span only the root page differs; all other files are identical; 2,000 random detail lookups through the moved grid return the factory's tiles; `carin_check` clean. If it draws the street-level map, the space past the licensing block is usable. If it's rejected, the map must fit before the background block (85 MB, 94 MB without the background layers).
+
+**Fixes since disc 10** (all in disc 12):
+
+| Fix | Why |
+|---|---|
+| Every tile has a parent on the level above | Coarse levels were tiled only where their roads run: on full AU 23% of level-2, 20% of level-3 and 4.8% of detail tiles had parent 0 (factory: 2.7%, 1.7%, 0.2%). Levels are now built finest first and each coarser level covers the centre of every tile below it, with road-free cover tiles where needed: 0 parentless tiles below level 1 |
+| No self-loop roads | All 129 on disc 10 were on levels 1-3, where chain-merging closed ring roads on themselves (the factory has none). A merged chain now stops one segment short of closing. 50815c3's list-closing guard stays as a backstop |
+| Reserved ranges can't be overwritten | `assemble` skipped a reserved range only when a unit crossed its start; one starting exactly on it was written over the kept factory bytes. Now any unit touching a reserved range moves past it |
+| Start-up units first | Grids, grid cells and the search directory (0x08, 0x09, 0x0C, 0x0D, 0x0F) are laid out before tiles, so they land before the licensing block even when tiles overflow it |
+| Overflow is an error unless asked for | `carin_build` stops if units don't fit before the licensing block; `--allow-overflow` builds the disc anyway (discs 10 and 12) |
+| Detail shapes simplified to 1.5 steps (about 2 m) | OSM curves are far denser than the unit can draw: `carindb` 178.6 → 164.0 MB |
+| 0x04 slab no longer reserved | Nothing references it once tiles are rebuilt (+4.8 MB of room) |
+
+Disc 12 (`disc12_full_au_all_fixes.iso`): 2,177,292 roads, 35,624 tiles, `carindb` 164.0 MB with 25,821 tile and street units past the licensing block and none of the start-up units; `carin_check` 0 problems; tile validator 0 errors and 0 parentless tiles; 1,058,173 street entries resolve to 4,289,738 road records with 0 mismatches; POI, background and licence ranges byte-identical.
+
+**Still open:**
+- The kept factory POIs point at 2004 detail-tile addresses (about 140,000 references) that now land in rebuilt data. Until they're retargeted or dropped, navigating to a POI may read garbage.
+- If disc 11 is rejected, the full-AU build must shrink from 164 MB to 85 MB (94 MB without the background layers): the street search's all-Australia list duplicates every per-suburb entry (about half of its 35 MB), and detail tiles are 110+ MB.
+

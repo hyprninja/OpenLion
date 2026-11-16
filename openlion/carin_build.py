@@ -27,6 +27,8 @@ PAGE = carin.PAGE
 # No house numbers yet: detail tiles carry no 0x04 unit (address 0), as 2,297 factory
 # tiles do. Set True to write one "no numbers" record per road instead.
 WITH_HOUSE_NUMBERS = False
+# detail-level shape tolerance in tile steps (1 step = 64 units, about 1.3 m)
+DETAIL_SHAPE_TOL = 1.5
 EMPTY = "empty"
 
 
@@ -275,8 +277,9 @@ def build_levels(net, labels, factory):
         lines = {}
         for s in segs:
             pts = chain_points(net, chains[s])
-            if not lv.detail:
-                pts = simplify(pts, {1: 24, 2: 12, 3: 6}[num] * cn.Q)
+            # shapes within DETAIL_SHAPE_TOL of the OSM line on the detail level (OSM
+            # draws curves far denser than the unit can show), coarser above it
+            pts = simplify(pts, {1: 24, 2: 12, 3: 6, 6: DETAIL_SHAPE_TOL}[num] * cn.Q)
             lines[s] = pts
         leaves = cn.make_tiles(lines.values(), cn.Level(num, lv.table, lv.max_group, lv.cell,
                                                         lv.max_size, lv.min_size, lv.detail, lv.budget),
@@ -362,7 +365,8 @@ def merge_chains(net, segs):
         cur = first
         while True:
             o = through(net.b[cur], cur)
-            if o is None or len(chain) >= 64:
+            # the factory has no road whose ends meet: a ring stops one short of closing
+            if o is None or len(chain) >= 64 or net.b[o] == net.a[first]:
                 break
             chain.append(o)
             used.add(o)
@@ -463,9 +467,12 @@ def assemble(factory, units, fixed, start):
         ri = 0
         for u in units:
             p = est[u.key]
-            while ri < len(fixed) and pos < fixed[ri][0] and pos + p * PAGE > fixed[ri][0]:
-                order.append(("fill", pos, (fixed[ri][0] - pos) // PAGE))
-                pos = fixed[ri][1]
+            # skip every reserved range this unit would touch (a unit starting exactly
+            # on a range's first byte used to be written over the kept factory data)
+            while ri < len(fixed) and pos + p * PAGE > fixed[ri][0]:
+                if pos < fixed[ri][0]:
+                    order.append(("fill", pos, (fixed[ri][0] - pos) // PAGE))
+                pos = max(pos, fixed[ri][1])
                 ri += 1
             place[u.key] = (pos, p)
             order.append(("unit", pos, u))
@@ -652,8 +659,11 @@ def main(argv=None):
     ap.add_argument("--bbox", nargs=4, type=float, help="lon0 lat0 lon1 lat1 (test builds)")
     ap.add_argument("--db-only", action="store_true", help="write carindb instead of an ISO")
     ap.add_argument("--keep-factory-poi", action="store_true",
-                    help="keep the factory POI layer (0x06/0x10/0x11) and routing block (0x04) "
-                         "byte for byte at their factory offsets, instead of an empty POI layer")
+                    help="keep the factory POI layer (0x06/0x10/0x11) byte for byte at its "
+                         "factory offset, instead of an empty POI layer")
+    ap.add_argument("--allow-overflow", action="store_true",
+                    help="let units go past the licensing block when the map doesn't fit "
+                         "before it (discs 3 and 10 did this and the unit rejected disc 3)")
     a = ap.parse_args(argv)
     img = open(a.iso, "rb").read()
     _f, db = carin.read_db(img)
@@ -669,12 +679,17 @@ def main(argv=None):
     units, grids, tiles = build_db(factory, net, labels, keep_poi=a.keep_factory_poi)
     from . import carin_search
     units += carin_search.build(factory, net, tiles, labels)
+    # what the unit reads at start-up (grids, cells, search directory) goes first, so it
+    # always lands before the licensing block; road tiles and street lists follow
+    first = (0x08, 0x09, 0x0C, 0x0D, 0x0F)
+    units = [u for u in units if u.table in first] + [u for u in units if u.table not in first]
     fixed = [(factory.background_start(), len(db))]
     if a.keep_factory_poi:
         poi = factory.span({0x06, 0x10, 0x11}, roots=(1,))
-        rout = factory.span({0x04})
-        fixed += [poi, rout]
-        log(f"keeping factory POI layer {poi[0]:#x}..{poi[1]:#x} and routing block {rout[0]:#x}..{rout[1]:#x}")
+        fixed += [poi]
+        # the factory 0x04 units are house numbers for the factory's own detail tiles;
+        # rebuilt tiles carry house-number address 0, so nothing reads them: not kept
+        log(f"keeping factory POI layer {poi[0]:#x}..{poi[1]:#x}")
     fixed.sort()
     log(f"laying out {len(units):,} units; fixed block from {fixed[0][0]:#x}")
     new, place = assemble(factory, units, fixed, carin_search.START)
@@ -682,7 +697,11 @@ def main(argv=None):
     new = bytearray(new)
     new[0xC00:0xE00] = patch_root(factory, new, grid_addr)
     new = carin_search.patch_fixed(factory, new, place)
-    log(f"carindb: {len(new):,} bytes ({len(db):,} before)")
+    over = sum(1 for pos, _p in place.values() if pos >= len(db))
+    log(f"carindb: {len(new):,} bytes ({len(db):,} before); {over:,} units past the licensing block")
+    if over and not a.allow_overflow:
+        raise SystemExit(f"{over:,} units don't fit before the licensing block (disc 3, which "
+                         "did this, was rejected). Shrink the build, or pass --allow-overflow.")
     if a.db_only:
         open(a.out, "wb").write(new)
     else:
