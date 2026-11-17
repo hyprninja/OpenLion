@@ -300,6 +300,7 @@ def patch_fixed(factory, db, place):
     struct.pack_into(">IHH", b, 0x30, (pos >> 8) << 8 | pages, top_off, top_cnt)
     struct.pack_into(">HH", b, 0x14, 0, 0)          # s3: POI links
     struct.pack_into(">HH", b, 0x48, 0, 0)          # their offset / count in the record
+    b[0x5C:0x5C + 48] = bytes(48)                   # and the four national lists themselves
     db = bytearray(db)
     db[0x1000:0x1200] = carin.encode_in_place(u, bytes(b))
     return bytes(db)

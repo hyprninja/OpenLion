@@ -8,6 +8,7 @@ disc.
 | `common.py` | Loads a disc. Gives each decodable road tile as a model (nodes, roads, shape points, groups) and splits a codec 0x0E street tile into its parts (params, raw s3/s9/s10, bit stream). Also locates the edge-node records, and maps street names from the plain search units onto tiles |
 | `check_edge_records.py` | Re-proves doc 33's edge-record result: all 5,950 codec street tiles hold exactly n6 records; 153,366 of 153,366 partners point back |
 | `check_codec_e.py` | Runs `openlion/carin_codec_e.py` over every codec 0x0E street tile and checks the result (doc 33): 5,950 of 5,950 pass the structure, name-tail and string checks |
+| `check_rules.py` | Runs every rule the factory disc follows (docs 31-32) over any disc, factory or rebuilt, side by side: `python check_rules.py FACTORY.iso BUILT.iso` |
 | `check_plain.py` | Unpacks every codec 0x0E street tile to plain bytes (`carin_codec_e.to_plain`), checks the round trip through `carin_tile`, and runs the street rules of docs 31-32 on the town tiles |
 | `codec_e_strings.py` | Prints a codec 0x0E tile's string block (fragment dictionary, coded bits, string offsets). Holds the tokenizer and prefix-code solver used while the string code was being worked out |
 

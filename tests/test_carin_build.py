@@ -125,10 +125,11 @@ class Tiles(unittest.TestCase):
 
     def test_overview_levels(self):
         net, tiles, addr = self.build()
-        # an untagged primary road is group 2: level 3 only (levels 1 and 2 hold groups 0 and 0-1).
-        # A coarse tile with no roads never occurs on the factory disc, so levels 1 and 2 get
-        # none here and the level-3 tile keeps parent 0; every detail tile has a parent
-        self.assertEqual([k for k in tiles if k[0] in (1, 2)], [])
+        # an untagged primary road is group 2: levels 2 and 3 (level 1 holds groups 0-1, 2
+        # holds 0-2, 3 holds 0-3, as on the factory). A coarse tile with no roads never
+        # occurs on the factory disc, so level 1 gets none; every detail tile has a parent
+        self.assertEqual([k for k in tiles if k[0] == 1], [])
+        self.assertEqual(len([k for k in tiles if k[0] == 2]), 1)
         for key, rec in tiles.items():
             if key[0] == 6:
                 self.assertIsNotNone(rec.parent, key)
@@ -156,6 +157,27 @@ class Tiles(unittest.TestCase):
             px, py = x0 + ix * v + v // 2, y0 + iy * v + v // 2
             rx, ry, rw, rh = rect_of[a]
             self.assertTrue(rx <= px < rx + rw and ry <= py < ry + rh)
+
+    def test_roads_west_to_east_and_junctions_clockwise(self):
+        net, tiles, addr = self.build()
+        for key, rec in tiles.items():
+            b = rec.logical(net, addr, struct.pack(">IHH", 0, key[0] if key[0] != 6 else 0, 0))
+            t = ct.parse(b, key[0] == 6)
+            rs = ct.road_size(key[0] == 6)
+            nodes = {}
+            for k in range(t.n5):
+                x, y, fr, f = struct.unpack_from(">HHHH", t.s5, 8 * k)
+                nodes[t.offsets[5] + 8 * k] = (x, y, f)
+            for k in range(t.n6):
+                x, y, fr, f = struct.unpack_from(">HHHH", t.s6, 16 * k)
+                nodes[t.offsets[6] + 16 * k] = (x, y, f)
+            for k in range(t.nroads):
+                A, B = struct.unpack_from(">HH", t.roads, rs * k)
+                self.assertLessEqual(nodes[A][:2], nodes[B][:2])          # A west of B
+            # node level bits: a level-3 node that is on no coarser level is 0x8000
+            if key[0] == 3:
+                for x, y, f in nodes.values():
+                    self.assertIn(f & 0xC000, (0x4000, 0x8000))
 
     def test_class_codes_are_factory_codes(self):
         net = tiny_net()

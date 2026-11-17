@@ -254,6 +254,9 @@ Every rule below was measured on the original first, then tested on J.
 breaks 12 rules that the original follows (section 2). On top of that, a set of fields
 hasn't been decoded yet (section 4). Until they are, nobody can say J is right.
 
+**Disc K (18 Nov 2026)** is built to every rule below and passes them all at 100%; see
+doc 30, "Disc K".
+
 **Update 18 Nov 2026.** Codec 0x0E is now decoded (doc 33), so the rules below were
 re-checked on all 6,454 original street tiles, not just the 504 readable ones:
 - Three "rules" were artefacts of the small sample and are withdrawn. On the full disc:

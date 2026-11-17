@@ -434,3 +434,97 @@ Fix (disc J): `make_tiles` splits a coarse tile when its slot grid would pass th
 
 Disc J (`discJ_victoria_child_slots.iso`): all 3,842 coarse tiles have the right slot count and all 31,650 filled slots name the tile covering the slot centre; slots at most 64 / 128 / 256. The other checks are as for I (root, background, licensing identical; same size; `carin_check` 0 problems; tile validator 0 errors; search walk 339,668 streets, 0 errors; POI walk 85,600 POIs, 0 errors). Envelope residuals unchanged: Melbourne CBD street cell 296 vs 267, level-3 neighbours 10 vs 8, level-3 tiles per cell 62 vs 61, place trie unit 4.6 KB vs 1.5 KB; parentless coarse tiles still 27% of level 3 against 1.7%.
 
+## Disc K: built to the factory's rules (18 Nov 2026)
+
+With codec 0x0E decoded (doc 33), every rule the factory disc follows could be measured on
+all of its tiles (docs 31, 32). `tools/carin_research/check_rules.py` runs them on any
+disc; the factory passes all hard rules at 100%.
+
+| Rule | Factory | J | K |
+|---|---|---|---|
+| Roads run west to east, every level | 100% | 52% | 100% |
+| Junction list clockwise / starts nearest north | 99.9% / 97.8% | 41% / 33% | 100% / 100% |
+| Inner nodes sorted by group, x, y | 100% | 31% | 100% |
+| Node level bits = coarsest level reached | 99.995% | 5.9% | 100% |
+| Junction-type bits from the street-level road count | 97.9% | 98.3% | 100% |
+| Level 2/3 nodes are street nodes; level 2 nodes are level 3 nodes | 100% | 90.5% / 94.0% | 100% |
+| Tile inside its parent; zoomed-out tile has a child slot | 100% | 3 / 6 failures | 100% |
+| Every tile has a neighbour | 100% | 25 failures | 100% |
+| No zero-length road; shape points per road within the factory's longest | 100% | 679 / 62 failures | 100% |
+| Slip roads carry their type in word +24 | 100% | 0% | 100% |
+| House-number flag only with a house-number unit | 100% | 54% | 100% |
+| Route numbers as shield code + number, labels ≤ 43 characters, factory characters only | 100% | 61% / 99.99% / 97.5% | 100% |
+| Empty grid cells one unit per run, zoomed-out empties ≤ 0x300000 | 100% | failures | 100% |
+| Country record's POI lists cleared | yes | no | yes |
+
+What changed in the builder:
+
+- **Roads and junctions** (`carin_write`):
+  - pieces are turned to run west to east, swapping a one-way road's direction bits;
+  - each node's roads are listed clockwise from north by the direction to the next
+    point;
+  - inner nodes are sorted by group, then x, y.
+- **Node flags:**
+  - bits 14-15 give the coarsest level that has a node at the same point;
+  - the low byte is the street-level road count there (0x100 one, 0x500 two, 0 three or
+    more).
+- **Levels** (`carin_build.build_levels`):
+  - Chains are made coarsest first, each level breaking its roads at every coarser road
+    end.
+  - Tiles are made finest first, and a coarse tile is never split through a finer one.
+  - The coarse levels are clipped from the street level's own geometry, with every edge
+    crossing computed from the original segment (`carin_net.clip`), and simplified piece
+    by piece. So every coarse junction and edge point is a street point. The 1-2 that
+    land a grid step off next to a tile corner are moved onto it.
+- **Groups:**
+  - level 1 holds groups 0-1, level 2 adds rural secondary roads (2), level 3 adds urban
+    secondary roads (3);
+  - tertiary and local streets are street level only;
+  - this matches the factory's per-level road counts (level 1 36 k against 35 k);
+  - a state disc carries groups 0-3 nationally.
+- **Slip roads:** forms 1/2/3 and 8/9/A come from where an OSM `*_link` leads (onto or
+  off a motorway or divided road, or between two), and word +24 carries the type.
+- **Header words:**
+  - 0x60-0x68 are the distance in metres from the tile to the nearest level 1, 2 and 3
+    node (the exact formula isn't known);
+  - 0x6C is the factory's commonest value;
+  - 0x70 marks house numbers only when there are some.
+- **Network** (`carin_net`):
+  - zero-length roads become one node, and rings are split;
+  - roads over 400 shape points get pass-through nodes, and chains are cut below each
+    level's longest factory road;
+  - nothing outside the factory's map area;
+  - route numbers are kept only as shield code + number;
+  - names use the factory's characters (`&` becomes "and") and are cut at 43 characters.
+- **Isolated tiles:** roads in a tile with no neighbour are left out and the levels are
+  rebuilt (King Island, Kangaroo Island, Magnetic Island, scraps of national road). The
+  factory reaches islands by ferry roads (class 0x030E), which the OSM cache doesn't
+  carry yet.
+- **Grids and country record:**
+  - every run of empty grid cells gets its own empty unit;
+  - empty zoomed-out cells keep a 0x300000 sub-grid;
+  - the country record's four national POI lists are zeroed, not just their count.
+
+Other checks on K:
+- `carin_check`: 31,299 units, 0 problems.
+- Search walk: 339,088 streets, 1,300,755 road links, 0 errors. Route-first records list
+  the name second, as on the factory.
+- POI walk: 85,462 POIs on the map, 85,320 through place search, 0 errors.
+- Root, background and licensing are identical to the factory; same size.
+
+Still over the factory's envelope, as on J:
+- street cell 276 tiles vs 267;
+- level-3 neighbours 10 vs 8;
+- level-3 tiles in a cell 62 vs 61;
+- the place trie unit 4.6 KB vs 1.5 KB.
+
+New, and small:
+- level 1 at most 524 roads in a tile vs 510;
+- level 3 at most 722 shape points vs 702;
+- one level-1 unit unpacks to 18.9 KB vs 18.4 KB.
+
+These come from coarse tiles that can't split without cutting a finer tile.
+
+Content still missing: house numbers (G-NAF), forbidden turns (s10), bridge/tunnel marks,
+ferries, reordered search keywords and route numbers in search.
+

@@ -8,8 +8,9 @@ Codes follow the factory disc (calibrated against OSM, report 29):
          low byte:  bits 4-5 direction (0x10 one way A->B, 0x20 one way B->A),
                     low nibble road form (0 motorway, 4 dual carriageway, 1 slip road,
                     0xB rural road, 0xC urban road)
-  group  0 motorway/trunk ... 4 local street (flags bits 8-10); level 1 holds groups
-         0-1, level 2 0-2, level 3 0-3, detail everything
+  group  0-1 major roads, 2 rural secondary, 3 urban secondary, 4 tertiary and local
+         (flags bits 8-10); level 1 holds groups 0-1, level 2 0-2, level 3 0-3, detail
+         everything
 """
 import collections
 import math
@@ -39,14 +40,36 @@ def to_carin(x5, y5):
     return x, y
 
 
-NAME_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789 -'&/.,")
+# The factory's strings use a-z, 0-9, space, ' . and / only (4.9 M bytes, doc 33)
+NAME_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789 './")
+MAX_LABEL = 43          # the factory's longest map label
 
 
 def ascii_name(s):
-    """Lower-case ASCII as on the factory disc; other characters become spaces."""
+    """Lower-case ASCII as on the factory disc; & becomes 'and', other characters spaces;
+    names longer than the factory's longest label are cut at a word boundary."""
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+    s = s.replace("&", " and ")
     s = "".join(ch if ch in NAME_CHARS else " " for ch in s)
-    return " ".join(s.split())
+    s = " ".join(s.split())
+    if len(s) > MAX_LABEL:
+        s = s[:MAX_LABEL + 1].rsplit(" ", 1)[0] if " " in s[:MAX_LABEL + 1] else s[:MAX_LABEL]
+    return s
+
+
+ROUTE = __import__("re").compile(r"[a-z]{1,2}[0-9]{1,3}")
+
+
+def route_refs(ref):
+    """OSM ref -> route numbers as the factory writes them: a shield code and the number,
+    at most 4 characters ('m1', 'a10', 'b100', 'ni87'). Bare numbers and anything else
+    (lane counts, URLs, 'acw' ...) have no shield on the factory disc and are left out."""
+    out = []
+    for part in ref.split(";"):
+        r = ascii_name(part).replace(" ", "")
+        if len(r) <= 4 and ROUTE.fullmatch(r) and r not in out:
+            out.append(r)
+    return tuple(out)
 
 
 def road_group(tags):
@@ -64,7 +87,10 @@ def is_urban(tags, dense):
     return dense
 
 
-def class_code(tags, direction, urban):
+SLIP_TYPE = {0x1: 1, 0x8: 1, 0x2: 2, 0x9: 2, 0x3: 3, 0xA: 3}
+
+
+def class_code(tags, direction, urban, slip_form=None):
     hw = tags["highway"]
     sp = osm_import.parse_speed(tags.get("maxspeed"))
     link = hw.endswith("_link")
@@ -80,7 +106,7 @@ def class_code(tags, direction, urban):
     if hw == "motorway":
         form = 0x0
     elif link:
-        form = 0x1 if direction >= 0 else 0x2
+        form = slip_form if slip_form is not None else (0xC if urban else 0xB)
     elif direction and hw in ("trunk", "primary", "secondary"):
         form = 0x4
     else:
@@ -122,10 +148,14 @@ def factory_class(code):
     if lo in FACTORY_CLASSES.get(hi, ()):
         return code
     dbits, form = lo & 0x30, lo & 0x0F
-    if form in (0x1, 0x2) and not dbits:
+    if form in SLIP_TYPE and not dbits:
         dbits = 0x10
-    forms = {0x0: (0x0, 0x4, 0xB, 0xC), 0x4: (0x4, 0xC, 0xB), 0x1: (0x1, 0x2, 0x8, 0x9, 0xA, 0xC, 0xB),
-             0x2: (0x2, 0x1, 0xA, 0x9, 0xC, 0xB), 0xB: (0xB, 0xC, 0x4), 0xC: (0xC, 0xB, 0x4)}.get(form, (form, 0xC, 0xB))
+    # a slip road keeps its slip type (entry 1/8, exit 2/9, connector 3/A) before anything else
+    forms = {0x0: (0x0, 0x4, 0xB, 0xC), 0x4: (0x4, 0xC, 0xB),
+             0x1: (0x1, 0x8, 0xC, 0xB), 0x8: (0x8, 0x1, 0xC, 0xB),
+             0x2: (0x2, 0x9, 0xC, 0xB), 0x9: (0x9, 0x2, 0xC, 0xB),
+             0x3: (0x3, 0xA, 0xC, 0xB), 0xA: (0xA, 0x3, 0xC, 0xB),
+             0xB: (0xB, 0xC, 0x4), 0xC: (0xC, 0xB, 0x4)}.get(form, (form, 0xC, 0xB))
     urban = hi & 0x80
     speeds = sorted((h for h in FACTORY_CLASSES if (h & 0x80) == urban),
                     key=lambda h: (abs((h & 0x7F) - (hi & 0x7F)), h))
@@ -144,6 +174,7 @@ class Net:
         self.x, self.y = [], []
         self.a, self.b, self.shape = [], [], []
         self.group, self.cls, self.name, self.refs, self.urban = [], [], [], [], []
+        self.hw, self.x24 = [], []
 
     def add_node(self, x, y):
         self.x.append(x)
@@ -156,8 +187,9 @@ class Net:
         self.shape.append(shape)
         self.group.append(road_group(tags))
         self.cls.append((tags, direction))      # finished by finish()
+        self.hw.append(tags.get("highway", ""))
         self.name.append(ascii_name(tags.get("name", "")))
-        self.refs.append(tuple(r for r in (ascii_name(p) for p in tags.get("ref", "").split(";")) if r))
+        self.refs.append(route_refs(tags.get("ref", "")))
 
     def finish(self):
         """Urban or rural from junction density, then the class codes."""
@@ -167,12 +199,65 @@ class Net:
         for n, d in deg.items():
             if d >= 3:
                 dens[((self.x[n] - OX) // DENSITY_CELL, (self.y[n] - OY) // DENSITY_CELL)] += 1
+        forms = self.slip_forms()
         for s, (tags, direction) in enumerate(self.cls):
             n = self.a[s]
             dense = dens[((self.x[n] - OX) // DENSITY_CELL, (self.y[n] - OY) // DENSITY_CELL)] >= URBAN_NODES
             urban = is_urban(tags, dense)
             self.urban.append(urban)
-            self.cls[s] = class_code(tags, direction, urban)
+            # level groups, matched to the factory's density (level 1 ~35 k roads, level 2
+            # ~67 k, level 3 ~124 k nationwide): 0-1 from level 1 on, rural secondary roads
+            # (2) from level 2, urban secondary roads (3) from level 3, tertiary and local
+            # streets (4) on the street level only
+            g = self.group[s]
+            self.group[s] = 3 if (g == 2 and urban) else 4 if g >= 3 else g
+            self.cls[s] = class_code(tags, direction, urban, forms.get(s))
+            # word +24, bits 8-9: the slip-road type, 100% of the factory's slip roads
+            self.x24.append(SLIP_TYPE.get(self.cls[s] & 0xF, 0) << 8)
+
+    def slip_forms(self):
+        """OSM *_link roads -> the factory's slip-road form from where they lead (doc 32):
+        1 onto a motorway, 2 off one, 3 motorway to motorway; 8, 9, A the same for a
+        divided road; None (an ordinary road) when neither end meets one."""
+        ends = collections.defaultdict(list)
+        for s in range(len(self.a)):
+            ends[self.a[s]].append(s)
+            ends[self.b[s]].append(s)
+        link = lambda s: self.hw[s].endswith("_link")
+        divided = lambda s: (not link(s) and self.cls[s][1] != 0
+                             and self.hw[s] in ("trunk", "primary", "secondary"))
+
+        def reach(n, came):
+            """Kinds of road met walking along links from node n (away from seg came)."""
+            seen, kinds = {came}, set()
+            stack = [n]
+            for _ in range(200):
+                if not stack:
+                    break
+                n = stack.pop()
+                for o in ends[n]:
+                    if o in seen:
+                        continue
+                    seen.add(o)
+                    if link(o):
+                        stack.append(self.b[o] if self.a[o] == n else self.a[o])
+                    elif self.hw[o] == "motorway":
+                        kinds.add("m")
+                    elif divided(o):
+                        kinds.add("d")
+            return kinds
+        out = {}
+        for s in range(len(self.a)):
+            if not link(s):
+                continue
+            direction = self.cls[s][1]
+            up, down = (self.a[s], self.b[s]) if direction >= 0 else (self.b[s], self.a[s])
+            ku, kd = reach(up, s), reach(down, s)
+            if "m" in ku or "m" in kd:
+                out[s] = 0x3 if "m" in ku and "m" in kd else 0x1 if "m" in kd else 0x2
+            elif "d" in ku or "d" in kd:
+                out[s] = 0xA if "d" in ku and "d" in kd else 0x8 if "d" in kd else 0x9
+        return out
 
     @property
     def n_segs(self):
@@ -184,9 +269,14 @@ WORLD_5 = (round((OX * 1.8e-7 - 30) * 1e5) + 1, round(OY * 1.8e-7 * 1e5) + 1,
            round(((OX + WORLD) * 1.8e-7 - 30) * 1e5) - 1, round((OY + WORLD) * 1.8e-7 * 1e5) - 1)
 
 
-def build_net(ways, bbox=None, progress=None):
+MAX_SEG_SHAPE = 400     # longer OSM roads get pass-through nodes (factory: 588 at most)
+
+
+def build_net(ways, bbox=None, progress=None, coverage=None):
     """ways: [(wid, tags, WayPoints)] from the roads cache. bbox in deg*1e5 (x0,y0,x1,y1).
-    Ways reaching outside the database's world box are left out."""
+    Ways reaching outside the database's world box are left out, and so are ways entirely
+    outside `coverage` (deg*1e5 box: where the factory has street-level data; it has none
+    on Christmas, Norfolk or Lord Howe Island)."""
     keep = []
     for w in ways:
         tags, pts = w[1], w[2]
@@ -197,9 +287,10 @@ def build_net(ways, bbox=None, progress=None):
         if min(xs) < WORLD_5[0] or max(xs) > WORLD_5[2] or min(ys) < WORLD_5[1] or max(ys) > WORLD_5[3]:
             continue
         if bbox:
-            xy = pts.xy
-            xs, ys = xy[0::2], xy[1::2]
             if max(xs) < bbox[0] or min(xs) > bbox[2] or max(ys) < bbox[1] or min(ys) > bbox[3]:
+                continue
+        if coverage:
+            if max(xs) < coverage[0] or min(xs) > coverage[2] or max(ys) < coverage[1] or min(ys) > coverage[3]:
                 continue
         keep.append(w)
     junctions = osm_import.junction_nodes(keep)
@@ -231,12 +322,68 @@ def build_net(ways, bbox=None, progress=None):
                     net.add_seg(a, mid, shape[:m], tags, direction)
                     net.add_seg(mid, b, shape[m + 1:], tags, direction)
                 else:
+                    while len(shape) > MAX_SEG_SHAPE:
+                        m = MAX_SEG_SHAPE // 2
+                        mid = net.add_node(*shape[m])
+                        net.add_seg(a, mid, shape[:m], tags, direction)
+                        a, shape = mid, shape[m + 1:]
                     net.add_seg(a, b, shape, tags, direction)
                 start = k
         if progress and i % 200000 == 0:
             progress(f"net: {i:,}/{len(keep):,} ways")
+    drop_zero_length(net)
     net.finish()
     return net
+
+
+def drop_zero_length(net):
+    """Two junctions that snap to the same point with nothing between them make a road of
+    no length, which the factory never has: such pairs become one node."""
+    parent = list(range(len(net.x)))
+
+    def find(n):
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+    zero = set()
+    for s in range(len(net.a)):
+        a, b = net.a[s], net.b[s]
+        if not net.shape[s] and (net.x[a], net.y[a]) == (net.x[b], net.y[b]):
+            zero.add(s)
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+    if not zero:
+        return
+    keep = [s for s in range(len(net.a)) if s not in zero]
+    for name in ("a", "b"):
+        col = getattr(net, name)
+        setattr(net, name, [find(col[s]) for s in keep])
+    for name in ("shape", "group", "cls", "name", "refs", "hw"):
+        col = getattr(net, name)
+        setattr(net, name, [col[s] for s in keep])
+    # a road that now starts and ends at the merged node: gone if it has no shape, else
+    # split in two at its middle point (the factory has no road whose ends meet)
+    drop = set()
+    for s in range(len(net.a)):
+        if net.a[s] != net.b[s]:
+            continue
+        drop.add(s)
+        sh = net.shape[s]
+        if sh:
+            m = len(sh) // 2
+            mid = net.add_node(*sh[m])
+            for a, b, part in ((net.a[s], mid, sh[:m]), (mid, net.b[s], sh[m + 1:])):
+                net.a.append(a)
+                net.b.append(b)
+                net.shape.append(part)
+                for name in ("group", "cls", "name", "refs", "hw"):
+                    getattr(net, name).append(getattr(net, name)[s])
+    if drop:
+        for name in ("a", "b", "shape", "group", "cls", "name", "refs", "hw"):
+            col = getattr(net, name)
+            setattr(net, name, [v for s, v in enumerate(col) if s not in drop])
 
 
 # ---- quadtree tiles ------------------------------------------------------------
@@ -315,7 +462,7 @@ PLACE_CAP = 10
 SLOT_CAP = {3: 256, 2: 128, 1: 128}
 
 
-def make_tiles(lines, lv, cover=(), places=None, finer_min=None):
+def make_tiles(lines, lv, cover=(), places=None, finer_min=None, finer=None):
     """KD-tree leaves for a level from the weight of each polyline's points.
     cover: extra points that must fall inside some leaf even with no roads there (the
     centres of the finer level's tiles, so every finer tile has a parent, as on the
@@ -350,6 +497,19 @@ def make_tiles(lines, lv, cover=(), places=None, finer_min=None):
         by_top[(i // k, j // k)][(i, j)] = v
 
     leaves = []
+    # nesting: a coarse tile is never split through a finer tile, so every finer tile lies
+    # inside one coarse tile (factory: all 6,442 street tiles inside their parent)
+    fin = collections.defaultdict(list)
+    for r in finer or ():
+        fin[((r[0] - OX) // lv.max_size, (r[1] - OY) // lv.max_size)].append(r)
+
+    def cuts(rect):
+        x0, y0, w, h = rect
+        for fx, fy, fw, fh in fin.get(((x0 - OX) // lv.max_size, (y0 - OY) // lv.max_size), ()):
+            if fx < x0 + w and x0 < fx + fw and fy < y0 + h and y0 < fy + fh:
+                if (w == h and fh > h // 2) or (w != h and fw > w // 2):
+                    return True
+        return False
 
     shape_cap = SHAPE_CAP.get(lv.num, 1500)
 
@@ -375,7 +535,7 @@ def make_tiles(lines, lv, cover=(), places=None, finer_min=None):
     def split(rect, cellpts):
         if not cellpts:
             return
-        if fits(cellpts, rect) or not can_split(rect, lv.min_size):
+        if fits(cellpts, rect) or not can_split(rect, lv.min_size) or cuts(rect):
             leaves.append(rect)
             return
         for half in halves(rect):
@@ -411,29 +571,33 @@ class Locator:
 
 def clip(points, loc):
     """Polyline (snapped abs points) -> [(tile, [points])] pieces, consecutive pieces
-    meeting at a crossing point on the shared edge (snapped to the 64 grid)."""
+    meeting at a crossing point on the shared edge (snapped to the 64 grid).
+
+    A crossing is always computed from the original segment it lies on (not from the last
+    crossing), so the same segment crossing the same edge line gives the same point on
+    every level: the coarse levels are clipped from the street level's own geometry, and
+    their edge nodes then sit exactly on street-level nodes, as on the factory (doc 31)."""
     out = []
     cur = loc.find(*points[0])
     piece = [points[0]]
-    for q in points[1:]:
-        p = piece[-1]
+    for a, q in zip(points, points[1:]):
         while True:
             x0, y0, w, h = cur
             x1, y1 = x0 + w, y0 + h
             if x0 <= q[0] < x1 and y0 <= q[1] < y1:
                 piece.append(q)
                 break
-            dx, dy = q[0] - p[0], q[1] - p[1]
+            dx, dy = q[0] - a[0], q[1] - a[1]
             t = 1.0
             if dx > 0:
-                t = min(t, (x1 - p[0]) / dx)
+                t = min(t, (x1 - a[0]) / dx)
             elif dx < 0:
-                t = min(t, (x0 - p[0]) / dx)
+                t = min(t, (x0 - a[0]) / dx)
             if dy > 0:
-                t = min(t, (y1 - p[1]) / dy)
+                t = min(t, (y1 - a[1]) / dy)
             elif dy < 0:
-                t = min(t, (y0 - p[1]) / dy)
-            cx, cy = p[0] + dx * t, p[1] + dy * t
+                t = min(t, (y0 - a[1]) / dy)
+            cx, cy = a[0] + dx * t, a[1] + dy * t
             # snap: the axis that hit the edge is exact, the other to the 64 grid
             ex = x1 if dx > 0 and abs(cx - x1) < 1e-6 * w + 1 else x0 if dx < 0 and abs(cx - x0) < 1e-6 * w + 1 else None
             ey = y1 if dy > 0 and abs(cy - y1) < 1e-6 * h + 1 else y0 if dy < 0 and abs(cy - y0) < 1e-6 * h + 1 else None
@@ -442,9 +606,11 @@ def clip(points, loc):
             cx = min(max(cx, x0), x1)
             cy = min(max(cy, y0), y1)
             c = (int(cx), int(cy))
-            piece.append(c)
-            out.append((cur, piece))
-            # next tile: step a little past the crossing along the edge direction
+            grazed = len(piece) == 1 and c == piece[0]   # only touched this tile at a corner
+            if not grazed:
+                piece.append(c)
+                out.append((cur, piece))
+            # next tile: step a little past the crossing along the segment
             n = math.hypot(dx, dy)
             nxt = loc.find(int(c[0] + (1 if dx > 0 else -1 if dx < 0 else 0) * max(1, abs(dx) / n * 4)),
                            int(c[1] + (1 if dy > 0 else -1 if dy < 0 else 0) * max(1, abs(dy) / n * 4)))
@@ -452,11 +618,11 @@ def clip(points, loc):
                 raise ValueError(f"no tile at {c}")
             if nxt == cur:
                 # numeric corner case: the far point is in this tile after all
-                piece = out.pop()[1][:-1]
+                if not grazed:
+                    piece = out.pop()[1][:-1]
                 piece.append(q)
                 break
             cur = nxt
             piece = [c]
-            p = c
     out.append((cur, piece))
     return out

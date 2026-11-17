@@ -12,6 +12,7 @@ See docs/29_vz_map_disc.md.
 """
 import argparse
 import collections
+import math
 import pickle
 import struct
 import sys
@@ -100,6 +101,22 @@ class Factory:
             self._grids[i] = self.grid(i)
         return self._grids[i]
 
+    def coverage(self):
+        """deg*1e5 box around every street-level grid cell that holds tiles (the factory's
+        map area: no Christmas, Norfolk or Lord Howe Island)."""
+        cell, cells, _u = self.grid_cached(0)
+        n = carin_world() // cell
+        xs, ys = [], []
+        for i, a in enumerate(cells):
+            b = self.raw(a)
+            if struct.unpack_from(">H", b, 14)[0]:
+                xs.append(i // n)
+                ys.append(i % n)
+        to5 = lambda x, y: (round((x * 1.8e-7 - 30) * 1e5), round(y * 1.8e-7 * 1e5))
+        lo = to5(cn.OX + min(xs) * cell, cn.OY + min(ys) * cell)
+        hi = to5(cn.OX + (max(xs) + 1) * cell, cn.OY + (max(ys) + 1) * cell)
+        return lo + hi
+
     def background_start(self):
         """Lowest offset of anything reachable from the background layers."""
         lo = None
@@ -152,7 +169,7 @@ def carin_world():
 class CellUnit:
     """0x09: the tiles of one grid cell, on an x-major sub-grid."""
 
-    def __init__(self, layer, cell_xy, cell, tiles):
+    def __init__(self, layer, cell_xy, cell, tiles, empty_sub=None):
         self.key = ("cell", layer, cell_xy)
         self.table = 0x09
         x0 = cn.OX + (cell_xy[0] * cell if tiles else 0)
@@ -162,7 +179,7 @@ class CellUnit:
             sub = min(min(r[2], r[3]) for r in (t[1] for t in tiles))
             sub = max(sub, cell // 64)
         else:
-            sub = cell
+            sub = empty_sub or cell
         n = cell // sub
         self.sub, self.n = sub, n
         self.entries = []       # tile key per sub-cell (or None)
@@ -223,7 +240,9 @@ class GridUnit:
 
 
 def make_grid(layer, cell, tiles):
-    """tiles: [tile key (level, rect)] -> (grid units, cell units). Empty cells share one."""
+    """tiles: [tile key (level, rect)] -> (grid units, cell units). As on the factory, every
+    run of empty cells (x-major) gets an empty unit of its own, and an empty cell of levels
+    1-3 keeps a sub-grid no coarser than 0x300000 (doc 31, 2.13)."""
     n = cn.WORLD // cell
     per = collections.defaultdict(list)
     for key in tiles:
@@ -232,15 +251,22 @@ def make_grid(layer, cell, tiles):
             for cy in range((y0 - cn.OY) // cell, (y0 + h - 1 - cn.OY) // cell + 1):
                 per[(cx, cy)].append(key)
     cells = {xy: CellUnit(layer, xy, cell, ts) for xy, ts in per.items()}
-    empty = CellUnit(layer, EMPTY, cell, [])
-    empty.key = ("cell", layer, EMPTY)
-    keys = []
+    empty_sub = min(cell, 0x300000) if layer in (1, 2, 3) else cell
+    empties, keys, run = [], [], None
     for cx in range(n):
         for cy in range(n):
-            keys.append(cells[(cx, cy)].key if (cx, cy) in cells else empty.key)
+            if (cx, cy) in cells:
+                keys.append(cells[(cx, cy)].key)
+                run = None
+                continue
+            if run is None:
+                run = CellUnit(layer, EMPTY, cell, [], empty_sub)
+                run.key = ("cell", layer, EMPTY, len(empties))
+                empties.append(run)
+            keys.append(run.key)
     grids = [GridUnit(layer, i, cell, keys[i:i + GridUnit.PER_UNIT])
              for i in range(0, len(keys), GridUnit.PER_UNIT)]
-    return grids, list(cells.values()) + [empty]
+    return grids, list(cells.values()) + empties
 
 
 # ---- road levels ------------------------------------------------------------
@@ -258,64 +284,112 @@ STATES = {"VIC": "victoria", "NSW": "new south wales", "QLD": "queensland", "SA"
 # on a state disc, roads of this group or more important keep street detail nationwide;
 # 2 = everything level 3 carries, so every coarse tile has street-level tiles under it
 # (the factory has no coarse tile without them)
-STATE_DISC_NATIONAL_GROUP = 2
+STATE_DISC_NATIONAL_GROUP = 3
 
 
-def build_levels(net, labels, factory, states=None):
+# the factory's longest road per level, in shape points (doc 31); chains are cut below it
+ROAD_SHAPE_CAP = {1: 380, 2: 300, 3: 190, 6: 550}
+TOL = {1: 24, 2: 12, 3: 6}
+ROAD_SHAPE_LIMIT = {1: 402, 2: 324, 3: 204}     # the factory's longest road per level
+
+
+def simplify_to(pts, tol, limit):
+    out = simplify(pts, tol)
+    while len(out) - 2 > limit:
+        tol *= 2
+        out = simplify(pts, tol)
+    return out
+
+
+def level_segs(net, labels, lv, states, excl=frozenset()):
+    segs = [s for s in range(net.n_segs) if net.group[s] <= lv.max_group and s not in excl]
+    if states is not None:
+        # a state disc: everything inside the states, and nationwide only the roads every
+        # level carries, so every coarse road also exists at street level (doc 31, 2.10)
+        segs = [s for s in segs if net.group[s] <= STATE_DISC_NATIONAL_GROUP or labels(s)[1] in states]
+    return segs
+
+
+def cut_long(net, chains, num):
+    """Split chains whose simplified shape would pass the factory's longest road."""
+    cap, tol = ROAD_SHAPE_CAP[num], (TOL.get(num, DETAIL_SHAPE_TOL)) * cn.Q
+    out, todo = {}, list(chains.values())
+    while todo:
+        ch = todo.pop()
+        if len(ch) > 1 and len(simplify(chain_points(net, ch), tol)) - 2 > cap:
+            m = len(ch) // 2
+            todo += [ch[:m], ch[m:]]
+        else:
+            out[ch[0]] = ch
+    return out
+
+
+def build_levels(net, labels, factory, states=None, excl=None):
     """states: set of state names (as in STATES' values) whose every road gets street
-    detail; None for all of Australia. The coarse levels are national either way."""
+    detail; None for all of Australia.
+
+    Chains are made coarsest first, each level breaking its roads wherever a coarser level
+    has a road end, so every coarse node is a node of every finer level. Tiles are made
+    finest first (each coarser level covers and nests the finer tiles), and the coarse
+    levels are clipped from the street level's own geometry, so their tile-edge nodes sit
+    exactly on street-level nodes (factory: 139,743 of 139,743, doc 31)."""
     root_entry = {1: 2, 2: 3, 3: 4, 6: 0}
     levels = {}
     for num, table, maxg, max_size, _min, detail, budget in cw.LEVELS:
         cell = factory.grid_cached(root_entry[num])[0]
         levels[num] = LevelInfo(num, table, maxg, min(max_size, cell), max(cell // 32, 0xC000), detail,
                                 budget, cell, root_entry[num])
-    min_group = [9] * len(net.x)
-    for s in range(net.n_segs):
-        g = net.group[s]
-        for n in (net.a[s], net.b[s]):
-            if g < min_group[n]:
-                min_group[n] = g
-
-    on_level = collections.defaultdict(set)     # node -> overview levels it is a road end on
-
-    def node_levels(n):
-        return on_level[n] | {6}
-
-    tiles = {}            # key -> TileRec
-    locs = {}
-    # finest first: each coarser level must cover every tile of the level below it, so
-    # zooming out always finds a parent (the factory leaves 0.2% of detail tiles without one)
-    cover = ()
-    finer_leaves = None
-    for num in (6, 3, 2, 1):
+    # -- chains, coarsest first ------------------------------------------------------
+    chains_of, breaks = {}, set()
+    for num in (1, 2, 3, 6):
         lv = levels[num]
-        segs = [s for s in range(net.n_segs) if net.group[s] <= lv.max_group]
-        if lv.detail and states is not None:
-            segs = [s for s in segs if net.group[s] <= STATE_DISC_NATIONAL_GROUP or labels(s)[1] in states]
+        segs = level_segs(net, labels, lv, states, (excl or {}).get(num, frozenset()))
         if lv.detail:
             # street level: merge only where nothing a driver or the search would see
             # changes (name, route numbers, class, suburb, urban/rural)
             same = lambda o, s: (net.cls[o] == net.cls[s] and net.group[o] == net.group[s]
                                  and net.name[o] == net.name[s] and net.refs[o] == net.refs[s]
                                  and net.urban[o] == net.urban[s] and labels(o) == labels(s))
-            chains = merge_chains(net, segs, same)
-            lv.on_disc = set(segs)                     # every road the street level holds
-            lv.chain_of = {m: first for first, ch in chains.items() for m in ch}
         else:
-            chains = merge_chains(net, segs)
+            same = None
+        chains = cut_long(net, merge_chains(net, segs, same, breaks), num)
+        chains_of[num] = chains
+        for ch in chains.values():
+            breaks.update(chain_ends(net, ch))
+    on_level = collections.defaultdict(set)
+    for num in (1, 2, 3):
+        for ch in chains_of[num].values():
+            for n in chain_ends(net, ch):
+                on_level[n].add(num)
+
+    def node_levels(n):
+        return on_level[n] | {6}
+
+    tiles, locs = {}, {}
+    street_line = {}       # street chain first seg -> its final polyline
+    street_chain = {}      # seg -> street chain first seg
+    cover = ()
+    finer_leaves = None
+    for num in (6, 3, 2, 1):
+        lv = levels[num]
+        chains = chains_of[num]
         segs = sorted(chains)
-        if not lv.detail:
-            for s in segs:
-                for n in chain_ends(net, chains[s]):
-                    on_level[n].add(num)
         lines = {}
-        for s in segs:
-            pts = chain_points(net, chains[s])
-            # shapes within DETAIL_SHAPE_TOL of the OSM line on the detail level (OSM
-            # draws curves far denser than the unit can show), coarser above it
-            pts = simplify(pts, {1: 24, 2: 12, 3: 6, 6: DETAIL_SHAPE_TOL}[num] * cn.Q)
-            lines[s] = pts
+        if lv.detail:
+            lv.on_disc = {m for ch in chains.values() for m in ch}     # every road the street level holds
+            lv.chain_of = {m: first for first, ch in chains.items() for m in ch}
+            for s in segs:
+                # shapes within DETAIL_SHAPE_TOL of the OSM line (OSM draws curves far
+                # denser than the unit can show)
+                lines[s] = simplify(chain_points(net, chains[s]), DETAIL_SHAPE_TOL * cn.Q)
+        else:
+            # coarse geometry is the street level's: the street chains this chain is made of
+            for s in segs:
+                pts = []
+                for sc in dict.fromkeys(street_chain[m] for m in chains[s]):
+                    sl = street_line[sc]
+                    pts += sl if not pts else sl[1:]
+                lines[s] = pts
         place_ids = None
         if lv.detail:
             ids = {}
@@ -333,10 +407,15 @@ def build_levels(net, labels, factory, states=None):
                     for cj in range((fy - cn.OY) // m, (fy + fh - 1 - cn.OY) // m + 1):
                         if finer_min.get((ci, cj), 1 << 40) > short:
                             finer_min[(ci, cj)] = short
-        leaves = cn.make_tiles(lines.values(), clv, cover, place_ids, finer_min)
+        weigh = lines.values() if lv.detail else [simplify(p, TOL[num] * cn.Q) for p in lines.values()]
+        leaves = cn.make_tiles(weigh, clv, cover, place_ids, finer_min, finer_leaves)
         if lv.detail:
             leaves, segs = fit_cells(net, chains, segs, lines, leaves, clv, labels, lv)
             place_ids = None
+            for s in segs:
+                street_line[s] = lines[s]
+                for m in chains[s]:
+                    street_chain[m] = s
         cover = [(x0 + w // 2, y0 + h // 2) for x0, y0, w, h in leaves]
         finer_leaves = leaves
         loc = cn.Locator(leaves, lv.max_size, lv.min_size)
@@ -344,11 +423,16 @@ def build_levels(net, labels, factory, states=None):
         recs = {r: cw.TileRec(lv, r) for r in leaves}
         for s in segs:
             pcs = cn.clip(lines.pop(s), loc)
+            if not lv.detail:
+                # simplify each piece on its own: the ends (tile-edge nodes) stay put; a piece
+                # still longer than the factory's longest road on this level is simplified harder
+                pcs = [(rect, simplify_to(pp, TOL[num] * cn.Q, ROAD_SHAPE_LIMIT[num])) for rect, pp in pcs]
             na, nb = chain_ends(net, chains[s])
             for i, (rect, pp) in enumerate(pcs):
                 ka = ("n", na) if i == 0 else ("b", s, i - 1, 1)
                 kb = ("n", nb) if i == len(pcs) - 1 else ("b", s, i, 0)
                 recs[rect].pieces.append(cw.Piece(s, pp, ka, kb))
+                recs[rect].members[s] = chains[s]
                 if i > 0:
                     recs[rect].bnodes[ka] = (pp[0][0], pp[0][1], pcs[i - 1][0], ("b", s, i - 1, 0), net.group[s])
                 if i < len(pcs) - 1:
@@ -428,10 +512,11 @@ def fit_cells(net, chains, segs, lines, leaves, clv, labels, lv):
     return leaves, segs
 
 
-def merge_chains(net, segs, same=None):
+def merge_chains(net, segs, same=None, breaks=frozenset()):
     """Join roads that meet end to end at a node no other road of the level touches, when
-    same(o, s) says they match (default: same class and group). Returns {first seg: [segs
-    in order, each oriented as stored]} with the chain running from the first seg's a end."""
+    same(o, s) says they match (default: same class and group), and the node isn't in
+    `breaks` (road ends of coarser levels). Returns {first seg: [segs in order, each
+    oriented as stored]} with the chain running from the first seg's a end."""
     if same is None:
         same = lambda o, s: net.cls[o] == net.cls[s] and net.group[o] == net.group[s]
     ends = collections.defaultdict(list)
@@ -443,7 +528,7 @@ def merge_chains(net, segs, same=None):
 
     def through(n, s):
         lst = ends[n]
-        if len(lst) != 2:
+        if len(lst) != 2 or n in breaks:
             return None
         o = lst[0] if lst[1] == s else lst[1]
         if o == s or o in used or not same(o, s):
@@ -474,7 +559,7 @@ def merge_chains(net, segs, same=None):
         while True:
             n = net.a[first]
             lst = ends[n]
-            if len(lst) != 2:
+            if len(lst) != 2 or n in breaks:
                 break
             o = lst[0] if lst[1] == first else lst[1]
             if o in seen or o in used or net.b[o] != n or not same(o, first):
@@ -517,9 +602,13 @@ def overlapping(loc, rect):
 
 
 def simplify(pts, tol):
-    """Douglas-Peucker on absolute points (ends kept)."""
+    """Douglas-Peucker on absolute points (ends kept). A closed line (both ends at one
+    point) keeps its farthest point too, so a ring never collapses to no length."""
     if len(pts) <= 2:
         return pts
+    if pts[0] == pts[-1]:
+        far = max(range(1, len(pts) - 1), key=lambda k: abs(pts[k][0] - pts[0][0]) + abs(pts[k][1] - pts[0][1]))
+        return simplify(pts[:far + 1], tol) + simplify(pts[far:], tol)[1:]
     keep = [False] * len(pts)
     keep[0] = keep[-1] = True
     stack = [(0, len(pts) - 1)]
@@ -746,8 +835,113 @@ def make_labels(net, boundaries):
     return labels
 
 
+class NearIndex:
+    """Nearest point of a set, in metres (rough, for the street header words)."""
+    CELL = 0x40000
+
+    def __init__(self, pts):
+        self.g = collections.defaultdict(list)
+        for p in pts:
+            self.g[(p[0] // self.CELL, p[1] // self.CELL)].append(p)
+
+    def dist(self, x, y):
+        cx, cy = x // self.CELL, y // self.CELL
+        best = None
+        for r in range(0, 64):
+            for i in range(cx - r, cx + r + 1):
+                for j in range(cy - r, cy + r + 1):
+                    if max(abs(i - cx), abs(j - cy)) != r:
+                        continue
+                    for p in self.g.get((i, j), ()):
+                        d = math.hypot((p[0] - x) * 0.82, p[1] - y)
+                        if best is None or d < best:
+                            best = d
+            if best is not None and best <= r * self.CELL:
+                break
+        return int((best or 0) * 1.8e-7 * 110574)
+
+
+def head_words(rect, rec, near):
+    """Street header 0x60, 0x64, 0x68. On the factory they track the distance from the tile
+    to the nearest level-1, level-2 and level-3 node (rank correlation 0.83; equal when one
+    node is nearest for all three); the exact formula isn't known (doc 32). Here: the
+    largest such distance in metres over the tile's corners and centre, never 0."""
+    x0, y0, w, h = rect
+    probe = [(x0, y0), (x0 + w, y0), (x0, y0 + h), (x0 + w, y0 + h), (x0 + w // 2, y0 + h // 2)]
+    return tuple(max(1, max(near[n].dist(x, y) for x, y in probe)) for n in (1, 2, 3))
+
+
+def isolated_roads(tiles):
+    """Every factory tile has a neighbour (doc 31, 2.12). Roads in a tile that has none
+    (an island, or a scrap of national road with nothing else around it on a state disc)
+    are left out: on the street level everywhere, on a coarse level there and above."""
+    excl = collections.defaultdict(set)
+    for key, rec in tiles.items():
+        if rec.pieces and not rec.bnodes:
+            segs = {m for p in rec.pieces for m in rec.members[p.seg]}
+            for num in ((1, 2, 3, 6) if key[0] == 6 else tuple(n for n in (1, 2, 3) if n <= key[0])):
+                excl[num] |= segs
+    return excl
+
+
+def snap_coarse_edges(tiles):
+    """A coarse tile-edge node must be a street node (factory: all 139,743). Clipping the
+    street geometry gives the same point almost always; the few that land one grid step
+    off next to a tile corner move onto the street node on the same edge line."""
+    street = collections.defaultdict(list)          # edge line -> street points on it
+    for key, rec in tiles.items():
+        if key[0] != 6:
+            continue
+        for p in rec.pieces:
+            for q in (p.pts[0], p.pts[-1]):
+                street[("x", q[0])].append(q)
+                street[("y", q[1])].append(q)
+    allst = {q for v in street.values() for q in v}
+    moved = 0
+    for num in (3, 2, 1):
+        fix = {}
+        for key, rec in tiles.items():
+            if key[0] != num:
+                continue
+            x0, y0, w, h = key[1]
+            for k, (x, y, prect, pkey, g) in rec.bnodes.items():
+                if (x, y) in allst or (x, y) in fix:
+                    continue
+                line = ("x", x) if x in (x0, x0 + w) else ("y", y)
+                cand = [q for q in street.get(line, ()) if abs(q[0] - x) + abs(q[1] - y) <= 192]
+                if cand:
+                    fix[(x, y)] = min(cand, key=lambda q: abs(q[0] - x) + abs(q[1] - y))
+        for key, rec in tiles.items():
+            if key[0] != num:
+                continue
+            for p in rec.pieces:
+                if p.pts[0] in fix:
+                    p.pts = [fix[p.pts[0]]] + p.pts[1:]
+                if p.pts[-1] in fix:
+                    p.pts = p.pts[:-1] + [fix[p.pts[-1]]]
+            for k, v in list(rec.bnodes.items()):
+                if (v[0], v[1]) in fix:
+                    nx, ny = fix[(v[0], v[1])]
+                    rec.bnodes[k] = (nx, ny) + v[2:]
+        moved += len(fix)
+    return moved
+
+
 def build_db(factory, net, labels, keep_poi=False, states=None, poi_cache=None):
     levels, tiles, node_levels = build_levels(net, labels, factory, states)
+    excl = isolated_roads(tiles)
+    for _pass in range(6):
+        if not excl:
+            break
+        log(f"leaving out roads in tiles with no neighbour: "
+            + ", ".join(f"level {n}: {len(v):,}" for n, v in sorted(excl.items())) + "; rebuilding")
+        levels, tiles, node_levels = build_levels(net, labels, factory, states, excl)
+        more = isolated_roads(tiles)
+        for n, v in more.items():
+            excl[n] |= v
+        if not more:
+            break
+    log(f"coarse tile-edge nodes moved onto street nodes: {snap_coarse_edges(tiles)}")
     for rec in tiles.values():
         rec.prepare(net, labels, node_levels)
     # boundary node offsets, for the partner pointers
@@ -758,13 +952,31 @@ def build_db(factory, net, labels, keep_poi=False, states=None, poi_cache=None):
 
     def partner(lvnum):
         return lambda pkey, prect: boff[(lvnum, prect, pkey)]
+    # node positions per level and the street-level road count at each position, for the
+    # node flags (coarsest level reached; junction type from the street level, doc 32)
+    pos = {num: set() for num in (1, 2, 3, 6)}
+    sdeg = collections.Counter()
+    for key, rec in tiles.items():
+        for k, P in rec.npos.items():
+            pos[key[0]].add(P)
+            if key[0] == 6:
+                sdeg[P] += len(rec.inc[k])
+    coarser = {6: (3, 2, 1), 3: (2, 1), 2: (1,), 1: ()}
+
+    def coarsest(P, lvnum):
+        top = lvnum
+        for c in coarser[lvnum]:
+            if P not in pos[c]:
+                break
+            top = c
+        return top
+    near = {num: NearIndex(pos[num]) for num in (1, 2, 3)}
     for key, rec in tiles.items():
         rec.partner_off = partner(key[0])
+        rec.street_degree = sdeg.get
+        rec.coarsest_level = coarsest
         if rec.level.detail:
-            x0, y0, w, h = key[1]
-            fa = factory.tile_at(0, x0 + w // 2, y0 + h // 2)
-            if fa:
-                rec.head_extra = factory.raw(fa)[0x60:0x74]
+            rec.head_words = head_words(key[1], rec, near)
     big = max(rec.size_bytes for rec in tiles.values())
     log(f"tiles: {len(tiles):,}, largest {big:,} bytes")
     if big > MAX_LOGICAL:
@@ -849,7 +1061,10 @@ def main(argv=None):
     log("reading OSM roads")
     c = pickle.load(open(a.roads, "rb"))
     bbox = tuple(int(v * 1e5) for v in a.bbox) if a.bbox else None
-    net = cn.build_net(c.ways, bbox, progress=log)
+    coverage = factory.coverage()
+    log(f"factory map area: {coverage[0] / 1e5:.2f}..{coverage[2] / 1e5:.2f} E, "
+        f"{coverage[1] / 1e5:.2f}..{coverage[3] / 1e5:.2f}")
+    net = cn.build_net(c.ways, bbox, progress=log, coverage=coverage)
     del c
     log(f"network: {net.n_segs:,} roads, {len(net.x):,} nodes")
     boundaries = pickle.load(open(a.boundaries, "rb")) if a.boundaries else None

@@ -6,6 +6,7 @@ everything is laid out, so tiles are built as TileRec objects and turned into by
 TileRec.logical(addr), where addr(key) gives the final address of any unit.
 """
 import collections
+import math
 import struct
 
 from . import carin_net as cn
@@ -15,9 +16,11 @@ LEVELS = (
     # num, table, max group, max tile size, min tile size, detail, weight budget (bytes,
     # estimated as in carin_net.make_tiles; the factory's largest tiles: 22 KB overview,
     # 24 KB street level; nothing written may pass 32 KB)
-    (1, 0x01, 0, 0x300000, 0x60000, False, 20000),
-    (2, 0x02, 1, 0x300000, 0x30000, False, 20000),
-    (3, 0x03, 2, 0x300000, 0x18000, False, 20000),
+    # each finer level adds one group, as on the factory: level 1 groups 0-1, level 2
+    # 0-2, level 3 0-3 (doc 32); a road keeps its group on every level it is on
+    (1, 0x01, 1, 0x300000, 0x60000, False, 20000),
+    (2, 0x02, 2, 0x300000, 0x30000, False, 20000),
+    (3, 0x03, 3, 0x300000, 0x18000, False, 20000),
     (6, 0x00, 4, 0x180000, 0x0C000, True, 23000),
 )
 COARSER = {6: (3, 2, 1), 3: (2, 1), 2: (1,), 1: ()}
@@ -30,7 +33,15 @@ def level_of_group(g):
     return 1 if g <= 1 else 2 if g <= 2 else 3 if g <= 3 else 6
 
 
-MAX_GROUP = {1: 0, 2: 1, 3: 2, 6: 4}
+MAX_GROUP = {1: 1, 2: 2, 3: 3, 6: 4}
+# node flags, bits 14-15: the coarsest level the node reaches (doc 32)
+LEVEL_CODE = {1: 0x0000, 2: 0x4000, 3: 0x8000, 6: 0xC000}
+HEAD_6C = 0x0167000A     # the factory's commonest value (meaning not decoded)
+
+
+def heading(p, q):
+    """Degrees clockwise from north, p to q."""
+    return math.degrees(math.atan2(q[0] - p[0], q[1] - p[1])) % 360
 
 
 def in_level(g, lv):
@@ -38,22 +49,37 @@ def in_level(g, lv):
 
 
 class Piece:
-    __slots__ = ("seg", "pts", "ka", "kb")
+    __slots__ = ("seg", "pts", "ka", "kb", "flip")
 
     def __init__(self, seg, pts, ka, kb):
-        self.seg, self.pts, self.ka, self.kb = seg, pts, ka, kb
+        self.seg, self.pts, self.ka, self.kb, self.flip = seg, pts, ka, kb, False
+
+    def orient(self):
+        """Every factory road runs west to east (A before B by x, then y): reverse the piece
+        if it doesn't. A reversed one-way road swaps its direction bits when written."""
+        if self.pts[-1] < self.pts[0]:
+            self.pts = self.pts[::-1]
+            self.ka, self.kb = self.kb, self.ka
+            self.flip = True
+
+    def cls(self, net):
+        c = net.cls[self.seg]
+        if self.flip and c & 0x30 in (0x10, 0x20):
+            c ^= 0x30
+        return c
 
 
 class TileRec:
     def __init__(self, level, rect):
         self.level, self.rect = level, rect          # rect = (x0, y0, w, h)
         self.pieces = []
+        self.members = {}         # chain head seg -> the network roads it is made of
         self.bnodes = {}          # key -> (x, y, partner tile rect, partner key, group)
         self.key = (level.num, rect)
         self.children = []        # finer-level tile keys (overview)
         self.parent = None
         self.hn_key = None        # house-number unit key (detail)
-        self.head_extra = None    # detail: 0x60..0x74 copied from the factory tile here
+        self.head_words = (0, 0, 0)   # detail: header 0x60, 0x64, 0x68 (set by the builder)
         self.finest_child = None  # overview: smallest finer-level tile under this one
         self._layout = None
 
@@ -73,6 +99,7 @@ class TileRec:
             return s
 
         street_of = {}
+        self.street_major = {}
         if detail:
             places, streets = {}, {}
             for p in self.pieces:
@@ -87,6 +114,8 @@ class TileRec:
                     if sk not in streets:
                         streets[sk] = len(streets)
                     street_of[s] = streets[sk]
+                    if net.group[s] <= 2:
+                        self.street_major[sk] = True
             self.places = sorted(places, key=places.get)
             self.streets = sorted(streets, key=streets.get)
             if len(self.places) > cn.PLACE_CAP:
@@ -97,6 +126,8 @@ class TileRec:
                 self.places = [pk for pk in self.places if pk in keep]
         # order roads: by group, then street record, then segment
         grp = lambda p: net.group[p.seg]
+        for p in self.pieces:
+            p.orient()
         self.pieces.sort(key=lambda p: (grp(p), street_of.get(p.seg, -1), p.seg))
         self.street_of = street_of
         # nodes
@@ -104,10 +135,23 @@ class TileRec:
         for i, p in enumerate(self.pieces):
             inc[p.ka].append((i, 0))
             inc[p.kb].append((i, 1))
+        # each node's roads clockwise from north, by the direction to the road's next point
+        # (factory: clockwise at 99.99% of junctions, starting nearest north at 98-99%)
+        def out_heading(k, ie):
+            i, e = ie
+            pts = self.pieces[i].pts if e == 0 else self.pieces[i].pts[::-1]
+            q = next((q for q in pts[1:] if q != pts[0]), pts[-1])
+            return heading(pts[0], q)
+        for k in inc:
+            inc[k].sort(key=lambda ie: (out_heading(k, ie), ie))
         real = [k for k in inc if k[0] == "n"]
         bnd = [k for k in inc if k[0] == "b"]
         ming = {k: min(grp(self.pieces[i]) for i, _e in inc[k]) for k in inc}
-        real.sort(key=lambda k: (ming[k], min(i for i, _e in inc[k])))
+        npos = {k: (self.pieces[inc[k][0][0]].pts[0] if inc[k][0][1] == 0 else self.pieces[inc[k][0][0]].pts[-1])
+                for k in inc}
+        self.npos = npos
+        # inner nodes: by group, then x, then y (factory: every tile)
+        real.sort(key=lambda k: (ming[k], npos[k]))
         bnd.sort(key=lambda k: min(i for i, _e in inc[k]))
         self.real, self.bnd, self.inc, self.ming = real, bnd, inc, ming
         self.node_levels = node_levels
@@ -125,7 +169,12 @@ class TileRec:
             for sk in self.streets:
                 nm, refs, _pk = sk
                 self.street_entry[sk] = len(self.entries)
-                if nm:
+                if nm and refs and self.street_major.get(sk):
+                    # the factory lists a numbered highway's route first (472 of 561)
+                    self.entries.append((refs[0], 0x10))
+                    self.entries += [(r, 0x11) for r in refs[1:]]
+                    self.entries.append((nm, 0x20A))
+                elif nm:
                     self.entries.append((nm, 0x208))
                     self.entries += [(r, 0x11) for r in refs]
                 else:
@@ -234,8 +283,8 @@ class TileRec:
             flags = 0x20 | (g << 8)
             struct.pack_into(">HHHHHHIHHHHH", roads, rs * i,
                              node_off[p.ka], node_off[p.kb], O[7] + 6 * sp,
-                             nxt[(i, 0)], nxt[(i, 1)], net.cls[s], s + 1, flags,
-                             name_ptr, name_ptr, name_ptr, 0)
+                             nxt[(i, 0)], nxt[(i, 1)], p.cls(net), s + 1, flags,
+                             name_ptr, name_ptr, name_ptr, net.x24[s])
             if detail:
                 st = self.street_of.get(s)
                 srec = (O[2] + 10 * (st + 1)) if st is not None else O[2]
@@ -260,19 +309,21 @@ class TileRec:
         t.s3 = bytes(s3)
         # nodes
         lvnum = self.level.num
+
+        def flags(k, edge):
+            # bits 14-15: coarsest level with a node here; low byte: the road count at
+            # street level here (0x100 one, 0x500 two, 0 three or more), as on the factory
+            P = self.npos[k]
+            deg = self.street_degree(P) or len(self.inc[k])
+            return (0x1000 | (0x2000 if edge else 0) | LEVEL_CODE[self.coarsest_level(P, lvnum)]
+                    | (0x0100 if deg == 1 else 0x0500 if deg == 2 else 0))
         s5 = bytearray(8 * len(self.real))
         for j, k in enumerate(self.real):
-            n = k[1]
-            deg = len(self.inc[k])
-            v = sum(1 for c in cn_levels_above(lvnum) if c in self.node_levels(n))
-            f = 0x1000 | (v << 14) | (0x0100 if deg == 1 else 0x0500 if deg == 2 else 0)
-            struct.pack_into(">HHHH", s5, 8 * j, *rel((net.x[n], net.y[n])), road_off(self.inc[k][0][0]), f)
+            struct.pack_into(">HHHH", s5, 8 * j, *rel(self.npos[k]), road_off(self.inc[k][0][0]), flags(k, False))
         s6 = bytearray(16 * len(self.bnd))
         for j, k in enumerate(self.bnd):
             x, y, prect, pkey, g = self.bnodes[k]
-            v = sum(1 for c in cn_levels_above(lvnum) if in_level(g, c))
-            f = 0x2500 | (v << 14)
-            struct.pack_into(">HHHHIHH", s6, 16 * j, *rel((x, y)), road_off(self.inc[k][0][0]), f,
+            struct.pack_into(">HHHHIHH", s6, 16 * j, *rel((x, y)), road_off(self.inc[k][0][0]), flags(k, True),
                              addr((lvnum, prect)), self.partner_off(pkey, prect), 0)
         t.s5, t.s6 = bytes(s5), bytes(s6)
         # children, neighbours
@@ -296,7 +347,9 @@ class TileRec:
         # header 0x54..0x74
         parent = addr(self.parent) if self.parent else 0
         if detail:
-            extra = self.head_extra or struct.pack(">IIIII", 0x808, 0x808, 0x808, 0x0167000A, 0x00010000)
+            # 0x60-0x68: distances to the level 1/2/3 network (builder); 0x70 = 0x01010000
+            # only with a house-number unit (all 4,149 on the factory), else 0x00010000
+            extra = struct.pack(">IIIII", *self.head_words, HEAD_6C, 0x01010000 if self.hn_key else 0x00010000)
             head = struct.pack(">II", addr(self.hn_key) if self.hn_key else 0, parent) + struct.pack(">I", 0) + extra
         else:
             # 0x5C: the smallest tile of the next finer level under this one (the factory's
@@ -317,6 +370,8 @@ class TileRec:
         return (mx - x0) // cn.Q, (my - y0) // cn.Q
 
     partner_off = None   # set by the builder: (partner key, partner rect) -> node offset
+    street_degree = staticmethod(lambda P: 0)          # set by the builder: roads at P on the street level
+    coarsest_level = staticmethod(lambda P, lv: lv)    # set by the builder
 
 
 def cn_levels_above(lv):
