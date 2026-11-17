@@ -12,11 +12,13 @@ from . import carin_net as cn
 from . import carin_tile as ct
 
 LEVELS = (
-    # num, table, max group, max tile size, min tile size, detail, weight budget
-    (1, 0x01, 0, 0x300000, 0x60000, False, 16000),
-    (2, 0x02, 1, 0x300000, 0x30000, False, 16000),
-    (3, 0x03, 2, 0x300000, 0x18000, False, 16000),
-    (6, 0x00, 4, 0x180000, 0x0C000, True, 24000),
+    # num, table, max group, max tile size, min tile size, detail, weight budget (bytes,
+    # estimated as in carin_net.make_tiles; the factory's largest tiles: 22 KB overview,
+    # 24 KB street level; nothing written may pass 32 KB)
+    (1, 0x01, 0, 0x300000, 0x60000, False, 20000),
+    (2, 0x02, 1, 0x300000, 0x30000, False, 20000),
+    (3, 0x03, 2, 0x300000, 0x18000, False, 20000),
+    (6, 0x00, 4, 0x180000, 0x0C000, True, 23000),
 )
 COARSER = {6: (3, 2, 1), 3: (2, 1), 2: (1,), 1: ()}
 OVERVIEW_CONST = 0x0020C49B
@@ -44,7 +46,7 @@ class Piece:
 
 class TileRec:
     def __init__(self, level, rect):
-        self.level, self.rect = level, rect          # rect = (x0, y0, size)
+        self.level, self.rect = level, rect          # rect = (x0, y0, w, h)
         self.pieces = []
         self.bnodes = {}          # key -> (x, y, partner tile rect, partner key, group)
         self.key = (level.num, rect)
@@ -59,7 +61,7 @@ class TileRec:
     def prepare(self, net, labels, node_levels):
         lv = self.level
         detail = lv.detail
-        x0, y0, size = self.rect
+        x0, y0, w, h = self.rect
         rel = lambda p: ((p[0] - x0) // cn.Q, (p[1] - y0) // cn.Q)
         # names (detail only)
         self.str_pool = {}
@@ -87,6 +89,12 @@ class TileRec:
                     street_of[s] = streets[sk]
             self.places = sorted(places, key=places.get)
             self.streets = sorted(streets, key=streets.get)
+            if len(self.places) > cn.PLACE_CAP:
+                # the factory never has more than 10 places in a tile: keep the busiest;
+                # streets of the others show no suburb here (search has its own lists)
+                busy = collections.Counter(labels(p.seg) for p in self.pieces)
+                keep = set(sorted(self.places, key=lambda pk: -busy[pk])[:cn.PLACE_CAP])
+                self.places = [pk for pk in self.places if pk in keep]
         # order roads: by group, then street record, then segment
         grp = lambda p: net.group[p.seg]
         self.pieces.sort(key=lambda p: (grp(p), street_of.get(p.seg, -1), p.seg))
@@ -135,7 +143,7 @@ class TileRec:
             self.strings, self.soff = bytes(strings), soff
         # neighbours (by partner tile), children are set by the caller
         self.neigh = sorted({self.bnodes[k][2] for k in bnd})
-        t = ct.Tile(detail, (x0, y0, x0 + size, y0 + size), bytes(32))
+        t = ct.Tile(detail, (x0, y0, x0 + w, y0 + h), bytes(32))
         t.s0 = [bytes(10)] * (3 if detail else 2)
         t.s1 = [bytes(10)] * ((len(self.places) + 2) if detail else 2)
         t.s2 = [bytes(10)] * ((len(self.streets) + 2) if detail else 2)
@@ -158,7 +166,7 @@ class TileRec:
         t, O = self.tile, self.offs
         detail = self.level.detail
         rs = ct.road_size(detail)
-        x0, y0, size = self.rect
+        x0, y0, w, h = self.rect
         rel = self.rel
         node_off = {}
         for i, k in enumerate(self.real):
@@ -204,7 +212,7 @@ class TileRec:
             t.s2 = [struct.pack(">HHHHH", 0, 0, s1r(0), 0, 0)]
             for sk in self.streets:
                 first = self.entries[self.street_entry[sk]][0]
-                parent = s1r(pidx[sk[2]]) if sk[2] else s1r(0)
+                parent = s1r(pidx[sk[2]]) if sk[2] in pidx else s1r(0)
                 t.s2.append(struct.pack(">HHHHH", sval(first), 0, parent, eoff(self.street_entry[sk]), 4))
             t.s2.append(struct.pack(">HHHHH", 0, 0, s1r(0), first_state, 4))
         else:
@@ -274,17 +282,17 @@ class TileRec:
         else:
             # 0x5C: the smallest tile of the next finer level under this one (the factory's
             # value on 83-96% of coarse tiles; when it differs it is smaller, never larger)
-            head = struct.pack(">IIIIIIII", 0, parent, self.finest_child or size, OVERVIEW_CONST,
+            head = struct.pack(">IIIIIIII", 0, parent, self.finest_child or w, OVERVIEW_CONST,
                                OVERVIEW_CONST, OVERVIEW_CONST, 0, 0x00010000)
         t.head = head
         return ct.write(t, unit_header)
 
     def edge_point(self, prect):
         """A point on the edge shared with tile prect, in this tile's units."""
-        x0, y0, s = self.rect
-        px, py, ps = prect
-        lo_x, hi_x = max(x0, px), min(x0 + s, px + ps)
-        lo_y, hi_y = max(y0, py), min(y0 + s, py + ps)
+        x0, y0, w, h = self.rect
+        px, py, pw, ph = prect
+        lo_x, hi_x = max(x0, px), min(x0 + w, px + pw)
+        lo_y, hi_y = max(y0, py), min(y0 + h, py + ph)
         mx = (lo_x + hi_x) // 2
         my = (lo_y + hi_y) // 2
         return (mx - x0) // cn.Q, (my - y0) // cn.Q

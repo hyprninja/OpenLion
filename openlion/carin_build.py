@@ -158,8 +158,9 @@ class CellUnit:
         x0 = cn.OX + (cell_xy[0] * cell if tiles else 0)
         y0 = cn.OY + (cell_xy[1] * cell if tiles else 0)
         if tiles:
-            sub = min(s for _x, _y, s in (t[1] for t in tiles))
-            sub = max(sub, cell // 32)
+            # a sub-cell is the smallest tile's short side (factory: down to cell / 64)
+            sub = min(min(r[2], r[3]) for r in (t[1] for t in tiles))
+            sub = max(sub, cell // 64)
         else:
             sub = cell
         n = cell // sub
@@ -171,8 +172,8 @@ class CellUnit:
                 px, py = x0 + ix * sub + sub // 2, y0 + iy * sub + sub // 2
                 hit = None
                 for key in tiles:
-                    tx, ty, ts = key[1]
-                    if tx <= px < tx + ts and ty <= py < ty + ts:
+                    tx, ty, tw, th = key[1]
+                    if tx <= px < tx + tw and ty <= py < ty + th:
                         hit = key
                         break
                 self.entries.append(hit)
@@ -226,9 +227,9 @@ def make_grid(layer, cell, tiles):
     n = cn.WORLD // cell
     per = collections.defaultdict(list)
     for key in tiles:
-        x0, y0, s = key[1]
-        for cx in range((x0 - cn.OX) // cell, (x0 + s - 1 - cn.OX) // cell + 1):
-            for cy in range((y0 - cn.OY) // cell, (y0 + s - 1 - cn.OY) // cell + 1):
+        x0, y0, w, h = key[1]
+        for cx in range((x0 - cn.OX) // cell, (x0 + w - 1 - cn.OX) // cell + 1):
+            for cy in range((y0 - cn.OY) // cell, (y0 + h - 1 - cn.OY) // cell + 1):
                 per[(cx, cy)].append(key)
     cells = {xy: CellUnit(layer, xy, cell, ts) for xy, ts in per.items()}
     empty = CellUnit(layer, EMPTY, cell, [])
@@ -314,10 +315,16 @@ def build_levels(net, labels, factory, states=None):
             # draws curves far denser than the unit can show), coarser above it
             pts = simplify(pts, {1: 24, 2: 12, 3: 6, 6: DETAIL_SHAPE_TOL}[num] * cn.Q)
             lines[s] = pts
-        leaves = cn.make_tiles(lines.values(), cn.Level(num, lv.table, lv.max_group, lv.cell,
-                                                        lv.max_size, lv.min_size, lv.detail, lv.budget),
-                               cover)
-        cover = [(x0 + sz // 2, y0 + sz // 2) for x0, y0, sz in leaves]
+        place_ids = None
+        if lv.detail:
+            ids = {}
+            place_ids = [ids.setdefault(labels(sg), len(ids)) for sg in lines]
+        clv = cn.Level(num, lv.table, lv.max_group, lv.cell, lv.max_size, lv.min_size, lv.detail, lv.budget)
+        leaves = cn.make_tiles(lines.values(), clv, cover, place_ids)
+        if lv.detail:
+            leaves, segs = fit_cells(net, chains, segs, lines, leaves, clv, labels, lv)
+            place_ids = None
+        cover = [(x0 + w // 2, y0 + h // 2) for x0, y0, w, h in leaves]
         loc = cn.Locator(leaves, lv.max_size, lv.min_size)
         locs[num] = loc
         recs = {r: cw.TileRec(lv, r) for r in leaves}
@@ -347,8 +354,8 @@ def build_levels(net, labels, factory, states=None):
         for key, rec in tiles.items():
             if key[0] != fnum:
                 continue
-            x0, y0, s = key[1]
-            p = locs[num].find(x0 + s // 2, y0 + s // 2)
+            x0, y0, w, h = key[1]
+            p = locs[num].find(x0 + w // 2, y0 + h // 2)
             if p is not None and (num, p) in tiles:
                 rec.parent = (num, p)
             # every coarser tile this one overlaps lists it as a child
@@ -356,10 +363,55 @@ def build_levels(net, labels, factory, states=None):
                 c = tiles.get((num, ckey))
                 if c is not None:
                     c.children.append(key)
-                    c.finest_child = min(c.finest_child or s, s)
+                    c.finest_child = min(c.finest_child or w, w)
     for rec in tiles.values():
         rec.children.sort()
     return levels, tiles, node_levels
+
+
+CELL_TILE_CAP = 267      # the factory's busiest street-level grid cell (Melbourne CBD)
+# thinning steps for a grid cell that still needs more tiles: harder shape simplification
+# (tile steps of about 1.3 m), then no unnamed local roads in that cell
+THIN_STEPS = ((2, False), (4, False), (4, True))
+
+
+def fit_cells(net, chains, segs, lines, leaves, clv, labels, lv):
+    """Street level: a grid cell may not need more tiles than the factory's busiest.
+    Cells over CELL_TILE_CAP are thinned in steps (THIN_STEPS) and re-tiled; the rest of
+    the map is left exactly as it was. Returns (leaves, segs)."""
+    cell = lv.max_size
+
+    def cell_of(xy):
+        return ((xy[0] - cn.OX) // cell, (xy[1] - cn.OY) // cell)
+
+    def counts(lvs):
+        c = collections.Counter(cell_of(r) for r in lvs)
+        return {k for k, v in c.items() if v > CELL_TILE_CAP}
+
+    over = counts(leaves)
+    for tol, drop_unnamed in THIN_STEPS:
+        if not over:
+            break
+        log(f"street level: {len(over)} grid cell(s) over {CELL_TILE_CAP} tiles; thinning "
+            f"(shapes {tol * 1.3:.1f} m{', no unnamed local roads' if drop_unnamed else ''})")
+        for sg in list(segs):
+            if sg not in lines or cell_of(lines[sg][len(lines[sg]) // 2]) not in over:
+                continue
+            ch = chains[sg]
+            if drop_unnamed and net.group[sg] >= 4 and not net.name[sg] and not net.refs[sg]:
+                del lines[sg]
+                for m in ch:
+                    lv.on_disc.discard(m)
+                continue
+            lines[sg] = simplify(chain_points(net, ch), tol * cn.Q)
+        segs = [sg for sg in segs if sg in lines]
+        ids = {}
+        place_ids = [ids.setdefault(labels(sg), len(ids)) for sg in lines]
+        leaves = cn.make_tiles(lines.values(), clv, (), place_ids)
+        over = counts(leaves)
+    if over:
+        log(f"street level: {len(over)} grid cell(s) still over {CELL_TILE_CAP} tiles")
+    return leaves, segs
 
 
 def merge_chains(net, segs, same=None):
@@ -439,11 +491,11 @@ def overlapping(loc, rect):
     """Leaves of `loc` that overlap rect. Probes every loc.min cell inside rect, at a step
     no bigger than rect itself (a rect smaller than loc.min used to be probed outside
     itself and could be listed under the wrong coarse tile)."""
-    x0, y0, s = rect
+    x0, y0, w, h = rect
     out = set()
-    step = min(loc.min, s)
-    for x in range(x0, x0 + s, step):
-        for y in range(y0, y0 + s, step):
+    step = min(loc.min // 2, w, h)        # the finer tile's short side, at most
+    for x in range(x0, x0 + w, step):
+        for y in range(y0, y0 + h, step):
             k = loc.find(x + step // 2, y + step // 2)
             if k is not None:
                 out.add(k)
@@ -695,8 +747,8 @@ def build_db(factory, net, labels, keep_poi=False, states=None, poi_cache=None):
     for key, rec in tiles.items():
         rec.partner_off = partner(key[0])
         if rec.level.detail:
-            x0, y0, s = key[1]
-            fa = factory.tile_at(0, x0 + s // 2, y0 + s // 2)
+            x0, y0, w, h = key[1]
+            fa = factory.tile_at(0, x0 + w // 2, y0 + h // 2)
             if fa:
                 rec.head_extra = factory.raw(fa)[0x60:0x74]
     big = max(rec.size_bytes for rec in tiles.values())

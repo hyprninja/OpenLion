@@ -20,7 +20,8 @@ from . import osm_import
 OX, OY = 0x2A518800, 0xEE924000 - (1 << 32)    # world origin (root bbox)
 WORLD = 0x18000000
 Q = 64                                          # tile coordinate step
-EDGE_GRID = 0xC000                              # every tile edge is a multiple of this
+EDGE_GRID = 0x6000                              # every tile edge is a multiple of this (the
+                                                # smallest tile is 0xC000 x 0x6000)
 
 SKIP = {"track", "busway", "service"}
 
@@ -52,7 +53,8 @@ def road_group(tags):
     return 4 - osm_import.road_rank(tags)
 
 
-URBAN_NODES = 40      # junctions per 0xC000 cell (~1.5 km square) that make it built-up
+URBAN_NODES = 40      # junctions per DENSITY_CELL (~1.5 km square) that make it built-up
+DENSITY_CELL = 0xC000
 
 
 def is_urban(tags, dense):
@@ -164,10 +166,10 @@ class Net:
         deg.update(self.b)
         for n, d in deg.items():
             if d >= 3:
-                dens[((self.x[n] - OX) // EDGE_GRID, (self.y[n] - OY) // EDGE_GRID)] += 1
+                dens[((self.x[n] - OX) // DENSITY_CELL, (self.y[n] - OY) // DENSITY_CELL)] += 1
         for s, (tags, direction) in enumerate(self.cls):
             n = self.a[s]
-            dense = dens[((self.x[n] - OX) // EDGE_GRID, (self.y[n] - OY) // EDGE_GRID)] >= URBAN_NODES
+            dense = dens[((self.x[n] - OX) // DENSITY_CELL, (self.y[n] - OY) // DENSITY_CELL)] >= URBAN_NODES
             urban = is_urban(tags, dense)
             self.urban.append(urban)
             self.cls[s] = class_code(tags, direction, urban)
@@ -244,7 +246,7 @@ class Level:
         self.num, self.table, self.max_group = num, table, max_group
         self.cell, self.max_size, self.min_size = cell, max_size, min_size
         self.detail, self.budget = detail, budget
-        self.leaves = {}          # (x0, y0, size) -> Tile build record
+        self.leaves = {}          # (x0, y0, w, h) -> Tile build record
         self.cells = {}           # (cx, cy) -> list of leaf keys
 
 
@@ -282,82 +284,118 @@ def cells_on_line(x1, y1, x2, y2, m):
     return out
 
 
-def make_tiles(lines, lv, cover=()):
-    """Quadtree leaves for a level from the weight of each polyline's points.
+# Tiles are split the way the factory splits them: a square into two halves stacked one
+# above the other (each twice as wide as tall), and such a half into two squares side by
+# side. Every factory tile is a square or a 2:1 rectangle aligned to its own short side
+# (7,220 squares, 2,378 rectangles); four-way splits made twice as many, half-full tiles.
+# A tile is (x0, y0, w, h).
+
+def halves(rect):
+    x0, y0, w, h = rect
+    if w == h:
+        return (x0, y0, w, h // 2), (x0, y0 + h // 2, w, h // 2)
+    return (x0, y0, w // 2, h), (x0 + w // 2, y0, w // 2, h)
+
+
+def can_split(rect, min_size):
+    """The smallest tile is min_size wide and min_size / 2 tall."""
+    _x0, _y0, w, h = rect
+    return h >= min_size if w == h else w // 2 >= min_size
+
+
+# The factory's largest counts per tile (tools/carin_envelope.py): shape points 1,532 on
+# the street level, 494-702 on levels 1-3; places (suburb records) 12 including the blank
+# and the fence, so 10 real ones.
+SHAPE_CAP = {6: 1500, 3: 690, 2: 690, 1: 490}
+PLACE_CAP = 10
+
+
+def make_tiles(lines, lv, cover=(), places=None):
+    """KD-tree leaves for a level from the weight of each polyline's points.
     cover: extra points that must fall inside some leaf even with no roads there (the
     centres of the finer level's tiles, so every finer tile has a parent, as on the
     factory disc)."""
-    pts = collections.defaultdict(float)     # (x // min, y // min) -> weight
-    m = lv.min_size
+    pts = collections.defaultdict(float)     # (x // m, y // m) -> weight
+    shp = collections.Counter()              # shape points per cell
+    plc = collections.defaultdict(set)       # place ids per cell (street level)
+    m = lv.min_size // 2                     # the smallest tile's short side
     for x, y in cover:
         pts[((x - OX) // m, (y - OY) // m)] += 0.001
-    base = (32 + 20 + 24) if lv.detail else (26 + 20)
-    for allp in lines:
+    # calibrated on the Victoria build: about 50 bytes a road on the street level
+    # (record, node, name entries), 38 on overview levels, 6 a shape point
+    base = 52 if lv.detail else 38
+    lines = list(lines)
+    for li, allp in enumerate(lines):
         w = (base + 6 * (len(allp) - 2)) / len(allp)
         for x, y in allp:
             pts[((x - OX) // m, (y - OY) // m)] += w
+        for x, y in allp[1:-1]:
+            shp[((x - OX) // m, (y - OY) // m)] += 1
+        if places is not None and places[li] is not None:
+            x, y = allp[len(allp) // 2]
+            plc[((x - OX) // m, (y - OY) // m)].add(places[li])
         # every cell a road passes over must end up inside a tile
         for (x1, y1), (x2, y2) in zip(allp, allp[1:]):
             for cell in cells_on_line(x1 - OX, y1 - OY, x2 - OX, y2 - OY, m):
                 pts[cell] += 0.001
-    # aggregate upward
-    def weight(x0, y0, size):
-        n = size // m
-        gx, gy = (x0 - OX) // m, (y0 - OY) // m
-        if n == 1:
-            return pts.get((gx, gy), 0.0)
-        return sum(v for (i, j), v in pts.items() if gx <= i < gx + n and gy <= j < gy + n)
 
     by_top = collections.defaultdict(dict)
+    k = lv.max_size // m
     for (i, j), v in pts.items():
-        k = lv.max_size // m
         by_top[(i // k, j // k)][(i, j)] = v
 
     leaves = []
 
-    def split(x0, y0, size, cellpts):
-        tot = sum(cellpts.values())
-        if tot == 0:
+    shape_cap = SHAPE_CAP.get(lv.num, 1500)
+
+    def fits(cellpts):
+        if sum(cellpts.values()) > lv.budget:
+            return False
+        if sum(shp.get(c, 0) for c in cellpts) > shape_cap:
+            return False
+        if places is not None:
+            seen = set()
+            for c in cellpts:
+                seen |= plc.get(c, set())
+                if len(seen) > PLACE_CAP:
+                    return False
+        return True
+
+    def split(rect, cellpts):
+        if not cellpts:
             return
-        if tot <= lv.budget or size <= m:
-            leaves.append((x0, y0, size))
+        if fits(cellpts) or not can_split(rect, lv.min_size):
+            leaves.append(rect)
             return
-        h = size // 2
-        for dx in (0, h):
-            for dy in (0, h):
-                gx, gy = (x0 + dx - OX) // m, (y0 + dy - OY) // m
-                n = h // m
-                sub = {k: v for k, v in cellpts.items() if gx <= k[0] < gx + n and gy <= k[1] < gy + n}
-                split(x0 + dx, y0 + dy, h, sub)
+        for half in halves(rect):
+            hx, hy, hw, hh = half
+            gx, gy = (hx - OX) // m, (hy - OY) // m
+            nx, ny = hw // m, hh // m
+            sub = {c: v for c, v in cellpts.items() if gx <= c[0] < gx + nx and gy <= c[1] < gy + ny}
+            split(half, sub)
 
     for (ti, tj), cellpts in by_top.items():
-        split(OX + ti * lv.max_size, OY + tj * lv.max_size, lv.max_size, cellpts)
-    del weight
+        split((OX + ti * lv.max_size, OY + tj * lv.max_size, lv.max_size, lv.max_size), cellpts)
     return leaves
 
 
 class Locator:
-    """Point -> leaf tile key, for one level's leaves (a partition of the covered area)."""
+    """Point -> leaf tile, for one level's leaves (a partition of the covered area)."""
 
     def __init__(self, leaves, max_size, min_size):
         self.max, self.min = max_size, min_size
-        self.top = {}
-        for x0, y0, size in leaves:
-            self.top.setdefault(((x0 - OX) // max_size, (y0 - OY) // max_size), {})[(x0, y0, size)] = 1
         self.leaves = set(leaves)
 
     def find(self, x, y):
         ti, tj = (x - OX) // self.max, (y - OY) // self.max
-        size = self.max
-        x0, y0 = OX + ti * size, OY + tj * size
-        while size >= self.min:
-            k = (x0, y0, size)
-            if k in self.leaves:
-                return k
-            size //= 2
-            x0 += size if x - x0 >= size else 0
-            y0 += size if y - y0 >= size else 0
-        return None
+        rect = (OX + ti * self.max, OY + tj * self.max, self.max, self.max)
+        while True:
+            if rect in self.leaves:
+                return rect
+            if not can_split(rect, self.min):
+                return None
+            a, b = halves(rect)
+            rect = a if (a[0] <= x < a[0] + a[2] and a[1] <= y < a[1] + a[3]) else b
 
 
 def clip(points, loc):
@@ -369,8 +407,8 @@ def clip(points, loc):
     for q in points[1:]:
         p = piece[-1]
         while True:
-            x0, y0, s = cur
-            x1, y1 = x0 + s, y0 + s
+            x0, y0, w, h = cur
+            x1, y1 = x0 + w, y0 + h
             if x0 <= q[0] < x1 and y0 <= q[1] < y1:
                 piece.append(q)
                 break
@@ -386,8 +424,8 @@ def clip(points, loc):
                 t = min(t, (y0 - p[1]) / dy)
             cx, cy = p[0] + dx * t, p[1] + dy * t
             # snap: the axis that hit the edge is exact, the other to the 64 grid
-            ex = x1 if dx > 0 and abs(cx - x1) < 1e-6 * s + 1 else x0 if dx < 0 and abs(cx - x0) < 1e-6 * s + 1 else None
-            ey = y1 if dy > 0 and abs(cy - y1) < 1e-6 * s + 1 else y0 if dy < 0 and abs(cy - y0) < 1e-6 * s + 1 else None
+            ex = x1 if dx > 0 and abs(cx - x1) < 1e-6 * w + 1 else x0 if dx < 0 and abs(cx - x0) < 1e-6 * w + 1 else None
+            ey = y1 if dy > 0 and abs(cy - y1) < 1e-6 * h + 1 else y0 if dy < 0 and abs(cy - y0) < 1e-6 * h + 1 else None
             cx = ex if ex is not None else OX + Q * round((cx - OX) / Q)
             cy = ey if ey is not None else OY + Q * round((cy - OY) / Q)
             cx = min(max(cx, x0), x1)

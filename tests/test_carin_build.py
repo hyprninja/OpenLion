@@ -45,6 +45,29 @@ def tiny_net():
     return net
 
 
+class Tiling(unittest.TestCase):
+    def test_factory_split_shapes(self):
+        # a square splits into two wide halves, a wide half into two squares
+        sq = (cn.OX, cn.OY, 0x30000, 0x30000)
+        a, b = cn.halves(sq)
+        self.assertEqual(a, (cn.OX, cn.OY, 0x30000, 0x18000))
+        self.assertEqual(b, (cn.OX, cn.OY + 0x18000, 0x30000, 0x18000))
+        self.assertEqual(cn.halves(a), ((cn.OX, cn.OY, 0x18000, 0x18000),
+                                        (cn.OX + 0x18000, cn.OY, 0x18000, 0x18000)))
+        # the smallest street-level tile is 0xC000 x 0x6000
+        self.assertTrue(cn.can_split((cn.OX, cn.OY, 0xC000, 0xC000), 0xC000))
+        self.assertFalse(cn.can_split((cn.OX, cn.OY, 0xC000, 0x6000), 0xC000))
+
+    def test_locator_finds_rectangles(self):
+        top = (cn.OX, cn.OY, 0x180000, 0x180000)
+        lower, upper = cn.halves(top)
+        left, right = cn.halves(lower)
+        loc = cn.Locator([left, right, upper], 0x180000, 0xC000)
+        self.assertEqual(loc.find(cn.OX + 10, cn.OY + 10), left)
+        self.assertEqual(loc.find(cn.OX + 0x100000, cn.OY + 10), right)
+        self.assertEqual(loc.find(cn.OX + 10, cn.OY + 0x100000), upper)
+
+
 class Clip(unittest.TestCase):
     def test_cells_on_line(self):
         self.assertEqual(cn.cells_on_line(10, 10, 20, 20, 100), [(0, 0)])
@@ -52,7 +75,7 @@ class Clip(unittest.TestCase):
         self.assertEqual(cells, [(0, 0), (1, 0), (2, 0)])
 
     def test_clip_two_tiles(self):
-        leaves = [(cn.OX, cn.OY, T), (cn.OX + T, cn.OY, T)]
+        leaves = [(cn.OX, cn.OY, T, T), (cn.OX + T, cn.OY, T, T)]
         loc = cn.Locator(leaves, 0x180000, T)
         pts = [P(100, 100), P(1000, 120)]
         pcs = cn.clip(pts, loc)
@@ -152,7 +175,7 @@ class Chains(unittest.TestCase):
 class Grid(unittest.TestCase):
     def test_cell_unit(self):
         cell = 0x180000
-        tiles = [(6, (cn.OX, cn.OY, T)), (6, (cn.OX + T, cn.OY, T))]
+        tiles = [(6, (cn.OX, cn.OY, T, T)), (6, (cn.OX + T, cn.OY, T, T))]
         grids, cells = cb.make_grid(6, cell, tiles)
         self.assertEqual(sum(len(g.keys) for g in grids), 256 * 256)
         cu = [c for c in cells if c.key[2] == (0, 0)][0]

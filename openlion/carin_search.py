@@ -86,7 +86,9 @@ class TrieWriter:
         self.units = []
 
     def _unit_for(self, n):
-        if not self.units or len(self.units[-1].entries) + n > TRIE_UNIT_ENTRIES:
+        # factory unit sizes: 0x0F up to 32 KB (2,725 entries), 0x11 up to 24 KB
+        cap = 2040 if self.table == 0x11 else TRIE_UNIT_ENTRIES
+        if not self.units or len(self.units[-1].entries) + n > cap:
             self.units.append(TrieUnit((self.prefix, len(self.units)), self.table))
         return self.units[-1]
 
@@ -215,7 +217,7 @@ def collect(net, tiles):
         if not rec.level.detail:
             continue
         rs = ct.road_size(True)
-        x0, y0, _s = key[1]
+        x0, y0, _w, _h = key[1]
         prev, start = None, 0
         order = rec.pieces + [None]
         for i, p in enumerate(order):

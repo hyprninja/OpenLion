@@ -287,6 +287,8 @@ Disc F (`discF_melbourne_child_fix.iso`) is disc E with these four fixes: `carin
 
 ## Disc E refused: what separates refused discs from loading ones
 
+*Superseded: disc G, built to this section's rule, was refused. The stored-grid rule below is wrong; see [Disc G refused](#disc-g-refused-the-stored-grid-rule-is-wrong).*
+
 E (Melbourne, zlib street-level tiles) was refused like D, so D's large stored tiles were not the cause. Every tested disc was then scored on a dozen properties against its outcome (`/tmp` analysis, reproduced here):
 
 | Property | Refused: 3, B, D, E | Loaded: 1, 2, 5, 6, 7, 10, 11, 12, A, C |
@@ -301,7 +303,7 @@ This explains B without the saved-destination theory, which stays untested.
 
 Disc G (`discG_melbourne_zlib_grids.iso`) is F with zlib grids; its only stored grids are the factory's own, unchanged, at their factory addresses (POI and background), as on every disc that loaded. `carin_check` clean, tile validator 0 errors, search walk 612,254 road links with 0 errors. F was withdrawn before burning.
 
-**Saved-destination theory: ruled out.** B and D were retried after cancelling guidance and clearing the destination with the original disc; both were still refused. The stored-grid rule above is the only explanation left that covers B, D and E.
+**Saved-destination theory: ruled out.** B and D were retried after cancelling guidance and clearing the destination with the original disc; both were still refused. The stored-grid rule above was then the only explanation left that covered B, D and E; G's refusal has since removed it too.
 
 ## Fitting the map: state discs
 
@@ -347,4 +349,78 @@ Also from the review:
 - `assemble` now refuses any unit we write that unpacks to more than 32 KB (the factory's ceiling for its road, search and POI tables; its background tables have zlib units up to 45 KB, kept as they are). A street-search unit at 34 KB tripped it: index leaves are now split by size as well as count (`make_trie(..., weight, max_weight)`).
 
 Rebuilt H (`discH_victoria_osm_pois.iso`): root byte-identical to the factory's; all five grids at factory addresses, slots and codec; nothing we write over 32 KB; largest POI tile 850 records; nothing past the licensing block; `carin_check` 0 problems; tile validator 0 errors; search walk 339,660 streets, 1,334,408 road links, 0 errors; POI walk 91,556 POIs reachable on the map and 91,410 through place search, 0 errors.
+
+
+## Disc G refused: the stored-grid rule is wrong
+
+G (Melbourne, every fix, zlib grids) answered **"Wrong or defected media"**, like D and E. Its street-level grid is eleven one-page zlib units, the same shape as on discs 5 and 7, which loaded. So how a grid is stored never separated D and E from the discs that load, and "grid units are always zlib" was a rule fitted to four refusals that failed its first prediction. The cause of B, D, E and G is **not known**.
+
+What the images do show. G against the two loading discs closest to it:
+
+| | Disc 7 (loads) | Disc 12 (loads) | D, E, G (refused) |
+|---|---|---|---|
+| Coverage | Melbourne | all of Australia | Melbourne |
+| Layout | tiles first | grids and cells first | grids and cells first |
+| Level-1 grid (root entry 2) | `0xD14A00` | `0x1200` | `0x1200` |
+| Level-2 grid (entry 3) | `0xD15200` | `0x18800` | `0x2A00` (D, E), `0x1A00` (G) |
+| Level-3 grid (entry 4) | `0xD15E00` | `0x64C00` | `0x7600`, `0x2600` |
+| Street-level grid (entry 0) | `0xD16C00` | `0xB1600` | `0xC400`, `0x3400` |
+| Factory 0x04 block (`0x4609C00`-`0x4A9FA00`) | kept | overwritten by new tiles | 0x05 filler |
+| Factory POI layer | kept | kept | kept |
+| Builder | before 2fff264 | 26b5b21 | 26b5b21 plus stored grids (D, E); 5683102 (G) |
+
+D is disc 12's builder with two differences, stored grids and the Melbourne bounding box, and G shows the first isn't needed for a refusal. Three properties are shared by D, E and G and by no disc that loaded:
+
+1. **Street-level, level-2 and level-3 grids inside the first 64 KB.** A small build laid out start-up units first puts every grid there. Disc 12 has only its level-1 grid that low. Where the limit would be isn't known: between `0x2A00` and `0x18800` for level 2, `0xC400` and `0xB1600` for street level.
+2. **The 0x04 block replaced by filler while the factory POIs are kept.** Disc 5 has filler there too, but no POI layer, and loaded. Nothing in the kept data points into the block: on the factory, 0x04 units are addressed only from street-level tiles (header 0x54), not from the POI tables, the background block or the header units. So there is no known way for the unit to reach it.
+3. **Melbourne-only content from the newer builder.** Disc 7 is Melbourne-only from the older builder; disc 12 is national from the newer one.
+
+None of these covers B (the factory disc, street-level grid copied over the first 239 units of the 0x04 block). Only 2 comes near it, and 2 has no mechanism.
+
+**Still not a protection question.** The licensing tables (0x1F-0x28) were dumped again for this: the only unit addresses in them are the chain's own (0x1F lists the other tables, 0x25 points at 0x26). They name products and areas by code (`0x0D` Australia, `0x3B4`-`0x3BB` the states) and hold no address of, or digest over, any map unit. Every refused image keeps them, `DAYTON` and `TPD/` byte for byte.
+
+**An untested confound: the unit's own state.** Discs 7, 10, 11 and 12 each went in after a mains power pull, because the disc before had hard-locked the unit. B, D, E and G each went in straight after a working disc; the retest procedure even asks for the original to be loaded first. Two checks need no new disc:
+- put disc 7 or 12 back in: if it no longer loads, the unit or drive changed, not the discs;
+- pull power, then insert G cold.
+
+**Where the rebuilt H stands.** It avoids all three properties and B's: every grid is at its factory address (tens of MB into the file, root byte-identical), it carries no factory POIs, and its coarse levels are national. That is avoidance, not an explanation, so its result is read like this:
+
+| H | Meaning |
+|---|---|
+| loads, street level draws | grid placement was the fault all along |
+| loads, nothing below 1 km | the rebuilt street-level tiles are at fault, not the grids |
+| refused | not grid placement: build the walk below |
+
+**If H is refused: one change at a time from disc 7 to G.** Disc 7 loads and G doesn't, and they differ in layout, the 0x04 block and the fixes since 7:
+- G laid out tiles first, so its grids sit deep in the file (tests 1);
+- G with the 0x04 block kept (tests 2);
+- G with both, which is disc 7's shape with every fix (tests 3, and is the first fair test of street level on a Melbourne build).
+
+Residual differences between the rebuilt H and the factory layout, none known to matter: each grid sits after its cells instead of before them (only B and 11 had that), tiles are packed around the pinned grids where the factory keeps cells, and the rebuilt POI index (0x11) has units of 32 KB where the factory's stop at 24 KB.
+
+## Disc H in the car, and building inside the factory's envelope
+
+**H loaded** with no error and showed Navigation and Map (B, D, E and G never got that far), **but opening Map gave a media error** and both menus disappeared. Opening the map is the first time the unit reads our street-level cells and tiles (on 7, 10 and 12 the multi-unit street grid was out of place, so street level was never reached; their single-unit coarse grids were, and coarse roads drew) and our POI layer (every earlier disc had none or the factory's).
+
+Comparing what the unit reads there with the factory found two definite differences:
+- **POIs inside a POI tile are sorted x then y** on the factory (all 440 tiles with 3+ POIs); H sorted y then x.
+- **Tiles per grid cell.** The street cell under Hoppers Crossing held 414 tiles on H; the factory has 75 there and never more than 267 in any cell (the Melbourne CBD). Part of the reason: a quarter of factory tiles are **2:1 rectangles**. The factory splits a square into two wide halves and a half into two squares (smallest 0xC000 × 0x6000); my four-way split made twice as many tiles, each a quarter to fully used.
+
+`tools/carin_envelope.py FACTORY.iso BUILT.iso` now measures a build against the factory's own maxima (tiles per grid cell per layer; places, roads, shape points, neighbours and names per tile; POIs per tile and their order; POI tiles per cell; unpacked unit size per table; tile shapes) and exits 1 when anything is over.
+
+Changes, all in disc I:
+
+| Change | Detail |
+|---|---|
+| Factory tile shapes | KD splits: square → two wide halves → squares (`carin_net.halves`, `can_split`); tiles are `(x0, y0, w, h)` throughout; cell sub-grids down to cell / 64 as on the factory |
+| Calibrated size estimate | about 52 bytes a street road, 38 an overview road, 6 a shape point; street budget 23,000 (largest tile 23.8 KB, factory 24.6 KB) |
+| Shape points and places per tile | tiles also split when they'd pass the factory's shape-point maxima (1,500 street; 690/690/490 levels 3/2/1) or 10 suburbs; a smallest tile still over 10 suburbs keeps its 10 busiest (streets of the others show no suburb there; search is unaffected) |
+| Crowded grid cells | a street cell over 267 tiles is thinned in steps (shapes to 2.6 m, then 5.2 m, then no unnamed local roads, in that cell only) |
+| POI tiles | split the same way, sorted x then y, at most 850 POIs a tile and 25 tiles a cell; where a cell can't hold everything the least useful categories go (7,038 on the Victoria disc, nearly all shops in the densest cells) |
+| POI index units | at most 24 KB (2,040 entries), the factory's largest |
+| Search leaves | split by size as well as count |
+
+Disc I (`discI_victoria_factory_shaped.iso`) against the factory envelope: inside on every measure except the **Melbourne CBD street cell (296 tiles vs 267**: it holds 9% more data than the factory's same cell, and closing the gap would mean tiles bigger than any factory street tile or dropping named streets), **level-3 neighbours per tile (10 vs 8)**, **level-3 tiles in one cell (62 vs 61)** and **the place trie unit (4.6 KB vs 1.5 KB)**, a single unit read only when searching. Around Hoppers Crossing every measure is inside (205 tiles in the home cell). Not measured by the gate: more coarse tiles without a parent than the factory (27% of level-3 tiles against 1.7%), since levels 1 and 2 carry fewer roads than the factory's.
+
+Checks: root, background and licensing byte-identical to the factory, same file size, nothing past the licensing block; `carin_check` 0 problems; tile validator 0 errors; search walk 339,668 streets, 1,301,621 road links, 0 errors; POI walk 85,600 POIs on the map, 85,455 through place search, 0 errors.
 

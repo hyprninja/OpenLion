@@ -299,42 +299,55 @@ class PoiTile:
         return 0x20 + 28 * len(self.pois)
 
     def logical(self, addr, unit_header):
-        x0, y0, s = self.rect
+        x0, y0, w, h = self.rect
         out = bytearray(unit_header) + struct.pack(">HHI", 0x20, len(self.pois), 0)
-        out += struct.pack(">iiii", x0, y0, x0 + s, y0 + s)
+        out += struct.pack(">iiii", x0, y0, x0 + w, y0 + h)
         for p in self.pois:
             out += struct.pack(">IHHHH", addr(p.s0_unit), p.s0_off, (p.x - x0) // cn.Q, (p.y - y0) // cn.Q, p.cat)
             out += bytes(16)            # 28-byte record
         return bytes(out)
 
 
+POI_TILES_PER_CELL = 25        # the factory's busiest POI grid cell
+
+
 def make_tiles(pois, cell, min_size):
-    """Quadtree POI tiles inside each grid cell, at most POI_RECORDS_PER_TILE each."""
+    """POI tiles inside each grid cell, split like the road tiles (a square into two wide
+    halves, a half into two squares), at most POI_RECORDS_PER_TILE each and at most
+    POI_TILES_PER_CELL per cell. Where that can't hold everything, the least useful
+    categories are thinned first. Returns (tiles, thinned POIs)."""
+    rank = {c: i for i, c in enumerate(PRIORITY)}
     by_cell = collections.defaultdict(list)
     for p in pois:
         by_cell[((p.x - cn.OX) // cell, (p.y - cn.OY) // cell)].append(p)
-    tiles = []
+    tiles, dropped = [], []
 
-    dropped = []
-
-    def split(x0, y0, s, ps):
-        if len(ps) <= POI_RECORDS_PER_TILE or s <= min_size:
+    def split(rect, ps, out, over):
+        if len(ps) <= POI_RECORDS_PER_TILE or not cn.can_split(rect, min_size):
             if len(ps) > POI_RECORDS_PER_TILE:       # can't split further: thin it
-                rank = {c: i for i, c in enumerate(PRIORITY)}
                 ps = sorted(ps, key=lambda p: (rank.get(p.cat, len(PRIORITY)), p.name))
-                dropped.extend(ps[POI_RECORDS_PER_TILE:])
+                over.extend(ps[POI_RECORDS_PER_TILE:])
                 ps = ps[:POI_RECORDS_PER_TILE]
-            t = PoiTile((x0, y0, s))
-            t.pois = sorted(ps, key=lambda p: (p.y, p.x))
-            tiles.append(t)
+            t = PoiTile(rect)
+            t.pois = sorted(ps, key=lambda p: (p.x, p.y))     # x then y, as every factory tile
+            out.append(t)
             return
-        h = s // 2
-        for dx in (0, h):
-            for dy in (0, h):
-                sub = [p for p in ps if x0 + dx <= p.x < x0 + dx + h and y0 + dy <= p.y < y0 + dy + h]
-                if sub:
-                    split(x0 + dx, y0 + dy, h, sub)
+        for half in cn.halves(rect):
+            hx, hy, hw, hh = half
+            sub = [p for p in ps if hx <= p.x < hx + hw and hy <= p.y < hy + hh]
+            if sub:
+                split(half, sub, out, over)
 
     for (cx, cy), ps in by_cell.items():
-        split(cn.OX + cx * cell, cn.OY + cy * cell, cell, ps)
-    return tiles, dropped
+        rect = (cn.OX + cx * cell, cn.OY + cy * cell, cell, cell)
+        ps = sorted(ps, key=lambda p: (rank.get(p.cat, len(PRIORITY)), p.name))
+        while True:
+            out, over = [], []
+            split(rect, ps, out, over)
+            if len(out) <= POI_TILES_PER_CELL:
+                break
+            ps = ps[:int(len(ps) * 0.9)]          # least useful categories go first
+        dropped.extend(set(map(id, by_cell[(cx, cy)])) - set(map(id, (p for t in out for p in t.pois))))
+        tiles.extend(out)
+    gone = set(dropped)
+    return tiles, [p for p in pois if id(p) in gone]
