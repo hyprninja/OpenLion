@@ -72,6 +72,17 @@ STAGES = [
 assert [s for s, _, _ in STAGES][:len(pipeline.STAGES)] == list(pipeline.STAGES)
 
 CACHE_KEY = "cache_key.json"
+
+
+def engine_release():
+    """The release a packaged engine was built as ("1.6.1+<commit>"), stamped into
+    openlion/_release.py by packaging/build-release.ps1 and build-mac.sh; None when
+    running from a source checkout."""
+    try:
+        from ._release import RELEASE
+    except ImportError:
+        return None
+    return RELEASE or None
 AU_EXTRACT_BYTES = 972_670_217    # the extract the stage times were measured with
 
 
@@ -109,8 +120,14 @@ def fingerprint(path, size, span=1 << 20):
 
 def reset_cache(inputs, work, bbox, addresses=None):
     """The pipeline caches OSM reads as pickles in work/. Throw them away when an extract,
-    the set of countries or the area changes, so a new download is never mixed with an old one."""
+    the set of countries or the area changes, so a new download is never mixed with an old one.
+    A packaged engine also keys them on its release: another version, older or newer, may read
+    differently or pickle different classes, so it always reads again (1.4 run after 1.6 crashed
+    loading 1.6's boundaries). A source checkout keeps its cache across code edits."""
     key = {"extracts": [], "bbox": list(bbox) if bbox else None}
+    release = engine_release()
+    if release:
+        key["engine"] = release
     if addresses:          # a new G-NAF release must not reuse the old one's read
         st = os.stat(addresses)
         key["addresses"] = {"size": st.st_size, "mtime": int(st.st_mtime),

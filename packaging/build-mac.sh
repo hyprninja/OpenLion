@@ -67,6 +67,12 @@ cp "$REPO"/openlion/*.py "$ENGINE/openlion/"
 cp "$REPO"/tests/*.py "$ENGINE/tests/"
 cp "$REPO/docs/reference/manifest_sha256.tsv" "$ENGINE/docs/reference/"
 cp "$REPO/LICENSE" "$APP/Contents/Resources/LICENSE.txt"
+# The engine's release: its OSM read cache is keyed on it, so another version never loads it
+# (make_card.engine_release). Version + commit, so two builds of one version differ too.
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Not a version: '$VERSION'" >&2; exit 1; }
+COMMIT="$(git -C "$REPO" rev-parse --short=12 HEAD 2>/dev/null || true)"
+[[ "$COMMIT" =~ ^[0-9a-f]+$ ]] && RELEASE="$VERSION+$COMMIT" || RELEASE="$VERSION"
+printf 'RELEASE = "%s"\n' "$RELEASE" > "$ENGINE/openlion/_release.py"
 
 echo "== Icon"
 ICONSET="$OUT/cache/OpenLion.iconset"
@@ -101,7 +107,7 @@ PLIST
 
 echo "== Smoke test of the bundled engine"
 (cd "$TMPDIR" && PYTHONPATH="$ENGINE" PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "$PY" -X utf8 -c \
-    "import osmium, sqlite3, zlib, openlion.make_card, openlion.compat, openlion.memory as m; import importlib.metadata as md; print('engine ok, osmium', md.version('osmium'), '-', m.gb(m.total()), 'installed')")
+    "import osmium, sqlite3, zlib, openlion.make_card, openlion.compat, openlion.memory as m; import importlib.metadata as md; r = openlion.make_card.engine_release(); assert r, 'engine release not stamped'; print('engine', r, 'ok, osmium', md.version('osmium'), '-', m.gb(m.total()), 'installed')")
 
 echo "== Signing (ad hoc: runs on this Mac; not notarized)"
 xattr -cr "$APP"

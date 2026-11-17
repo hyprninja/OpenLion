@@ -68,11 +68,17 @@ Copy-Item (Join-Path $repo "openlion\*.py") "$engine\openlion"
 Copy-Item (Join-Path $repo "tests\*.py") "$engine\tests"
 Copy-Item (Join-Path $repo "docs\reference\manifest_sha256.tsv") "$engine\docs\reference"
 Copy-Item (Join-Path $repo "LICENSE") (Join-Path $stage "LICENSE.txt")
+# The engine's release: its OSM read cache is keyed on it, so another version never loads it
+# (make_card.engine_release). Version + commit, so two builds of one version differ too.
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Not a version: '$Version'" }
+$commit = try { (git -C $repo rev-parse --short=12 HEAD).Trim() } catch { "" }
+$release = if ($commit -match '^[0-9a-f]+$') { "$Version+$commit" } else { $Version }
+Set-Content (Join-Path $engine "openlion\_release.py") -Encoding ascii -Value "RELEASE = `"$release`""
 
 Write-Host "== Smoke test of the bundled engine"
 Push-Location $env:TEMP
 try {
-    & (Join-Path $py "python.exe") -X utf8 -c "import osmium, sqlite3, zlib, openlion.make_card, openlion.compat; import importlib.metadata as m; print('engine ok, osmium', m.version('osmium'), osmium.__file__)"
+    & (Join-Path $py "python.exe") -X utf8 -c "import osmium, sqlite3, zlib, openlion.make_card, openlion.compat; import importlib.metadata as m; r = openlion.make_card.engine_release(); assert r, 'engine release not stamped'; print('engine', r, 'ok, osmium', m.version('osmium'), osmium.__file__)"
 } finally { Pop-Location }
 
 Write-Host "== MSI"

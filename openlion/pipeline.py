@@ -155,8 +155,11 @@ def run(pbf, db, out, bbox=None, lookups=(), stage=None, memory_mode=None, speed
 
 
 # OSM reads, each cached per country as <name>_<CODE>.pickle. Bump a name when the
-# reader's output format changes so stale caches are never loaded.
-READS = ("roads2", "boundaries3", "places3", "fea2", "pois2", "cams1", "addr1", "alerts2")
+# reader's output format changes so stale caches are never loaded (boundaries4: Area
+# gained `town` in 1.5 without a bump, so 1.4 crashed on 1.5/1.6 caches). An installed
+# engine also keys the cache on its release (make_card.reset_cache), so a missed bump
+# only bites developer runs.
+READS = ("roads2", "boundaries4", "places3", "fea2", "pois2", "cams1", "addr1", "alerts2")
 GNAF = "gnaf1"                       # the G-NAF read (Australia only), when asked for
 CACHES = READS + ("overview2", GNAF)  # overview2: written alongside roads2
 
@@ -166,7 +169,7 @@ def _read(name, code, path, region, node_index):
     if name == "roads2":
         # only what lies on the map (the AU extract has Heard Island, NZ's the Chathams)
         return osm_import.read(path, region, node_index=node_index)
-    if name == "boundaries3":
+    if name == "boundaries4":
         return osm_names.read_boundaries(path, region, cn.boundary_levels, cn.catalog, node_index=node_index)
     if name == "places3":
         if cn.localities != "places":
@@ -261,7 +264,7 @@ class _Ctx:
     def localities(self):
         """Every country's boundary areas and place points, plus LINZ's NZ suburbs."""
         areas, places = [], []
-        for cn, a in self.per_country("boundaries3"):
+        for cn, a in self.per_country("boundaries4"):
             areas += a
         for cn, (a, pts) in self.per_country("places3"):
             areas += a
@@ -447,7 +450,7 @@ def _place_cameras(ctx, c):
     """Speed cameras (cameras.py) for the POI stage, while the roads are still loaded:
     each camera is snapped onto its road for heading and speed limit."""
     areas = []
-    for cn, a in ctx.per_country("boundaries3"):
+    for cn, a in ctx.per_country("boundaries4"):
         areas += [x for x in a if x.level == 4]
     st_idx = osm_names.AreaIndex(areas, cell=50000)
     osm = {cn.code: cams for cn, cams in ctx.per_country("cams1")}
@@ -468,7 +471,7 @@ ALERTS_REPORT = "alerts_report.json"
 def _place_alerts(ctx, c):
     """School zones and level crossings (alerts.py) for the POI stage, placed on the roads."""
     areas = []
-    for cn, a in ctx.per_country("boundaries3"):
+    for cn, a in ctx.per_country("boundaries4"):
         areas += [x for x in a if x.level == 4]
     st_idx = osm_names.AreaIndex(areas, cell=50000)
     osm = {cn.code: r for cn, r in ctx.per_country("alerts2")}
