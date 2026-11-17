@@ -251,9 +251,18 @@ Read-only; nothing was changed. This replaces the guesses in `FACTORY VS DISC J.
 Every rule below was measured on the original first, then tested on J.
 
 **Short answer: no.** Apart from the new roads, POIs and missing house numbers, disc J
-breaks at least 14 rules that the original follows without exception (section 2). On
-top of that, a set of fields hasn't been decoded yet (section 4). Until they are, nobody
-can say J is right.
+breaks 12 rules that the original follows (section 2). On top of that, a set of fields
+hasn't been decoded yet (section 4). Until they are, nobody can say J is right.
+
+**Update 18 Nov 2026.** Codec 0x0E is now decoded (doc 33), so the rules below were
+re-checked on all 6,454 original street tiles, not just the 504 readable ones:
+- Three "rules" were artefacts of the small sample and are withdrawn. On the full disc:
+  - two nodes share a position in 1,345 places;
+  - 153 edge nodes sit on tile corners;
+  - junctions reach 8 roads.
+  So J's 46 corner nodes and 8-road junction are within the original's range, and
+  2.5 now covers zero-length roads only.
+- Every other rule held on the town tiles, with the counts given in the table.
 
 ### What the original could be checked against
 
@@ -263,14 +272,11 @@ can say J is right.
 - 742 of the 2,555 street-search units (0x0E) also use the 0x0E codec, so 91,886
   street-trie leaves on the original couldn't be read. Every one that could be read
   follows the rules in section 1.
-- At street level, 5,950 of the original's 6,454 tiles use the 0x0E codec. That codec
-  isn't decoded: it's a field-by-field packing, not a general compressor.
-  - Their headers are plain and were checked for all 6,454.
-  - Their contents could only be checked on the 504 decodable street tiles, mostly
-    rural.
-- Every street-level rule below held in all 504 decodable tiles and in all 3,144
-  zoomed-out tiles. Being certain about town street tiles needs the 0x0E codec decoded.
-- "Original: 100%" means no exception in everything decodable.
+- At street level, 5,950 of the original's 6,454 tiles use the 0x0E codec, decoded
+  since 18 Nov (doc 33).
+  - Each one unpacks to plain bytes that round-trip through `carin_tile`.
+  - `tools/carin_research/check_plain.py` runs the street rules over them.
+- "Original: 100%" means no exception anywhere on the disc.
 
 ### 1. Rules J follows exactly (verified)
 
@@ -294,30 +300,38 @@ can say J is right.
 
 | # | Rule on the original | Original | J |
 |---|---|---|---|
-| 2.1 | **A road's start node (A) is west of its end node (B)**: x, then y | 228,703 of 228,703 roads, every level | **451,171 of 949,368 roads (47.5%) run east to west** |
-| 2.2 | **Roads at a junction are listed clockwise** (direction to the first shape point) | street 497/497; levels 1-3 99.4-99.7% (the rest are near-ties) | **street 41%, levels 1-3 47-52%** (it's simply storage order) |
-| 2.3 | **A junction's list starts at the first road clockwise from north** | street 907/910; levels 1-3 93% | **36-38%** (J always starts at the lowest-numbered road) |
-| 2.4 | **Nodes within a group are sorted by x, then y** | 3,648 of 3,648 tiles | **broken in 5,318 street tiles and 2,453 zoomed-out tiles** (J uses the order nodes were met) |
-| 2.5 | No road has both ends at one point; no two nodes share a position | 0 | **679 zero-length roads; 691 tiles with two nodes at one position** |
-| 2.6 | No edge node on a tile corner | 0 of 24,572 | **46** |
-| 2.7 | At most 5 roads at a street junction, 6 on levels 1-3 | max 5 / 6 | **max 8 / 7** (5 tiles with 7+) |
-| 2.8 | Street tile "has house numbers" flag (0x70 = 0x01010000) only when a house-number unit is linked (0x54) | 4,149 of 4,149 | **3,391 tiles flagged with no unit** |
-| 2.9 | Every street tile inside its parent, and every zoomed-out tile has ≥ 1 child slot | 100% | **3 tiles overhang their parent; 6 zoomed-out tiles have 0 slots** (NW Tasmania, Qld/NSW border). **The only fault here not on disc H**, which loaded |
-| 2.10 | Every level-3 node also exists at street level, and every level-2 node on level 3 | 100% | **11,598 level-3 nodes with no street node (mostly tile-edge crossings); 2,139 level-2 nodes with no level-3 node** |
+| 2.1 | **A road's start node (A) is west of its end node (B)**: x, then y | 1,388,526 of 1,388,526 roads, every level | **451,171 of 949,368 roads (47.5%) run east to west** |
+| 2.2 | **Roads at a junction are listed clockwise** (direction to the first shape point) | town street tiles 549,368 of 549,402; levels 1-3 99.4-99.7% (the rest are near-ties) | **street 41%, levels 1-3 47-52%** (it's simply storage order) |
+| 2.3 | **A junction's list starts at the first road clockwise from north** | town street tiles 98.8%; levels 1-3 93% | **36-38%** (J always starts at the lowest-numbered road) |
+| 2.4 | **Nodes within a group are sorted by x, then y** | 9,598 of 9,598 tiles | **broken in 5,318 street tiles and 2,453 zoomed-out tiles** (J uses the order nodes were met) |
+| 2.5 | No road has both ends at one point | 0 on 1.16 M street roads | **679 zero-length roads** |
+| 2.6 | *(withdrawn: the original has 153 edge nodes on tile corners)* | | |
+| 2.7 | *(withdrawn: the original's junctions reach 8 roads, 6 roads at 49 junctions)* | | |
+| 2.8 | Street tile "has house numbers" flag (0x70 = 0x01010000) only when a house-number unit is linked (0x54) | 6,454 of 6,454 tiles | **3,391 tiles flagged with no unit** |
+| 2.9 | Every street tile inside its parent, and every zoomed-out tile has ≥ 1 child slot | 6,442 of 6,442 street tiles with a parent | **3 tiles overhang their parent; 6 zoomed-out tiles have 0 slots** (NW Tasmania, Qld/NSW border). **The only fault here not on disc H**, which loaded |
+| 2.10 | Every level-3 and level-2 node also exists at street level, and every level-2 node on level 3 | 139,743 of 139,743 | **11,598 level-3 nodes with no street node (mostly tile-edge crossings); 2,139 level-2 nodes with no level-3 node** |
 | 2.11 | A level-3 node flagged 0x4000 has a level-2 node at that point | 22,321 of 22,321 | **2,704 flagged with none there** |
-| 2.12 | Every tile has at least one neighbour | 100% | **25 with none** (islands, isolated pieces) |
+| 2.12 | Every tile has at least one neighbour | 6,454 of 6,454 street tiles | **25 with none** (islands, isolated pieces) |
 | 2.13 | Empty grid cells: on levels 1-3, a sub-grid of cells no larger than 0x300000; each empty run its own unit | 100% | **one shared 1×1 empty unit per grid, sub-cell = whole cell** |
 | 2.14 | Country record: POI-list entries point at real POI indexes | 100% | **4 entries left pointing into a street tile (count zeroed)** |
 
 Measured limits the original never goes past (no rule proven, but J goes well beyond):
-- **Shape points on one road:** street 3,702 (original 588), level 3 3,588 (204), level 2
-  1,788 (324), level 1 1,134 (402).
+- **Shape points on one road:**
+
+  | Level | J | Original |
+  |---|---|---|
+  | Street | 3,702 | 588 |
+  | 3 | 3,588 | 204 |
+  | 2 | 1,788 | 324 |
+  | 1 | 1,134 | 402 |
+
 - **Route-number text:**
-  - The original always uses a shield code: `n`, `ni`, `s`, `b`, `a`, `c`, `ai` or `t`,
-    then the number, at most 4 characters.
-  - J has 13,170 bare numbers, prefixes the original never uses (`m`, `mr`, `acw` …)
-    and junk such as a 65-character web address.
-- **Map label length:** up to 76 characters (original's decodable tiles: 30).
+  - The original always uses a shield code, then the number, at most 4 characters
+    across all 6,454 street tiles. The codes are `s`, `n`, `ni`, `c`, `a`, `t`, `b`,
+    `x`, `m`, `mi`, `ai`, `f` and `i`.
+  - J has 13,170 bare numbers, prefixes the original never uses (`mr`, `acw` …) and
+    junk such as a 65-character web address.
+- **Map label length:** up to 76 characters on J; the original's longest is 43.
 - **Coverage:** J has cells at Christmas Island and Norfolk Island, where the original
   has nothing.
 

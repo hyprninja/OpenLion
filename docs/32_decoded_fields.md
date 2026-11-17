@@ -21,8 +21,9 @@ Nothing here comes from it.
 | 0xC000 | street level only |
 
 - The same code is used on every level: level-1 nodes are always 0; level-2 nodes 0 or
-  0x4000; level-3 nodes 0, 0x4000 or 0x8000. 100% on the original (all 3,144 zoomed-out
-  tiles; all 1,057 nodes in readable street tiles, edge nodes included).
+  0x4000; level-3 nodes 0, 0x4000 or 0x8000. On the original it holds on all 3,144
+  zoomed-out tiles, and on 1,004,337 of 1,004,392 street nodes once the town tiles were
+  decoded (doc 33).
 - **Disc J writes "how many levels up" instead, which reverses the code.** Almost every
   node is wrong: for example, 405,651 street-only nodes carry 0 ("on level 1").
 
@@ -67,7 +68,8 @@ Nothing here comes from it.
 - 0x200: the road passes **over** another here. 77% sit on an OSM bridge, against 2% of
   unmarked points.
 - 0x100: it passes **under** here (crossed by a bridge, or in a tunnel). 64% match.
-- Used only on levels 1-3; never on the readable street tiles.
+- Also used at street level (now readable): 2,014 points with 0x100 and 127 with 0x200
+  in the town tiles.
 
 ### Road word +24, bits 8-9: slip-road type (copies the road form)
 

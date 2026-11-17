@@ -7,10 +7,13 @@ See docs/33_codec_0x0e.md for the format and what is proven. Status:
   * name tail (dictionary, string text, name entries, s0/s1/s2 pointer columns, road
     word +24): decoded on all 5,950. The string text uses one fixed prefix code (SHORT,
     then 9-bit groups for dictionary slots, punctuation, digits and letters);
-  * this module returns a model, not yet the plain tile bytes.
+  * to_plain(model, unit_header) lays the model out as the plain tile bytes; on all
+    5,950 it lands on the header's section offsets and round-trips through carin_tile.
 
     from openlion import carin, carin_codec_e
-    model = carin_codec_e.decode_street(db[u.off:u.off + u.size], u.logical)
+    raw = db[u.off:u.off + u.size]
+    model = carin_codec_e.decode_street(raw, u.logical)
+    plain = carin_codec_e.to_plain(model, raw[:8])
 
 Everything in the stream is MSB first. Most record fields are "explicit or same as the
 previous record": one flag bit, then the value only if the flag is 1.
@@ -61,7 +64,8 @@ def decode_street(unit: bytes, logical_pages: int, tail: bool = True) -> dict:
     P = (logical_pages * 512 - 1).bit_length()      # width of an in-tile byte offset
     W4, W7 = n[4].bit_length(), max(1, n[7].bit_length())
     W10, Ws = max(1, n[10].bit_length()), (n[2] - 1).bit_length()
-    m = dict(secs=secs, p0=p0, p1=p1, P=P, s3=s3, s9=s9, s10=s10, header=bytes(b[:HDR]))
+    m = dict(secs=secs, p0=p0, p1=p1, P=P, s3=s3, s9=s9, s10=s10, header=bytes(b[:HDR]),
+             logical_pages=logical_pages)
 
     # -- name hierarchy s0, s1, s2: (str2, parent, str); short form repeats str2/parent --
     def name_records(count):
@@ -186,9 +190,15 @@ def _tail(r: Bits, n, P) -> dict:
     t["dictionary"] = [bytes(r.u(7) for _ in range(r.u(5))) for _ in range(6)]
     # all strings in table order, each with its NUL; strings_end is the last NUL
     t["strings"] = _text(r, t["dictionary"], t["strings_end"] + 1 - t["strings_start"])
-    if not r.flag() or not r.b.startswith(MARKER, r.p):
+    # s0 word 1, explicit-or-previous: on every factory tile 0, 13, 0 (the MARKER bits)
+    if not r.b.startswith("1" + MARKER, r.p):
         raise ValueError("no s0 column after the string block")
-    r.p += len(MARKER)
+    t["s0_word1"], v = [], 0
+    for _ in range(n[0]):
+        if r.flag():
+            v = r.u(16)
+        t["s0_word1"].append(v)
+    r.p += 1                                        # the MARKER's last bit: the next column's flag
     if r.u(n[4] + 1):
         raise ValueError("per-road column is not all 'same'")
     entries, ptr, hi, lo = [], 0, 0, 0
@@ -225,3 +235,62 @@ def _tail(r: Bits, n, P) -> dict:
     if r.b[r.p:].strip("0"):
         raise ValueError("bits left after the +24 column")
     return t
+
+
+def to_plain(model: dict, unit_header: bytes) -> bytes:
+    """Lay a decoded street tile out as the plain tile bytes (what carin.decode() gives
+    for a stored or zlib unit): unit header, sections in the factory order, strings.
+
+    Every pointer is rebuilt from the section offsets in the tile's own plain header, and
+    carin_tile.layout() must land on exactly those offsets (checked here)."""
+    from . import carin_tile as ct
+    secs = model["secs"]
+    O = [o for o, _c in secs]
+    n = [c for _o, c in secs]
+    t = model["tail"]
+    hdr = model["header"]
+    x0, y0, x1, y1 = struct.unpack_from(">iiii", hdr, 0x44)
+    tile = ct.Tile(True, (x0, y0, x1, y1), bytes(hdr[0x54:HDR]))
+
+    def node_off(k):
+        return O[5] + 8 * k if k < n[5] else O[6] + 16 * (k - n[5])
+
+    def rec(i, s, k):
+        r = model[s][k]
+        if s == "s0":                                  # country: (str, 13, entry, 0, 0)
+            return struct.pack(">5H", r["str"], t["s0_word1"][k], t["s0_entries"][k], 0, 0)
+        e3, e4 = t[s + "_entries"][k]
+        return struct.pack(">5H", r["str"], r["str2"], r["parent"], e3, e4)
+    tile.s0 = [rec(0, "s0", k) for k in range(n[0])]
+    tile.s1 = [rec(1, "s1", k) for k in range(n[1])]
+    tile.s2 = [rec(2, "s2", k) for k in range(n[2])]
+    tile.s3 = model["s3"]
+
+    road_off = lambda k: 0 if k >= n[4] else O[4] + 32 * k      # n4 = none
+    roads = bytearray()
+    for k, r in enumerate(model["roads"]):
+        roads += struct.pack(">HHHHHHIHHHHHHHH",
+                             r["A"], r["B"], O[7] + 6 * r["sh"], road_off(r["nA"]), road_off(r["nB"]),
+                             r["cls"], r["id"], r["fl"], O[10] + 8 * r["p10"], O[11], O[12],
+                             t["x24"][k], O[2] + 10 * r["srec"], r["attr"], O[13])
+    f = model["fence"]
+    roads += struct.pack(">HHHHHHIHHHHHHHH", 0, 0, O[7] + 6 * f["sh"], 0, 0, 0, 0, 0,
+                         O[10] + 8 * f["p10"], O[11], O[12], t["x24"][n[4]], 0, 0, O[13])
+    tile.roads, tile.nroads = bytes(roads), n[4]
+
+    tile.s5 = b"".join(struct.pack(">HHHH", d["x"], d["y"], road_off(d["first_road"]), d["flags"])
+                       for d in model["s5"])
+    tile.s6 = b"".join(struct.pack(">HHHHIHH", d["x"], d["y"], road_off(d["first_road"]), d["flags"],
+                                   d["neighbour"], d["partner"], 0) for d in model["s6"])
+    tile.s7 = b"".join(struct.pack(">HHH", x, y, z << 8) for x, y, z in model["s7"])
+    tile.s9, tile.s10 = model["s9"], model["s10"]
+    tile.n5, tile.n6, tile.n7, tile.n8, tile.n9, tile.n10 = n[5], n[6], n[7], 0, n[9], n[10]
+    tile.names = list(t["s14"])
+    tile.strings = t["strings"]
+    offs, _end = ct.layout(tile)
+    if offs != O:
+        raise ValueError(f"plain layout {offs} differs from the header's {O}")
+    out = ct.write(tile, unit_header[:8])
+    if len(out) > model["logical_pages"] * 512:
+        raise ValueError("plain tile is larger than the unit's stated size")
+    return out

@@ -9,7 +9,7 @@
 | Name hierarchy s0-s2, roads s4, nodes s5/s6, shape points s7 | **Decoded.** 5,950 of 5,950 tiles pass every structural check |
 | Name entries s14, the entry pointers of s0/s1/s2, road word +24 | **Decoded.** 5,950 of 5,950 tiles pass every tail check |
 | String text | **Decoded.** One fixed prefix code for the whole disc; all 5,950 tiles decode to exactly the stored length with a NUL before every string start (4.9 MB of text) |
-| Plain-byte output through `carin_tile.write()` | Not written: it needs the strings |
+| Plain-byte output (`to_plain`) | **Done.** All 5,950 tiles unpack to plain bytes that land exactly on their header's section offsets and round-trip byte for byte through `carin_tile.parse` / `write` |
 | Street-search units (742) and background units (1,146) | Not started |
 
 It is a field-by-field bit packing, not a general compressor, and has nothing to do with
@@ -154,12 +154,56 @@ Checks:
   are search-only aliases (flag 0x102, mostly bridge names) and spelling variants,
   e.g. search `bridport point,port` against the tile's `bridport point/port`.
 
+## Plain output and the factory rules on town tiles
+
+`carin_codec_e.to_plain(model, unit_header)` lays the model out as the plain tile.
+- Every pointer is rebuilt from the section offsets in the tile's own header: road ends,
+  shape and s10-s13 pointers, next-road links (index n4 = 0), street records, first roads.
+- The s0 records are `(str, word1, entry, 0, 0)`; the s1 and s2 records are
+  `(str, str2, parent, entry, word5)`.
+- The closing road record carries the s10 and shape ends and the last +24 value.
+
+`tools/carin_research/check_plain.py` unpacks every town tile and runs the street rules
+from docs 31 and 32:
+
+| Rule | Original town tiles |
+|---|---|
+| Round trip identical, layout = header offsets | 5,950 / 5,950 |
+| Road runs west to east | 1,159,823 / 1,159,823 |
+| Junction list holds every road | 1,002,141 / 1,002,141 |
+| Junction list clockwise | 549,368 / 549,402 |
+| List starts at the first road clockwise from north | 542,850 / 549,402 |
+| Inner nodes sorted by group, x, y | 5,950 / 5,950 |
+| Group table, roads sorted by group | 100% |
+| No zero-length road | 100% |
+| Attribute bit 0 = road has house numbers (against the plain 0x04 units) | 1,056,833 / 1,056,833 |
+| House-number unit has one record per road | 4,122 / 4,122 |
+| Edge node at the same point as its partner | 153,366 / 153,366 |
+| Junction-type bits match the road count | 838,614 / 846,582 |
+
+On all 6,454 street tiles, plain ones included:
+- node level bits = coarsest level: 1,004,337 / 1,004,392;
+- every level-2 and level-3 node is also a street node: 139,743 / 139,743;
+- every street tile is inside its parent and has a neighbour.
+
+It also showed three things the 504 readable tiles had hidden, which correct doc 31:
+- two nodes share a position 1,345 times;
+- 153 edge nodes sit on tile corners;
+- junctions reach 8 roads.
+
+Other new measurements:
+- the longest street-level road has 253 shape points in town (588 in the country);
+- the longest map label is 43 characters;
+- route numbers are at most 4 characters, always with a shield code: `s n ni c a t b x m mi
+  ai f i`;
+- shape-point marks 0x100 and 0x200 occur at street level too (2,014 and 127 points).
+
 ## Open
 
-1. Writer to plain bytes, then `carin_tile.parse`/`write` round trip and the factory rules.
-2. Street-search and background units.
-3. The guesses listed above (defaults for "same as previous" on a first record, node
-   flag low bits).
+1. Street-search and background units.
+2. The guesses listed above (defaults for "same as previous" on a first record, node
+   flag low bits). They give values that pass every rule above, but can't be proven
+   without a second copy of the data.
 
 ## Picking this up
 
@@ -167,18 +211,15 @@ Run from `tools/carin_research` (the disc is `Other Cards/VZ test discs/1-contro
 
 ```
 python check_codec_e.py FACTORY.iso         # 5,950 structure, 5,950 name tail and strings
+python check_plain.py FACTORY.iso           # unpack to plain bytes, round trip, street rules
 python codec_e_strings.py FACTORY.iso 26d7800 296f400 3f16a00
 ```
 
 Tiles worked through by hand: 0x26D7800 (5 strings: `australia`, `south coast`, `n1`,
 `south western highway`, `western australia`), 0x296F400, 0x3F16A00, 0x298FC00.
 
-Suggested order:
-
-1. **Writer.** Lay the model out as a plain tile (section offsets are already in the
-   header), then `carin_tile.parse` / `write` round trip and the factory rules.
-2. **Street search and background units.** Not looked at; expect the same habits
-   (explicit-or-previous, three-way coordinate deltas, this string code).
+Suggested next: **street-search and background units.** Not looked at; expect the same
+habits (explicit-or-previous, three-way coordinate deltas, this string code).
 
 What would settle the guesses: the head unit firmware (the unpacker shows the defaults for "same as previous" on a first record). The disc's CARINET file is the
 traffic-message table, not code (doc 32).
