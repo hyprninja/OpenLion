@@ -308,9 +308,14 @@ def can_split(rect, min_size):
 # and the fence, so 10 real ones.
 SHAPE_CAP = {6: 1500, 3: 690, 2: 690, 1: 490}
 PLACE_CAP = 10
+# A coarse tile's child list (s8) is a slot grid: (w / slot) x (h / slot) slots, slot =
+# the shortest side of any finer tile under it (header 0x5C). The factory never has more
+# than 256 slots on level 3 or 128 on levels 1 and 2, so a coarse tile also splits when
+# the finer tiles under it would need more.
+SLOT_CAP = {3: 256, 2: 128, 1: 128}
 
 
-def make_tiles(lines, lv, cover=(), places=None):
+def make_tiles(lines, lv, cover=(), places=None, finer_min=None):
     """KD-tree leaves for a level from the weight of each polyline's points.
     cover: extra points that must fall inside some leaf even with no roads there (the
     centres of the finer level's tiles, so every finer tile has a parent, as on the
@@ -348,9 +353,15 @@ def make_tiles(lines, lv, cover=(), places=None):
 
     shape_cap = SHAPE_CAP.get(lv.num, 1500)
 
-    def fits(cellpts):
+    slot_cap = SLOT_CAP.get(lv.num)
+
+    def fits(cellpts, rect):
         if sum(cellpts.values()) > lv.budget:
             return False
+        if finer_min and slot_cap:
+            v = min((finer_min[c] for c in cellpts if c in finer_min), default=None)
+            if v and (rect[2] // v) * (rect[3] // v) > slot_cap:
+                return False
         if sum(shp.get(c, 0) for c in cellpts) > shape_cap:
             return False
         if places is not None:
@@ -364,7 +375,7 @@ def make_tiles(lines, lv, cover=(), places=None):
     def split(rect, cellpts):
         if not cellpts:
             return
-        if fits(cellpts) or not can_split(rect, lv.min_size):
+        if fits(cellpts, rect) or not can_split(rect, lv.min_size):
             leaves.append(rect)
             return
         for half in halves(rect):

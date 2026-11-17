@@ -42,6 +42,15 @@ def measures(db, skip_fixed):
             lv = {0: "street", 1: "level 1", 2: "level 2", 3: "level 3"}[u.table]
             for i, label in ((1, "places"), (4, "roads"), (7, "shape points"), (9, "neighbours"), (14, "names")):
                 m[f"{lv} {label} per tile"] = max(m[f"{lv} {label} per tile"], c[i])
+        if u.table in (1, 2, 3):
+            # the child list is a slot grid: (w / v) x (h / v) slots, v = header 0x5C,
+            # x-major, each filled slot's tile covering that slot's centre
+            b = carin.decode(db, u)
+            o8, n8 = struct.unpack_from(">HH", b, 8 + 4 * 8)
+            v = struct.unpack_from(">I", b, 0x5C)[0]
+            m[f"level {u.table} child slots per tile"] = max(m[f"level {u.table} child slots per tile"], n8)
+            if not v or (w // v) * (h // v) != n8:
+                m["coarse tiles whose child list isn't a slot grid"] += 1
         if u.table == 0x06:
             b = carin.decode(db, u)
             o, c = struct.unpack_from(">HH", b, 8)

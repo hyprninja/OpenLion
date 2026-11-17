@@ -287,6 +287,7 @@ def build_levels(net, labels, factory, states=None):
     # finest first: each coarser level must cover every tile of the level below it, so
     # zooming out always finds a parent (the factory leaves 0.2% of detail tiles without one)
     cover = ()
+    finer_leaves = None
     for num in (6, 3, 2, 1):
         lv = levels[num]
         segs = [s for s in range(net.n_segs) if net.group[s] <= lv.max_group]
@@ -320,11 +321,24 @@ def build_levels(net, labels, factory, states=None):
             ids = {}
             place_ids = [ids.setdefault(labels(sg), len(ids)) for sg in lines]
         clv = cn.Level(num, lv.table, lv.max_group, lv.cell, lv.max_size, lv.min_size, lv.detail, lv.budget)
-        leaves = cn.make_tiles(lines.values(), clv, cover, place_ids)
+        finer_min = None
+        if not lv.detail and finer_leaves:
+            # the shortest side of the finer tiles in each of this level's weight cells,
+            # so a coarse tile never needs more child slots than the factory's
+            m = lv.min_size // 2
+            finer_min = {}
+            for fx, fy, fw, fh in finer_leaves:
+                short = min(fw, fh)
+                for ci in range((fx - cn.OX) // m, (fx + fw - 1 - cn.OX) // m + 1):
+                    for cj in range((fy - cn.OY) // m, (fy + fh - 1 - cn.OY) // m + 1):
+                        if finer_min.get((ci, cj), 1 << 40) > short:
+                            finer_min[(ci, cj)] = short
+        leaves = cn.make_tiles(lines.values(), clv, cover, place_ids, finer_min)
         if lv.detail:
             leaves, segs = fit_cells(net, chains, segs, lines, leaves, clv, labels, lv)
             place_ids = None
         cover = [(x0 + w // 2, y0 + h // 2) for x0, y0, w, h in leaves]
+        finer_leaves = leaves
         loc = cn.Locator(leaves, lv.max_size, lv.min_size)
         locs[num] = loc
         recs = {r: cw.TileRec(lv, r) for r in leaves}
@@ -363,7 +377,7 @@ def build_levels(net, labels, factory, states=None):
                 c = tiles.get((num, ckey))
                 if c is not None:
                     c.children.append(key)
-                    c.finest_child = min(c.finest_child or w, w)
+                    c.finest_child = min(c.finest_child or min(w, h), min(w, h))
     for rec in tiles.values():
         rec.children.sort()
     return levels, tiles, node_levels

@@ -153,7 +153,14 @@ class TileRec:
         t.n5, t.s5 = len(real), bytes(8 * len(real))
         t.n6, t.s6 = len(bnd), bytes(16 * len(bnd))
         t.n7, t.s7 = self.n7, bytes(6 * self.n7)
-        t.n8, t.s8 = len(self.children), bytes(4 * len(self.children))
+        # child list = slot grid (x-major), slot = shortest finer side (header 0x5C)
+        if self.children:
+            v = self.finest_child
+            self.slots = (w // v, h // v)
+        else:
+            self.slots = (0, 0)
+        t.n8 = self.slots[0] * self.slots[1]
+        t.s8 = bytes(4 * t.n8)
         t.n9, t.s9 = len(self.neigh), bytes(8 * len(self.neigh))
         t.names = [(0, 0)] * (len(self.entries) if detail else 0)
         t.strings = self.strings if detail else b""
@@ -269,7 +276,19 @@ class TileRec:
                              addr((lvnum, prect)), self.partner_off(pkey, prect), 0)
         t.s5, t.s6 = bytes(s5), bytes(s6)
         # children, neighbours
-        t.s8 = b"".join(struct.pack(">I", addr(c)) for c in self.children)
+        s8 = bytearray(4 * t.n8)
+        if t.n8:
+            v = self.finest_child
+            nx, ny = self.slots
+            for ix in range(nx):
+                for iy in range(ny):
+                    px, py = x0 + ix * v + v // 2, y0 + iy * v + v // 2
+                    for c in self.children:
+                        cx, cy, cw_, ch_ = c[1]
+                        if cx <= px < cx + cw_ and cy <= py < cy + ch_:
+                            struct.pack_into(">I", s8, 4 * (ix * ny + iy), addr(c))
+                            break
+        t.s8 = bytes(s8)
         s9 = bytearray()
         for prect in self.neigh:
             s9 += struct.pack(">IHH", addr((lvnum, prect)), *self.edge_point(prect))

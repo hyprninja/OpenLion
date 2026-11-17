@@ -424,3 +424,13 @@ Disc I (`discI_victoria_factory_shaped.iso`) against the factory envelope: insid
 
 Checks: root, background and licensing byte-identical to the factory, same file size, nothing past the licensing block; `carin_check` 0 problems; tile validator 0 errors; search walk 339,668 streets, 1,301,621 road links, 0 errors; POI walk 85,600 POIs on the map, 85,455 through place search, 0 errors.
 
+## Disc I refused; the coarse tiles' child lists are slot grids
+
+**I was refused at load** ("wrong or defect media"). Looking again at what a coarse tile's s8 holds on the factory: it isn't a list of distinct child tiles. It is a regular **slot grid**, `(w / v) x (h / v)` u32 slots with v = header 0x5C (the shortest side of any finer tile under the tile), x-major, each slot holding the finer tile that covers the slot's centre, repeated where one tile spans several slots, 0 where there is none. All 3,144 factory coarse tiles follow this exactly (at most 128 slots on levels 1 and 2, 256 on level 3); the unit evidently picks a child by indexing the grid with a position.
+
+Every rebuild wrote a short list of distinct children with 0x5C as the tile size, so the slot count never matched: **1,334 coarse tiles on H, 1,705 on I, 174 on disc 7** (factory: 0). A unit indexing by position reads the wrong tile or past the end of the section. This is squarely on the path from the coarse map to street level, which is where 5, 7, 10, 11 and 12 stopped drawing and where H failed when Map opened. Whether it also explains refusals at load (I, and D, E, G) depends on whether the unit walks the levels at start-up; that is not known.
+
+Fix (disc J): `make_tiles` splits a coarse tile when its slot grid would pass the factory's 256 / 128 / 128 slots (`SLOT_CAP`), using the shortest side of the finer tiles under it; the writer stores s8 as the slot grid and 0x5C as the slot size. `carin_envelope.py` now counts slots per tile and coarse tiles whose s8 isn't a slot grid.
+
+Disc J (`discJ_victoria_child_slots.iso`): all 3,842 coarse tiles have the right slot count and all 31,650 filled slots name the tile covering the slot centre; slots at most 64 / 128 / 256. The other checks are as for I (root, background, licensing identical; same size; `carin_check` 0 problems; tile validator 0 errors; search walk 339,668 streets, 0 errors; POI walk 85,600 POIs, 0 errors). Envelope residuals unchanged: Melbourne CBD street cell 296 vs 267, level-3 neighbours 10 vs 8, level-3 tiles per cell 62 vs 61, place trie unit 4.6 KB vs 1.5 KB; parentless coarse tiles still 27% of level 3 against 1.7%.
+

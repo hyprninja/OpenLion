@@ -138,9 +138,24 @@ class Tiles(unittest.TestCase):
         t = ct.parse(b, False)
         self.assertEqual(t.nroads, 1)                    # the main road, merged into one
         self.assertTrue(t.n8 >= 1)                       # lists its detail children
-        # 0x5C: the smallest detail tile under it, not its own size
-        smallest = min(k[1][2] for k in tiles if k[0] == 6)
-        self.assertEqual(struct.unpack_from(">I", b, 0x5C)[0], smallest)
+        # 0x5C: the slot size, the shortest side of any detail tile under it
+        smallest = min(min(k[1][2], k[1][3]) for k in tiles if k[0] == 6)
+        v = struct.unpack_from(">I", b, 0x5C)[0]
+        self.assertEqual(v, smallest)
+        # the child list is an x-major slot grid of (w / v) x (h / v) slots, as on the
+        # factory disc; every filled slot names the detail tile covering its centre
+        x0, y0, x1, y1 = t.bbox
+        nx, ny = (x1 - x0) // v, (y1 - y0) // v
+        self.assertEqual(t.n8, nx * ny)
+        rect_of = {addr(k): k[1] for k in tiles if k[0] == 6}
+        for i in range(t.n8):
+            a = struct.unpack_from(">I", t.s8, 4 * i)[0]
+            if not a:
+                continue
+            ix, iy = i // ny, i % ny
+            px, py = x0 + ix * v + v // 2, y0 + iy * v + v // 2
+            rx, ry, rw, rh = rect_of[a]
+            self.assertTrue(rx <= px < rx + rw and ry <= py < ry + rh)
 
     def test_class_codes_are_factory_codes(self):
         net = tiny_net()

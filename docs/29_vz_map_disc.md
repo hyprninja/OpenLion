@@ -117,7 +117,7 @@ Levels nest: a level-1 tile lists its level-2 children (s8), level 2 lists level
 
 All 3,648 stored and zlib road tiles round-trip byte for byte through `carin_tile.parse()` / `write()`. The layout is in the module docstring. Coordinates inside a tile are u16, one step = 64 database units (about 1.3 m), measured from the bbox minimum. A detail tile of 0x180000 units spans 0..0x6000, a level 1-3 tile of 0x300000 spans 0..0xC000.
 
-Header after the bbox: `0x54 u32` the tile's house-number unit (0x04, detail only), `0x58 u32` parent tile, `0x5C u32` tile size (overview levels; 0 on detail), then three u32 (`0x0020C49B` on overview levels, per-tile values on detail), `0x6C u32` (`0x0167000A` on detail), `0x70 u32` (`0x00010000` / `0x01010000`).
+Header after the bbox: `0x54 u32` the tile's house-number unit (0x04, detail only), `0x58 u32` parent tile, `0x5C u32` child slot size (overview levels: the shortest side of any finer tile under this one; 0 on detail), then three u32 (`0x0020C49B` on overview levels, per-tile values on detail), `0x6C u32` (`0x0167000A` on detail), `0x70 u32` (`0x00010000` / `0x01010000`).
 
 | Section | Record | Fields |
 |---|---|---|
@@ -127,7 +127,7 @@ Header after the bbox: `0x54 u32` the tile's house-number unit (0x04, detail onl
 | s5 | 8 B | node in the tile: `u16 x, u16 y, u16 first road, u16 flags` (bits 14/15: the node also exists on coarser levels) |
 | s6 | 16 B | node on the tile edge: as s5, then `u32 neighbour tile, u16 offset of the matching node there, u16 0` |
 | s7 | 6 B | shape point `u16 x, u16 y, u16 0` |
-| s8 | 4 B | child tile addresses (levels 1-3) |
+| s8 | 4 B | child slot grid (levels 1-3): `(w / v) x (h / v)` u32 slots, v = header 0x5C, x-major (index = ix * ny + iy); each slot holds the finer tile covering the slot's centre (repeated where a big tile spans several slots), 0 where there is none. The factory never has more than 256 slots (level 3) or 128 (levels 1, 2) |
 | s9 | 8 B | neighbour tiles: `u32 address, u16 x, u16 y` of a point on the shared edge |
 | s10 | 8 B | `u32 own address, u16 road offset, u16 end (0/1)`, about 13% of roads on levels 1-3. Meaning not settled (probably turn handling); the writer leaves it empty |
 | s14 | 4 B | name entries `u16 string offset, u16 flags` (0x200 place, 0x208/0x20A street name, 0x10/0x11 route number), then NUL-terminated, deduplicated strings |
