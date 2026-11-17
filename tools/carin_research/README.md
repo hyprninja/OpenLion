@@ -7,6 +7,7 @@ disc.
 |---|---|
 | `common.py` | Loads a disc. Gives each decodable road tile as a model (nodes, roads, shape points, groups) and splits a codec 0x0E street tile into its parts (params, raw s3/s9/s10, bit stream). Also locates the edge-node records, and maps street names from the plain search units onto tiles |
 | `check_edge_records.py` | Re-proves doc 33's edge-record result: all 5,950 codec street tiles hold exactly n6 records; 153,366 of 153,366 partners point back |
+| `check_codec_e.py` | Runs `openlion/carin_codec_e.py` over every codec 0x0E street tile and checks the result (doc 33): 5,950 of 5,950 pass the structure checks |
 
 ```
 python tools/carin_research/check_edge_records.py "<path>/1-control-factory.iso"
