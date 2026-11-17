@@ -26,3 +26,6 @@ dist/
 # voice pack work (tools/voice): never commit an API key
 elevenlabs_key.txt
 voice.json
+
+# Stamped into the packaged engine by packaging/build-release.ps1 and build-mac.sh
+openlion/_release.py
