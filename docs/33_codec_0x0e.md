@@ -77,7 +77,7 @@ first road (W4, an index). Edge nodes add the neighbour address (32) and partner
 | Part | Coding |
 |---|---|
 | string table start, end | P bits each; the end leaves out the last NUL |
-| dictionary | 6 entries: 5-bit length, then 7-bit ASCII characters. Sorted; unused slots hold one byte 0x41. Typical: `ali aus ern est out`, or `road street place ave ...` |
+| dictionary | 6 entries: 5-bit length, then 7-bit ASCII characters. Unused slots hold one byte 0x41. Typical: `ali aus ern est out`, or `road ral aus der gin gui`. Often alphabetical but not always (`ark`, `ay\0`, `ghw`, ` hi` on 0x3F16A00), and an entry can hold a space or the NUL that ends a string |
 | coded text | all strings in table order |
 | s0 word 1 | `0x0000 1 0x000D 1 0x0000 1`: the 13 of the country record; identical on every tile |
 | per-road column | n4 + 1 flag bits, always 0 |
@@ -132,6 +132,11 @@ first road (W4, an index). Edge nodes add the neighbour address (32) and partner
   so the table can be solved from many tiles at once: code lengths first (bit length of a
   block = sum of its tokens' lengths), then the codes.
 - The head unit's firmware would show the table outright.
+- The coded text runs at 4.1 to 4.5 bits per string byte (NULs included) on the three
+  tiles looked at, so the fragments carry a good share of the text.
+- `tools/carin_research/codec_e_strings.py` prints a tile's string block (dictionary,
+  coded bits, the offset of every string) and holds the tokenizer and the backtracking
+  solver tried so far.
 
 ## Open
 
@@ -140,3 +145,36 @@ first road (W4, an index). Edge nodes add the neighbour address (32) and partner
    e.g. `ve\0`, `er `; the stream ends with extra groups after `001`).
 3. Writer to plain bytes, then `carin_tile.parse`/`write` round trip and the factory rules.
 4. Street-search and background units.
+
+## Picking this up
+
+Run from `tools/carin_research` (the disc is `Other Cards/VZ test discs/1-control-factory.iso`):
+
+```
+python check_codec_e.py FACTORY.iso         # 5,950 structure, 5,106 name tail
+python codec_e_strings.py FACTORY.iso 26d7800 296f400 3f16a00
+```
+
+Tiles worked through by hand: 0x26D7800 (5 strings: `australia`, `south coast`, `n1`,
+`south western highway`, `western australia`), 0x296F400, 0x3F16A00, 0x298FC00.
+
+Suggested order:
+
+1. **Strings.** Build, for many tiles, the known text of each string (names from
+   `common.street_search_refs`, `australia`, the state and region) and its token split.
+   Each tile gives one equation: coded bits = sum of token code lengths. Solve the
+   lengths over a few hundred tiles, then read the codes off the bit strings. Open
+   questions the solve has to answer: whether the code table is fixed for the disc or
+   built per tile; whether the NUL is a token; whether the split into fragments is
+   greedy longest-first (only `aus t r ali a` is confirmed).
+2. **The 844 failing tails.** Their dictionaries hold NUL and space, and bits follow the
+   closing `001`. Compare one against a similar passing tile; the extra groups may be the
+   suburb pointers of s2's last word (doc 32: 14 Melbourne CBD tiles carry them).
+3. **Writer.** Lay the model out as a plain tile (section offsets are already in the
+   header), then `carin_tile.parse` / `write` round trip and the factory rules.
+4. **Street search and background units.** Not looked at; expect the same two habits
+   (explicit-or-previous, three-way coordinate deltas).
+
+What would settle the guesses: the head unit firmware (the unpacker shows the code table
+and the defaults for "same as previous" on a first record). The disc's CARINET file is the
+traffic-message table, not code (doc 32).

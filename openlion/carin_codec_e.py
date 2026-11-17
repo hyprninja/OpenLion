@@ -2,9 +2,10 @@
 
 See docs/33_codec_0x0e.md for the format and what is proven. Status:
 
-  * structure (name records, roads, nodes, shape points): decoded, checked on 5,949 of
-    the 5,950 factory tiles (the odd one has p1 = 0);
-  * name tail (dictionary, name entries, s0/s1/s2 pointer columns): decoded on 5,105;
+  * structure (name records, roads, nodes, shape points): decoded, checked on all 5,950
+    factory tiles;
+  * name tail (dictionary, name entries, s0/s1/s2 pointer columns): decoded on 5,106;
+    the other 844 fail the tail check, cause not found;
   * string text: NOT decoded. The tile carries a 6-entry fragment dictionary followed by
     a prefix-coded token stream whose code table is not recovered yet, so this module
     returns a model, not yet the byte-exact plain tile.
