@@ -4,11 +4,11 @@
 For each tile (default: the hand-worked 0x26D7800) prints what is known about its string
 block: table start/end, the fragment dictionary, the length of the coded text in bits, and
 the byte offset of every string (from the name records and name entries), so bits per
-character can be judged. Nothing here decodes the text: the code table is not recovered.
+character can be judged, and the decoded text (carin_codec_e._text, doc 33).
 
 tokenize() and solve() are the pieces used so far. solve() is a plain backtracking search
-for a prefix code that maps a known token sequence onto a bit string; on one tile it does
-not finish, so the next attempt should constrain it with many tiles at once."""
+for a prefix code that maps a known token sequence onto a bit string. They were used to
+work out the code, which is now in carin_codec_e."""
 import sys
 
 from common import Disc, carin
@@ -72,11 +72,10 @@ def describe(d: Disc, off: int) -> None:
     nbytes = t["strings_end"] + 1 - t["strings_start"]
     words = [e.decode("latin-1") for e in t["dictionary"]]
     print(f"{off:#x}: strings {t['strings_start']}..{t['strings_end']} ({nbytes} bytes, "
-          f"{len(starts)} strings), coded text {len(t['coded_text'])} bits "
-          f"= {len(t['coded_text']) / nbytes:.2f} bits/byte")
+          f"{len(starts)} strings)")
     print("   dictionary:", words)
     print("   string offsets:", [p - t["strings_start"] for p in starts])
-    print("   coded text:", t["coded_text"][:160] + ("..." if len(t["coded_text"]) > 160 else ""))
+    print("   strings:", [x.decode("latin-1") for x in t["strings"].split(b"\0")[:-1]])
 
 
 if __name__ == "__main__":

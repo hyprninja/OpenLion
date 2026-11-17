@@ -7,8 +7,8 @@
 | Part of a street tile | State |
 |---|---|
 | Name hierarchy s0-s2, roads s4, nodes s5/s6, shape points s7 | **Decoded.** 5,950 of 5,950 tiles pass every structural check |
-| Name entries s14, and the entry pointers of s0/s1/s2 | Decoded on 5,106 tiles; 844 (mostly large town tiles) fail the tail check, cause not found |
-| String text | **Not decoded.** Layout known (6-entry fragment dictionary, then a prefix-coded token stream); the code table is not recovered |
+| Name entries s14, the entry pointers of s0/s1/s2, road word +24 | **Decoded.** 5,950 of 5,950 tiles pass every tail check |
+| String text | **Decoded.** One fixed prefix code for the whole disc; all 5,950 tiles decode to exactly the stored length with a NUL before every string start (4.9 MB of text) |
 | Plain-byte output through `carin_tile.write()` | Not written: it needs the strings |
 | Street-search units (742) and background units (1,146) | Not started |
 
@@ -78,14 +78,15 @@ first road (W4, an index). Edge nodes add the neighbour address (32) and partner
 |---|---|
 | string table start, end | P bits each; the end leaves out the last NUL |
 | dictionary | 6 entries: 5-bit length, then 7-bit ASCII characters. Unused slots hold one byte 0x41. Typical: `ali aus ern est out`, or `road ral aus der gin gui`. Often alphabetical but not always (`ark`, `ay\0`, `ghw`, ` hi` on 0x3F16A00), and an entry can hold a space or the NUL that ends a string |
-| coded text | all strings in table order |
-| s0 word 1 | `0x0000 1 0x000D 1 0x0000 1`: the 13 of the country record; identical on every tile |
+| coded text | all strings in table order, each with its NUL, `end + 1 - start` bytes in all (see "String code" below) |
+| s0 word 1 | flag 1 + `0x0000`, flag 1 + `0x000D`, flag 1 + `0x0000`: the 13 of the country record; identical on every tile |
 | per-road column | n4 + 1 flag bits, always 0 |
 | name entries (n14) | pointer (flag, P bits); flags high byte (flag, 8 bits); flags low 5 bits (flag, 5 bits) |
 | s2 entry words | per record, two values: flag; if 1: a delta `>> 1` in P−1 bits; 0 repeats the last delta. Values accumulate |
 | s1 entry words | per record 2 × (P−1) bits, `>> 1`, absolute |
 | s0 entry word | per record P−1 bits, `>> 1` |
-| end | `001` |
+| 2 bits | always `00` |
+| road word +24 | per road and the closing record: flag; if 1, 16 bits; 0 repeats the previous value. Bits 8-9 are the slip-road type (1/2/3 on forms 1/8, 2/9, 3/A, 100% on 1.16 M roads); 0x400 and 0x1000 occur as on levels 1-3 (doc 32). This column is what the earlier notes saw as "extra groups after `001`" on 844 tiles: tiles with no non-zero +24 end in `001` and zeros |
 
 ## How it was checked
 
@@ -119,39 +120,53 @@ first road (W4, an index). Edge nodes add the neighbour address (32) and partner
   in about two thirds of tiles; it is most likely 1).
 - Node flag word: only its top 11 bits are stored; the low 5 are taken as 0.
 
-## Strings: what is known
+## String code
 
-- The 31-bit run found earlier for "australia" is the token sequence `aus t r ali a`.
-- Roughly 6 bits a token; the same word gives the same bits wherever it stands, so it is
-  one prefix code over single characters plus the six dictionary slots, not a
-  context code.
-- Not fixed width (5, 6, 7 bits at any alignment), and a brute-force solve of one tile
-  did not finish.
-- Every string's start offset is known from the name records and entries, and the text
-  of most is known (street names and regions from street search, `australia`, the state),
-  so the table can be solved from many tiles at once: code lengths first (bit length of a
-  block = sum of its tokens' lengths), then the codes.
-- The head unit's firmware would show the table outright.
-- The coded text runs at 4.1 to 4.5 bits per string byte (NULs included) on the three
-  tiles looked at, so the fragments carry a good share of the text.
-- `tools/carin_research/codec_e_strings.py` prints a tile's string block (dictionary,
-  coded bits, the offset of every string) and holds the tokenizer and the backtracking
-  solver tried so far.
+One prefix code, the same on every tile (18 Nov 2026):
+
+| Code | Meaning |
+|---|---|
+| `000` `001` | a, e |
+| `0100` `0101` `0110` `0111` | s, t, r, NUL |
+| `10000`-`10111` | space, d, g, h, i, l, n, o |
+| `110100` + 3 bits k | k = 1-6: dictionary entry k−1; k = 7: apostrophe; k = 0 never seen |
+| `110101` + 3 bits | 4: `/`, 6: `.`; others never seen |
+| `11011` + 4 bits | digit 0-9 (10-15 never seen) |
+| `1111` + 5 bits | any letter by number, a = 1 ... z = 26 (0 and 27-31 never seen) |
+| `1100…`, `1110…` | never seen |
+
+How it was found:
+- 4,652 tiles whose dictionary has no fragment of "australia" all start with the same
+  bits, so the code is fixed, not built per tile.
+- Grouping tiles by how "australia" splits against their dictionary (`a u s t r a l i a`,
+  `aus t r ali a`, `a u s t r a l <slot>` and so on) gave the slot codes and the
+  first letters.
+- Growing the code over 1,140 tiles whose strings are known from street search gave the
+  rest. The letter and digit groups were then read off their pattern.
+
+Checks:
+- All 5,950 tiles decode to exactly `end + 1 − start` bytes, with a NUL before every
+  string a record or entry points at, and no other NUL.
+- The characters used are a-z, 0-9, space, `'`, `.` and `/`.
+- 99.5% of the 389,722 street-search names for these tiles appear in their tile's
+  strings, and 95.7% equal the name of the road's own street record. The rest are
+  route-first records (the record's first name is the route number). The 0.5% missing
+  are search-only aliases (flag 0x102, mostly bridge names) and spelling variants,
+  e.g. search `bridport point,port` against the tile's `bridport point/port`.
 
 ## Open
 
-1. String code table.
-2. The 844 tiles whose tail check fails (dictionary entries there contain NUL and space,
-   e.g. `ve\0`, `er `; the stream ends with extra groups after `001`).
-3. Writer to plain bytes, then `carin_tile.parse`/`write` round trip and the factory rules.
-4. Street-search and background units.
+1. Writer to plain bytes, then `carin_tile.parse`/`write` round trip and the factory rules.
+2. Street-search and background units.
+3. The guesses listed above (defaults for "same as previous" on a first record, node
+   flag low bits).
 
 ## Picking this up
 
 Run from `tools/carin_research` (the disc is `Other Cards/VZ test discs/1-control-factory.iso`):
 
 ```
-python check_codec_e.py FACTORY.iso         # 5,950 structure, 5,106 name tail
+python check_codec_e.py FACTORY.iso         # 5,950 structure, 5,950 name tail and strings
 python codec_e_strings.py FACTORY.iso 26d7800 296f400 3f16a00
 ```
 
@@ -160,21 +175,10 @@ Tiles worked through by hand: 0x26D7800 (5 strings: `australia`, `south coast`, 
 
 Suggested order:
 
-1. **Strings.** Build, for many tiles, the known text of each string (names from
-   `common.street_search_refs`, `australia`, the state and region) and its token split.
-   Each tile gives one equation: coded bits = sum of token code lengths. Solve the
-   lengths over a few hundred tiles, then read the codes off the bit strings. Open
-   questions the solve has to answer: whether the code table is fixed for the disc or
-   built per tile; whether the NUL is a token; whether the split into fragments is
-   greedy longest-first (only `aus t r ali a` is confirmed).
-2. **The 844 failing tails.** Their dictionaries hold NUL and space, and bits follow the
-   closing `001`. Compare one against a similar passing tile; the extra groups may be the
-   suburb pointers of s2's last word (doc 32: 14 Melbourne CBD tiles carry them).
-3. **Writer.** Lay the model out as a plain tile (section offsets are already in the
+1. **Writer.** Lay the model out as a plain tile (section offsets are already in the
    header), then `carin_tile.parse` / `write` round trip and the factory rules.
-4. **Street search and background units.** Not looked at; expect the same two habits
-   (explicit-or-previous, three-way coordinate deltas).
+2. **Street search and background units.** Not looked at; expect the same habits
+   (explicit-or-previous, three-way coordinate deltas, this string code).
 
-What would settle the guesses: the head unit firmware (the unpacker shows the code table
-and the defaults for "same as previous" on a first record). The disc's CARINET file is the
+What would settle the guesses: the head unit firmware (the unpacker shows the defaults for "same as previous" on a first record). The disc's CARINET file is the
 traffic-message table, not code (doc 32).

@@ -5,7 +5,10 @@ Structure checks per tile: every edge node's neighbour/partner equals the record
 independently by Disc.edge_records(); the closing record's shape index is n7 and its s10
 index n10; road ends are valid node offsets; next-road indices <= n4; all coordinates
 inside the tile. Tail checks: string start equals s14 + 4*n14, name-entry pointers lie in
-the string table, s0 entries are (0, s14, s14 + 4), the stream ends with '001'."""
+the string table, s0 entries are (0, s14, s14 + 4); the decoded text has exactly one NUL
+before every string start that a name record or name entry points at, and ends with one;
+the road word +24 only uses bits 0x100-0x400 and 0x1000, and its bits 8-9 are 1/2/3 on the
+slip-road forms 1/8, 2/9, 3/A (doc 32)."""
 import collections
 import struct
 import sys
@@ -14,7 +17,7 @@ from common import Disc, carin
 from openlion import carin_codec_e as ce
 
 d = Disc(sys.argv[1])
-res, tail = collections.Counter(), collections.Counter()
+res, tail, chars = collections.Counter(), collections.Counter(), collections.Counter()
 nodes = shapes = roads = 0
 for u in d.units:
     if u.table != 0 or u.codec != carin.CODEC_E:
@@ -41,10 +44,21 @@ for u in d.units:
     t = m.get("tail")
     if t:
         s14, n14 = secs[14]
+        st, txt = t["strings_start"], t["strings"]
+        starts = {p for p, _f in t["s14"]} | {r_[k] for s_ in ("s0", "s1", "s2") for r_ in m[s_]
+                                               for k in ("str", "str2") if r_[k]}
+        nul_ok = (txt.endswith(b"\0") and all(st <= p < st + len(txt) for p in starts)
+                  and all(p == st or txt[p - st - 1] == 0 for p in starts)
+                  and txt.count(b"\0") == len(starts))
+        slip = {1: 0x100, 8: 0x100, 2: 0x200, 9: 0x200, 3: 0x300, 10: 0x300}
+        x24_ok = all(not v & ~0x1700 and (v & 0x300 == slip[r_["cls"] & 0xF] if r_["cls"] & 0xF in slip else True)
+                     for r_, v in zip(m["roads"], t["x24"]))
         tail[t["strings_start"] == s14 + 4 * n14 and t["s0_entries"][1:] == [s14, s14 + 4]
              and all(t["strings_start"] <= p <= t["strings_end"] for p, _f in t["s14"])
-             and t["final"] == "001"] += 1
+             and nul_ok and x24_ok] += 1
+        chars.update(txt)
     else:
-        tail["not parsed"] += 1
+        tail["not parsed: " + m.get("tail_error", "no entries")] += 1
 print("structure:", dict(res), f"({roads} roads, {nodes} nodes, {shapes} shape points)")
 print("name tail:", dict(tail))
+print("string characters:", "".join(sorted(chr(c) for c in chars if c)), f"({sum(chars.values()):,} bytes)")

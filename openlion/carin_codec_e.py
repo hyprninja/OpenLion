@@ -4,11 +4,10 @@ See docs/33_codec_0x0e.md for the format and what is proven. Status:
 
   * structure (name records, roads, nodes, shape points): decoded, checked on all 5,950
     factory tiles;
-  * name tail (dictionary, name entries, s0/s1/s2 pointer columns): decoded on 5,106;
-    the other 844 fail the tail check, cause not found;
-  * string text: NOT decoded. The tile carries a 6-entry fragment dictionary followed by
-    a prefix-coded token stream whose code table is not recovered yet, so this module
-    returns a model, not yet the byte-exact plain tile.
+  * name tail (dictionary, string text, name entries, s0/s1/s2 pointer columns, road
+    word +24): decoded on all 5,950. The string text uses one fixed prefix code (SHORT,
+    then 9-bit groups for dictionary slots, punctuation, digits and letters);
+  * this module returns a model, not yet the plain tile bytes.
 
     from openlion import carin, carin_codec_e
     model = carin_codec_e.decode_street(db[u.off:u.off + u.size], u.logical)
@@ -58,7 +57,7 @@ def decode_street(unit: bytes, logical_pages: int, tail: bool = True) -> dict:
     s3 = bytes(b[q:q + 32]); q += 32
     s9 = bytes(b[q:q + 8 * n[9]]); q += 8 * n[9]
     s10 = bytes(b[q:q + 8 * n[10]]); q += 8 * n[10]
-    r = Bits(b[q:])
+    r = Bits(b[q:] + bytes(n[4] // 8 + 8))         # trailing zero flags were trimmed with the padding
     P = (logical_pages * 512 - 1).bit_length()      # width of an in-tile byte offset
     W4, W7 = n[4].bit_length(), max(1, n[7].bit_length())
     W10, Ws = max(1, n[10].bit_length()), (n[2] - 1).bit_length()
@@ -130,14 +129,66 @@ def decode_street(unit: bytes, logical_pages: int, tail: bool = True) -> dict:
     return m
 
 
+# String text: one fixed prefix code for the whole disc (doc 33). Short codes for the 14
+# commonest characters, then 9-bit groups: a prefix and a 3/4/5-bit index.
+SHORT = {"000": b"a", "001": b"e", "0100": b"s", "0101": b"t", "0110": b"r", "0111": b"\0",
+         "10000": b" ", "10001": b"d", "10010": b"g", "10011": b"h", "10100": b"i",
+         "10101": b"l", "10110": b"n", "10111": b"o"}
+PUNCT = {4: b"/", 6: b"."}                         # 110101 + 3 bits; others never seen
+
+
+def _text(r: Bits, dictionary, nbytes: int) -> bytes:
+    """Decode nbytes of string text. Raises ValueError on a code never seen on the disc."""
+    out = bytearray()
+    while len(out) < nbytes:
+        for code, ch in SHORT.items():
+            if r.b.startswith(code, r.p):
+                r.p += len(code)
+                out += ch
+                break
+        else:
+            if r.b.startswith("110100", r.p):         # dictionary slot 1-6, 7 = apostrophe
+                r.p += 6
+                k = r.u(3)
+                if 1 <= k <= 6:
+                    out += dictionary[k - 1]
+                elif k == 7:
+                    out += b"'"
+                else:
+                    raise ValueError("string code 110100 000")
+            elif r.b.startswith("110101", r.p):       # punctuation
+                r.p += 6
+                k = r.u(3)
+                if k not in PUNCT:
+                    raise ValueError(f"string code 110101 {k:03b}")
+                out += PUNCT[k]
+            elif r.b.startswith("11011", r.p):        # digit
+                r.p += 5
+                k = r.u(4)
+                if k > 9:
+                    raise ValueError(f"string code 11011 {k:04b}")
+                out += b"%d" % k
+            elif r.b.startswith("1111", r.p):         # any letter by number, a = 1
+                r.p += 4
+                k = r.u(5)
+                if not 1 <= k <= 26:
+                    raise ValueError(f"string code 1111 {k:05b}")
+                out.append(0x60 + k)
+            else:
+                raise ValueError(f"string code {r.b[r.p:r.p + 9]} not known")
+    if len(out) != nbytes:
+        raise ValueError("a dictionary entry ran past the end of the string table")
+    return bytes(out)
+
+
 def _tail(r: Bits, n, P) -> dict:
     t = dict(strings_start=r.u(P), strings_end=r.u(P))
     t["dictionary"] = [bytes(r.u(7) for _ in range(r.u(5))) for _ in range(6)]
-    i = r.b.find(MARKER, r.p)
-    if i < 0:
+    # all strings in table order, each with its NUL; strings_end is the last NUL
+    t["strings"] = _text(r, t["dictionary"], t["strings_end"] + 1 - t["strings_start"])
+    if not r.flag() or not r.b.startswith(MARKER, r.p):
         raise ValueError("no s0 column after the string block")
-    t["coded_text"] = r.b[r.p:i]                    # prefix-coded tokens, table unknown
-    r.p = i + len(MARKER)
+    r.p += len(MARKER)
     if r.u(n[4] + 1):
         raise ValueError("per-road column is not all 'same'")
     entries, ptr, hi, lo = [], 0, 0, 0
@@ -161,5 +212,16 @@ def _tail(r: Bits, n, P) -> dict:
     t["s2_entries"] = s2
     t["s1_entries"] = [(r.u(P - 1) * 2, r.u(P - 1) * 2) for _ in range(n[1])]
     t["s0_entries"] = [r.u(P - 1) * 2 for _ in range(n[0])]
-    t["final"] = r.b[r.p:].rstrip("0")
+    # road word +24, per road and the closing record: two 0 bits, then explicit-or-previous
+    # 16-bit values (slip-road type 0x100/0x200/0x300 and the rare 0x400 / 0x1000, doc 32)
+    if r.u(2):
+        raise ValueError("unexpected bits before the +24 column")
+    x24, v = [], 0
+    for _ in range(n[4] + 1):
+        if r.flag():
+            v = r.u(16)
+        x24.append(v)
+    t["x24"] = x24
+    if r.b[r.p:].strip("0"):
+        raise ValueError("bits left after the +24 column")
     return t
